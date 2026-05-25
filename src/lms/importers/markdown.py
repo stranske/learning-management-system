@@ -194,6 +194,8 @@ def _extract_h1_h2_headings(*, text: str, lines: list[str]) -> list[tuple[int, i
     raw: list[tuple[int, int, str]] = []
     next_scan_index = 0
     for token in tokens:
+        if not isinstance(token, dict):
+            continue
         if token.get("type") != "heading":
             continue
         attrs = token.get("attrs", {})

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -87,7 +87,8 @@ def test_db_session_fixture_is_usable(db_session: Session) -> None:
 
 def test_declarative_base_uses_migration_naming_convention() -> None:
     assert Base.metadata.naming_convention["pk"] == "pk_%(table_name)s"
-    assert Base.metadata.naming_convention["fk"].startswith("fk_%(table_name)s")
+    fk_naming = cast(str, Base.metadata.naming_convention["fk"])
+    assert fk_naming.startswith("fk_%(table_name)s")
 
 
 def test_alembic_baseline_revision_is_discoverable() -> None:

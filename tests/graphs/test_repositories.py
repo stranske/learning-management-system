@@ -173,7 +173,7 @@ def test_create_prerequisite_edge_creates_audit_event(db_session: Session) -> No
 def test_require_scope_rejects_unknown_value(db_session: Session) -> None:
     """``_require_scope`` rejects unrecognised scope strings."""
     with pytest.raises(ValueError, match="unknown ownership scope"):
-        list_knowledge_nodes(db_session, scope="alien")  # type: ignore[arg-type]
+        list_knowledge_nodes(db_session, scope="alien")
 
 
 def test_require_choice_rejects_unknown_knowledge_type(db_session: Session) -> None:

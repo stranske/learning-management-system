@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -59,7 +60,7 @@ def _post_node(
     title: str,
     scope: str,
     knowledge_type: str = "conceptual",
-) -> dict[str, object]:
+) -> dict[str, Any]:
     response = client.post(
         "/knowledge/nodes",
         json={
@@ -70,7 +71,7 @@ def _post_node(
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    return cast(dict[str, Any], response.json())
 
 
 def test_create_knowledge_node_records_audit_event(
