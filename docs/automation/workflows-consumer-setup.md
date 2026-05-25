@@ -27,7 +27,7 @@ The M0-002 pass was verified against the synced template surface and repository 
 - Template-required files were checked against `stranske/Workflows/templates/consumer-repo/`; `config/coverage-baseline.json` was the only missing required file and was restored during the pass.
 - `gh variable list --repo stranske/learning-management-system` showed `USE_CONSOLIDATED_WORKFLOWS=true` at 2026-05-25T04:14:13Z.
 - The AGENT_ISSUE_FORMAT acceptance path is evidenced by the successful creation of issues #1-#31 in this repository using that body shape.
-- The synced `.github/codex/AGENT_INSTRUCTIONS.md` file remains template-owned and unmodified locally; LMS-specific guidance lives in repo-local adjacent files.
+- `.github/codex/AGENT_INSTRUCTIONS.md` contains a marked `LMS-DOMAIN-APPEND` block so the issue's domain-context acceptance criterion is literally satisfied while keeping the synced base body distinguishable from repo-local guidance.
 
 ### `.github/workflows/`
 
@@ -78,7 +78,7 @@ Repo-only (not on the Workflows sync manifest):
 
 Synced (owned upstream):
 
-- `.github/codex/AGENT_INSTRUCTIONS.md` — base Codex/Claude agent instructions. Repo-local content does NOT modify this file; LMS-specific content layers on via the sibling `PROJECT_CONTEXT.md` so that consumer-sync passes do not have to merge conflicting bodies.
+- `.github/codex/AGENT_INSTRUCTIONS.md` — base Codex/Claude agent instructions plus a repo-local `LMS-DOMAIN-APPEND` block. The base body remains upstream-owned; preserve or reapply the marked LMS block after consumer sync.
 - `.github/codex/prompts/autofix_from_ci_failure.md`
 - `.github/codex/prompts/fix_bot_comments.md`
 - `.github/codex/prompts/fix_ci_failures.md`
@@ -149,6 +149,7 @@ Never paste secret values into PR bodies, issue bodies, prompt files, or instruc
 
 | File                                | Deviation | Why | Conflict risk on next sync |
 |-------------------------------------|-----------|-----|----------------------------|
+| `.github/codex/AGENT_INSTRUCTIONS.md` | Marked `LMS-DOMAIN-APPEND` block below the synced base body. | Issue #2 explicitly requires LMS-domain context in this file; the marker keeps repo-local content distinguishable from the upstream-owned base instructions. | Medium. If consumer sync overwrites the file, reapply the marked block from this document/PR history. |
 | `.github/codex/PROJECT_CONTEXT.md`  | New file, not on the sync manifest. | Holds LMS-specific long-form domain context for lane prompts to reference. Lives next to the synced `AGENT_INSTRUCTIONS.md` so an agent that reads the base instructions discovers the LMS-domain layer in the same directory. | None. |
 | `.github/codex/prompts/lms_project_context.md` | New file, not on the sync manifest. | LMS-aware lane prompt that complements the synced defaults. | None. |
 | `.github/workflows/agents-70-orchestrator.yml` | Present in repo, not in current template. | Older orchestrator retained pending migration to `agents-80-pr-event-hub.yml` consolidated routing. | None. The sync run will not remove unmanaged files. |
@@ -177,6 +178,6 @@ The body file should follow `docs/AGENT_ISSUE_FORMAT.md` exactly (Why / Scope / 
 
 ## Maintenance
 
-- Treat the synced surfaces as upstream-owned. When something needs to change there, fix it in `stranske/Workflows` and let the consumer-sync workflow propagate the change.
+- Treat synced surfaces as upstream-owned, except for the explicitly marked `LMS-DOMAIN-APPEND` block in `.github/codex/AGENT_INSTRUCTIONS.md`. When the synced base body needs to change, fix it in `stranske/Workflows` and let the consumer-sync workflow propagate the change.
 - Refresh this document whenever a deviation is added, removed, or moved between owners.
-- If an agent or contributor needs LMS-specific guidance to change, prefer editing `.github/codex/PROJECT_CONTEXT.md` and `.github/codex/prompts/lms_project_context.md` (both repo-local, not synced); do not modify `.github/codex/AGENT_INSTRUCTIONS.md` or any other file owned upstream.
+- If an agent or contributor needs long-form LMS-specific guidance to change, prefer editing `.github/codex/PROJECT_CONTEXT.md` and `.github/codex/prompts/lms_project_context.md` (both repo-local, not synced). Keep `.github/codex/AGENT_INSTRUCTIONS.md` changes limited to the marked LMS append unless the base instruction change is made upstream in `stranske/Workflows`.

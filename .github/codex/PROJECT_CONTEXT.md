@@ -1,12 +1,12 @@
 # LMS Project Context (lane-prompt reference)
 
-> Repo-local file. Not on the consumer-sync manifest. Lane prompts can include this for LMS-specific framing without modifying the synced base [`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md) or the synced [`prompts/`](prompts/) files.
+> Repo-local file. Not on the consumer-sync manifest. Lane prompts can include this for LMS-specific framing without modifying synced prompt defaults or the upstream-owned base body of [`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md).
 
 ## Read Order
 
 For any non-trivial implementation task in this repo, the operating agent should read these in order before changing code:
 
-1. The synced base `.github/codex/AGENT_INSTRUCTIONS.md` (security boundaries; do not modify locally).
+1. `.github/codex/AGENT_INSTRUCTIONS.md` (synced base security boundaries plus the repo-local marked LMS append).
 2. This file (long-form domain context).
 3. `docs/product/project-plan.md` and `docs/product/early-design-decisions.md` for the canonical product/segment decisions.
 4. `docs/product/research-domain-model.md` for the Phase 1 Minimum Core entity definitions.
@@ -50,7 +50,7 @@ LLM behavior in this repo is bounded:
 | `src/`, `tests/`, `docs/product/`                | This repo              | Application + research/design content. |
 | `docs/automation/workflows-consumer-setup.md`    | This repo              | Per-repo automation documentation. |
 | `.github/codex/PROJECT_CONTEXT.md` (this file)   | This repo              | Repo-local lane-prompt reference. |
-| `.github/codex/AGENT_INSTRUCTIONS.md`            | `stranske/Workflows`   | Synced base instructions. Fix upstream; do not modify locally. |
+| `.github/codex/AGENT_INSTRUCTIONS.md`            | Shared                 | Base body is synced from `stranske/Workflows`; the marked `LMS-DOMAIN-APPEND` block is repo-local and must be preserved/reapplied after sync. |
 | `.github/codex/prompts/*.md` except `lms_*.md`   | `stranske/Workflows`   | Synced base prompts. Fix upstream. |
 | `.github/codex/prompts/lms_*.md`                 | This repo              | Repo-local lane addenda. |
 | `.github/workflows/agents-*.yml`                 | `stranske/Workflows`   | Reusable workflow thin callers. Fix upstream. |
