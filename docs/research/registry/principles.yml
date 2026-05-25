@@ -1,0 +1,78 @@
+- id: principle-evidence-informed-design
+  name: Evidence-informed design
+  summary: "Learning decisions should be guided by evidence and context rather than intuition alone."
+  mechanism: "Visible evidence strength helps authors separate supported defaults from hypotheses and anecdotal observations."
+  sourceIds:
+    - how-do-we-learn-ch1
+  evidenceLevel: established
+  confidence: medium
+  designImplications:
+    - "Registry records should carry provenance and evidence status."
+    - "Product recommendations should show whether they are supported, promising, or deprecated."
+  antiPatterns:
+    - "Treating popularity or completion as proof that a learning method works."
+  audiences:
+    - personal
+    - new-analyst
+    - company-wide
+  createdAt: "2026-05-25T00:00:00Z"
+  updatedAt: "2026-05-25T00:00:00Z"
+- id: principle-causal-evidence
+  name: Causal evidence threshold
+  summary: "Causal claims require stronger evidence than correlations or anecdotes."
+  mechanism: "Separating descriptive, predictive, and causal evidence prevents analytics from overstating what the data can prove."
+  sourceIds:
+    - how-do-we-learn-ch1
+  evidenceLevel: established
+  confidence: medium
+  designImplications:
+    - "Experiment reports should distinguish association from causation."
+    - "Dashboards should avoid causal language unless an experiment supports it."
+  antiPatterns:
+    - "Claiming completion caused mastery from a correlation alone."
+  audiences:
+    - personal
+    - new-analyst
+    - company-wide
+  createdAt: "2026-05-25T00:00:00Z"
+  updatedAt: "2026-05-25T00:00:00Z"
+- id: principle-retrieval-as-learning
+  name: Retrieval as learning
+  summary: "Retrieval practice is a learning event, not only an assessment event."
+  mechanism: "Effortful retrieval strengthens later recall and exposes gaps that feedback can correct."
+  sourceIds:
+    - how-do-we-learn-section-2-3
+    - roediger-karpicke-2006
+  evidenceLevel: established
+  confidence: high
+  designImplications:
+    - "Modules should include recall, explanation, and application prompts before completion."
+    - "Review queues should treat retrieval attempts as first-class evidence."
+  antiPatterns:
+    - "Counting rereading or exposure as durable mastery."
+  audiences:
+    - personal
+    - new-analyst
+    - company-wide
+  createdAt: "2026-05-25T00:00:00Z"
+  updatedAt: "2026-05-25T00:00:00Z"
+- id: principle-spaced-interleaved-retrieval
+  name: Spaced and interleaved retrieval
+  summary: "Spaced and interleaved retrieval produce more durable learning than massed or blocked practice."
+  mechanism: "Spacing increases productive retrieval effort and interleaving strengthens discrimination among concepts."
+  sourceIds:
+    - how-do-we-learn-section-2-3
+    - cepeda-et-al-2006
+  evidenceLevel: established
+  confidence: high
+  designImplications:
+    - "Review scheduling should distribute practice over time."
+    - "Practice sets should mix related concepts once learners have enough foundation."
+  antiPatterns:
+    - "Using a single blocked drill as evidence of durable transfer."
+  audiences:
+    - personal
+    - new-analyst
+    - company-wide
+  createdAt: "2026-05-25T00:00:00Z"
+  updatedAt: "2026-05-25T00:00:00Z"

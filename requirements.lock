@@ -225,6 +225,8 @@ notebook-shim==0.2.4
     #   notebook
 numpy==2.4.6
     # via pandas
+overrides==7.7.0 ; python_full_version < '3.12'
+    # via jupyter-server
 packaging==25.0
     # via
     #   black
@@ -315,6 +317,7 @@ pywinpty==3.0.3 ; os_name == 'nt'
     #   terminado
 pyyaml==6.0.3
     # via
+    #   lms (pyproject.toml)
     #   jupyter-events
     #   uvicorn
 pyzmq==27.1.0
@@ -370,6 +373,8 @@ terminado==0.18.1
     #   jupyter-server-terminals
 tinycss2==1.4.0
     # via bleach
+tomli==2.4.1 ; python_full_version <= '3.11'
+    # via coverage
 tornado==6.5.5
     # via
     #   ipykernel
@@ -399,6 +404,7 @@ typing-extensions==4.15.0
     #   anyio
     #   beautifulsoup4
     #   fastapi
+    #   ipython
     #   mypy
     #   pydantic
     #   pydantic-core

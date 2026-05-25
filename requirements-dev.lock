@@ -215,6 +215,8 @@ notebook-shim==0.2.4
     #   notebook
 numpy==2.4.6
     # via pandas
+overrides==7.7.0
+    # via jupyter-server
 packaging==25.0
     # via
     #   black
@@ -300,6 +302,7 @@ pytokens==0.4.1
     # via black
 pyyaml==6.0.3
     # via
+    #   lms (pyproject.toml)
     #   jupyter-events
     #   uvicorn
 pyzmq==27.1.0
@@ -384,6 +387,7 @@ typing-extensions==4.15.0
     #   anyio
     #   beautifulsoup4
     #   fastapi
+    #   ipython
     #   mypy
     #   pydantic
     #   pydantic-core

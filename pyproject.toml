@@ -24,11 +24,15 @@ dependencies = [
     "fastapi>=0.115.0",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.0",
+    "PyYAML>=6.0.0",
     "sqlalchemy>=2.0.30",
     "alembic>=1.13.0",
     "uvicorn[standard]>=0.30.0",
     "pandas>=2.2.0",
 ]
+
+[project.scripts]
+lms = "lms.__main__:main"
 
 [project.optional-dependencies]
 dev = [
