@@ -9,6 +9,7 @@ from lms.api.health import router as health_router
 from lms.auth.api import router as auth_router
 from lms.graphs.api import router as graphs_router
 from lms.learners.api import router as learners_router
+from lms.prompts.api import router as prompts_router
 from lms.settings import get_settings
 from lms.sources.api import router as sources_router
 
@@ -37,6 +38,7 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     app.include_router(audit_router)
     app.include_router(sources_router)
     app.include_router(graphs_router)
+    app.include_router(prompts_router)
     return app
 
 
