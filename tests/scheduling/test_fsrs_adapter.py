@@ -111,6 +111,24 @@ def test_partial_credit_boundaries(db_session: Session) -> None:
     assert evidence_to_fsrs_rating(hard).label == "hard"
     assert evidence_to_fsrs_rating(hard).rule_id == "partial-under-mastery"
     assert evidence_to_fsrs_rating(good).label == "good"
+    assert evidence_to_fsrs_rating(good).rule_id == "partial-at-mastery"
+
+
+def test_mastery_score_without_correctness_maps_to_good(db_session: Session) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=None,
+        normalized_score=0.85,
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.label == "good"
+    assert rating.value == 3
+    assert rating.scheduling_included is True
+    assert rating.rule_id == "partial-at-mastery"
 
 
 def test_incorrect_precedes_partial_credit_rules(db_session: Session) -> None:
@@ -240,6 +258,7 @@ def test_adapter_rule_table_is_data_driven() -> None:
         "transfer-excluded",
         "partial-under-half",
         "partial-under-mastery",
+        "partial-at-mastery",
         "incorrect",
         "supported-or-low-confidence-correct",
         "fast-first-attempt",

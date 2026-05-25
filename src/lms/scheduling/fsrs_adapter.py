@@ -108,6 +108,11 @@ def _is_score_under_mastery(record: EvidenceRecord) -> bool:
     return record.correctness is True and score is not None and 0.5 <= score < 0.85
 
 
+def _is_score_at_mastery(record: EvidenceRecord) -> bool:
+    score = _score(record)
+    return record.correctness is not False and score is not None and score >= 0.85
+
+
 FSRS_RULES: tuple[FSRSRule, ...] = (
     FSRSRule(
         rule_id="transfer-excluded",
@@ -133,6 +138,14 @@ FSRS_RULES: tuple[FSRSRule, ...] = (
         scheduling_included=True,
         reason="Normalized or partial-credit score is below the 0.85 mastery threshold.",
         applies=_is_score_under_mastery,
+    ),
+    FSRSRule(
+        rule_id="partial-at-mastery",
+        rating="good",
+        value=3,
+        scheduling_included=True,
+        reason="Normalized or partial-credit score meets the 0.85 mastery threshold.",
+        applies=_is_score_at_mastery,
     ),
     FSRSRule(
         rule_id="incorrect",
