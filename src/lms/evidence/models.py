@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     false,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -149,7 +150,11 @@ class EvidenceRecord(Base):
     prompt_id: Mapped[str | None] = mapped_column(String(36), index=True)
     prompt_version_id: Mapped[str | None] = mapped_column(String(36), index=True)
     evidence_kind: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="observed", server_default="observed", index=True
+        String(32),
+        nullable=False,
+        default="observed",
+        server_default=text("'observed'"),
+        index=True,
     )
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -178,7 +183,11 @@ class EvidenceRecord(Base):
         Boolean, nullable=False, default=False, server_default=false()
     )
     support_level: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="none", server_default="none", index=True
+        String(32),
+        nullable=False,
+        default="none",
+        server_default=text("'none'"),
+        index=True,
     )
     retrieval_demand: Mapped[str | None] = mapped_column(String(64))
     transfer_distance: Mapped[str | None] = mapped_column(String(64))

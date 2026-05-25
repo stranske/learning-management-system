@@ -24,6 +24,11 @@ def _has_scoring_signal(evidence: dict[str, Any]) -> bool:
     return any(evidence.get(key) is not None for key in scoring_keys)
 
 
+def _value_or_default(value: Any, default: Any) -> Any:
+    """Treat explicit None in dumped payloads the same as a missing value."""
+    return default if value is None else value
+
+
 def create_attempt(
     session: Session,
     *,
@@ -69,7 +74,9 @@ def create_attempt(
             demand_level=evidence.get("demand_level"),
             knowledge_type=evidence.get("knowledge_type"),
             time_since_last_attempt_seconds=evidence.get("time_since_last_attempt_seconds"),
-            response_time_seconds=evidence.get("response_time_seconds", elapsed_seconds),
+            response_time_seconds=_value_or_default(
+                evidence.get("response_time_seconds"), elapsed_seconds
+            ),
             correctness=evidence.get("correctness"),
             confidence_rating=confidence_rating,
             reference_accessed=reference_accessed,
@@ -84,7 +91,7 @@ def create_attempt(
             max_score=evidence.get("max_score"),
             partial_credit_dimensions=evidence.get("partial_credit_dimensions"),
             item_difficulty_estimate=evidence.get("item_difficulty_estimate"),
-            attempt_context=evidence.get("attempt_context", response_metadata),
+            attempt_context=_value_or_default(evidence.get("attempt_context"), response_metadata),
             validity_scope=evidence.get("validity_scope"),
             answer_artifact_ref=evidence.get("answer_artifact_ref"),
         )

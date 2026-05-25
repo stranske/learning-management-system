@@ -25,7 +25,12 @@ def upgrade() -> None:
         sa.Column("knowledge_node_id", sa.String(length=36), nullable=False),
         sa.Column("prompt_id", sa.String(length=36), nullable=True),
         sa.Column("prompt_version_id", sa.String(length=36), nullable=True),
-        sa.Column("evidence_kind", sa.String(length=32), server_default="observed", nullable=False),
+        sa.Column(
+            "evidence_kind",
+            sa.String(length=32),
+            server_default=sa.text("'observed'"),
+            nullable=False,
+        ),
         sa.Column(
             "observed_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
@@ -37,7 +42,9 @@ def upgrade() -> None:
         sa.Column("confidence_rating", sa.Integer(), nullable=True),
         sa.Column("reference_accessed", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.Column("hint_used", sa.Boolean(), server_default=sa.false(), nullable=False),
-        sa.Column("support_level", sa.String(length=32), server_default="none", nullable=False),
+        sa.Column(
+            "support_level", sa.String(length=32), server_default=sa.text("'none'"), nullable=False
+        ),
         sa.Column("retrieval_demand", sa.String(length=64), nullable=True),
         sa.Column("transfer_distance", sa.String(length=64), nullable=True),
         sa.Column("source_match_quality", sa.String(length=64), nullable=True),
