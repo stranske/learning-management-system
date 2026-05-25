@@ -80,7 +80,7 @@ Synced (owned upstream):
 Repo-only (LMS-specific):
 
 - `.github/codex/PROJECT_CONTEXT.md` — long-form LMS domain context (learner loop, source citation contract, formative LLM policy, ownership table, Phase 1 entities).
-- `.github/codex/prompts/lms_project_context.md` — lane-prompt addendum referenced from the synced prompts in this directory.
+- `.github/codex/prompts/lms_project_context.md` — lane-prompt addendum that keepalive, autofix, verifier, fix-bot-comments, fix-ci-failures, and fix-merge-conflicts lanes may include after the synced defaults. The synced prompt files do not reference it directly because they remain upstream-owned.
 
 ### `config/`
 
@@ -147,7 +147,7 @@ Never paste secret values into PR bodies, issue bodies, prompt files, or instruc
 | `.github/workflows/maint-dependabot-auto-lock.yml` | Present in repo, not in current template. | Repo-local dependabot lockfile handling. | None. |
 | `.github/workflows/maint-sync-workflows.yml` | Present in repo, not in current template. | Repo-local opportunistic sync trigger. The canonical scheduler is upstream in `Workflows`. | None. |
 | `.github/workflows/pr-00-gate.yml`  | Differs from template body. | Sync mode is `create_only`; coverage/Python pins and lint surface are intentionally repo-specific. | None by sync mode. Keep the standard gate shape unless a documented exception is added. |
-| `.github/workflows/ci.yml`, `autofix-versions.env` | Differs from template. | Repo-specific CI wiring; both are `create_only` in the sync manifest. | None by sync mode. |
+| `.github/workflows/ci.yml`, `.github/workflows/autofix-versions.env` | Differs from template. | Repo-specific CI wiring; both are `create_only` in the sync manifest. | None by sync mode. |
 
 If a deviation is later reverted upstream (for example, if the LMS-style addendum pattern becomes a first-class sync surface), update this table and the affected files together.
 

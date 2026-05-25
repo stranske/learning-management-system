@@ -51,7 +51,8 @@ LLM behavior in this repo is bounded:
 | `docs/automation/workflows-consumer-setup.md`    | This repo              | Per-repo automation documentation. |
 | `.github/codex/PROJECT_CONTEXT.md` (this file)   | This repo              | Repo-local lane-prompt reference. |
 | `.github/codex/AGENT_INSTRUCTIONS.md`            | `stranske/Workflows`   | Synced base instructions. Fix upstream; do not modify locally. |
-| `.github/codex/prompts/*.md`                     | `stranske/Workflows`   | Synced base prompts. Fix upstream. |
+| `.github/codex/prompts/*.md` except `lms_*.md`   | `stranske/Workflows`   | Synced base prompts. Fix upstream. |
+| `.github/codex/prompts/lms_*.md`                 | This repo              | Repo-local lane addenda. |
 | `.github/workflows/agents-*.yml`                 | `stranske/Workflows`   | Reusable workflow thin callers. Fix upstream. |
 | `.github/workflows/autofix.yml`                  | `stranske/Workflows`   | Synced. Fix upstream. |
 | `.github/workflows/ci.yml`, `pr-00-gate.yml`     | This repo (create-only)| Repo-specific coverage/python pins. |
