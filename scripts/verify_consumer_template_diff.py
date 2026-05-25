@@ -289,6 +289,14 @@ def parse_args() -> argparse.Namespace:
             "still reports those entries in JSON output."
         ),
     )
+    parser.add_argument(
+        "--require-create-only-clean",
+        action="store_true",
+        help=(
+            "Fail if create-only entries differ from template content. Use this mode "
+            "for full template-required parity checks."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -310,6 +318,9 @@ def main() -> int:
     strict_diffs = report["strict_diffs"]
     if args.ignore_unavailable_source:
         strict_diffs = [d for d in strict_diffs if d["kind"] != "missing_template_source"]
+
+    if args.require_create_only_clean and report["create_only_diff_count"] > 0:
+        return 1
 
     return 0 if len(strict_diffs) == 0 else 1
 
