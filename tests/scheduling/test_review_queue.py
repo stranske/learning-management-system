@@ -37,6 +37,7 @@ from lms.scheduling.repository import (
 from lms.scheduling.service import (
     SUCCESS_INTERVALS_DAYS,
     _classify_signal,
+    _conservative_signal,
     _success_interval_days,
     schedule_from_attempt,
     seed_new_learning_item,
@@ -550,6 +551,48 @@ def test_list_review_queue_returns_all_statuses_when_status_is_none(
     assert {i.id for i in all_items} == {item_a.id, item_b.id}
     assert len(pending_only) == 1
     assert pending_only[0].id == item_b.id
+
+
+def test_decision_log_includes_fsrs_rating_for_successful_retrieval(db_session: Session) -> None:
+    """The decision log carries the FSRS adapter rating so Inspect can audit it."""
+    attempt, evidence = _make_attempt(
+        db_session,
+        correctness=True,
+        normalized_score=0.95,
+        confidence_rating=5,
+    )
+    item = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    log = item.decision_log
+    assert "fsrs_rating" in log
+    fsrs = log["fsrs_rating"]
+    assert set(fsrs.keys()) >= {"label", "value", "rule_id", "scheduling_included"}
+    assert fsrs["label"] in ("again", "hard", "good", "easy", "excluded")
+    assert fsrs["scheduling_included"] is True
+    # High-confidence unsupported correct answer should be good or easy
+    assert fsrs["label"] in ("good", "easy")
+
+
+def test_fsrs_conservative_blend_keeps_low_confidence_signal(db_session: Session) -> None:
+    """High score with low confidence: FSRS partial-at-mastery is overridden conservatively."""
+    attempt, evidence = _make_attempt(
+        db_session,
+        correctness=True,
+        normalized_score=0.92,
+        confidence_rating=2,  # low confidence
+        support_level="none",
+    )
+    item = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    # Even though score >= 0.85, low confidence must shorten the interval
+    assert item.decision_log["signal"] == "low-confidence-success"
+    assert item.due_at == item.created_at + timedelta(days=1) or item.priority == 0.7
+
+
+def test_conservative_signal_helper() -> None:
+    """_conservative_signal returns the lower-severity signal of the two."""
+    assert _conservative_signal("fail", "success") == "fail"
+    assert _conservative_signal("success", "low-confidence-success") == "low-confidence-success"
+    assert _conservative_signal("low-confidence-success", "fail") == "fail"
+    assert _conservative_signal("success", "success") == "success"
 
 
 def test_schedule_from_attempt_rejects_unlinked_evidence(db_session: Session) -> None:

@@ -1,9 +1,11 @@
 """Scheduler service that maps attempts and evidence into review queue items.
 
-The v1 policy is deliberately deterministic and explainable. The dispatch
-table below is the FSRS-integration extension point: when the FSRS evidence
-adapter lands, ``_compute_schedule`` can delegate to it for the success-path
-intervals while keeping the same decision-log shape for Inspect.
+The v1 policy is deliberately deterministic and explainable. For the
+success path the FSRS evidence adapter is consulted: its rating label and
+rule_id are recorded in the decision log for the Inspect surface. When FSRS
+returns ``insufficient-signal`` or an excluded rating the internal
+``_classify_signal`` function is used as a fallback so edge cases (e.g.
+no explicit correctness flag but a partial score) are handled conservatively.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from lms.auth.models import utc_now
 from lms.evidence.models import Attempt, EvidenceRecord
+from lms.scheduling.fsrs_adapter import FSRSRating, evidence_to_fsrs_rating
 from lms.scheduling.models import ReviewQueueItem
 from lms.scheduling.repository import create_review_queue_item
 
@@ -62,6 +65,29 @@ def _success_interval_days(prior_successes: int) -> int:
     if prior_successes >= len(SUCCESS_INTERVALS_DAYS):
         return SUCCESS_INTERVALS_DAYS[-1]
     return SUCCESS_INTERVALS_DAYS[prior_successes]
+
+
+_SIGNAL_ORDER: dict[str, int] = {"fail": 0, "low-confidence-success": 1, "success": 2}
+
+
+def _fsrs_to_signal(rating: FSRSRating) -> str | None:
+    """Map a clear FSRS rating to an internal signal string.
+
+    Returns None when FSRS cannot give a clear signal (insufficient-signal or
+    excluded), indicating the caller should fall back to ``_classify_signal``.
+    """
+    if not rating.scheduling_included or rating.rule_id == "insufficient-signal":
+        return None
+    if rating.value == 1:
+        return "fail"
+    if rating.value == 2:
+        return "low-confidence-success"
+    return "success"
+
+
+def _conservative_signal(a: str, b: str) -> str:
+    """Return the more conservative (lower-confidence) of two signal strings."""
+    return a if _SIGNAL_ORDER[a] <= _SIGNAL_ORDER[b] else b
 
 
 def _classify_signal(
@@ -195,12 +221,23 @@ def schedule_from_attempt(
     normalized_score = evidence_record.normalized_score
     confidence_rating = evidence_record.confidence_rating
     support_level = evidence_record.support_level or "none"
-    signal = _classify_signal(
+
+    fsrs_rating = evidence_to_fsrs_rating(evidence_record)
+    internal_signal = _classify_signal(
         correctness=correctness,
         normalized_score=normalized_score,
         confidence_rating=confidence_rating,
         support_level=support_level,
     )
+    fsrs_signal = _fsrs_to_signal(fsrs_rating)
+    # When FSRS gives a clear verdict, blend conservatively with the internal
+    # classifier so low-confidence or supported responses are never upgraded.
+    signal = (
+        _conservative_signal(fsrs_signal, internal_signal)
+        if fsrs_signal is not None
+        else internal_signal
+    )
+
     decision = _decide(
         signal=signal,
         now=decision_now,
@@ -212,6 +249,12 @@ def schedule_from_attempt(
     decision_log: dict[str, Any] = {
         "rule": decision.rule,
         "signal": signal,
+        "fsrs_rating": {
+            "label": fsrs_rating.label,
+            "value": fsrs_rating.value,
+            "rule_id": fsrs_rating.rule_id,
+            "scheduling_included": fsrs_rating.scheduling_included,
+        },
         "inputs": {
             "correctness": correctness,
             "normalized_score": normalized_score,
