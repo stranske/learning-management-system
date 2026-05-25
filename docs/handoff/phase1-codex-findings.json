@@ -1,0 +1,189 @@
+{
+  "agent": "codex",
+  "phase": "phase1-design-review",
+  "generated_at": "2026-05-25T02:25:08Z",
+  "findings": [
+    {
+      "finding_id": "scope-001",
+      "category": "push-back",
+      "topic": "schema-trim",
+      "summary": "The Phase 1 trimmed model is not consistently reflected across the roadmap, API sketch, and testing surfaces.",
+      "rationale": "The second-pass design says Phase 1 starts with 10 entities and explicitly moves `Course`, `Module`, `Lesson`, `LearningObjective`, `FeedbackRecord`, and research registry tables out of Phase 1. Older sections still call for courses/modules, feedback records, mastery estimates, research registry models, and curriculum CRUD in the first useful backend and Milestone 2. This will confuse issue generation because agents will not know whether to implement the trimmed learner loop or the older curriculum-first design.",
+      "design_refs": [
+        "README.md:191-215",
+        "docs/product/project-plan.md:47-64",
+        "docs/product/project-plan.md:1050-1116",
+        "docs/product/project-plan.md:1122-1148",
+        "docs/product/project-plan.md:1273-1291",
+        "docs/product/development-testing-surfaces.md:88-110"
+      ],
+      "implementation_impact": "Milestones 0-3 issue sequencing, initial SQLAlchemy schema, API routes, and early UI surface scope.",
+      "proposed_resolution": "Modify the project plan and development-surface docs so Phase 1 consistently centers `LearningGoal`, `KnowledgeNode`, `Prompt`, `Attempt`, `EvidenceRecord`, `ReviewQueueItem`, and `LLMSession`; move curriculum authoring APIs and course/module/lesson UI to a clearly labeled later milestone."
+    },
+    {
+      "finding_id": "source-001",
+      "category": "new-concern",
+      "topic": "source-citation",
+      "summary": "`SourceReference` is load-bearing for the demo, but it is not listed as a first-class Phase 1 entity despite being required by prompts, imports, drift detection, and export.",
+      "rationale": "The source citation policy requires every `Prompt` to carry at least one `SourceReference` with a content hash, and the minimum demo starts by importing research notes into draft nodes with `SourceReference` links and hashes. Phase 1 lists `Prompt` as having `SourceReference`, but not `SourceReference` itself, which hides the need for stable source identity, passage ranges, hash algorithm/version, source type, source visibility, and drift status. This is especially risky for multi-source prompts and for the public/private split of research-note content.",
+      "design_refs": [
+        "docs/product/project-plan.md:473-480",
+        "docs/product/project-plan.md:1128-1138",
+        "docs/product/project-plan.md:1215-1216",
+        "README.md:227-230"
+      ],
+      "implementation_impact": "Phase 1 schema and importer/export contract; prompt authoring and Inspect source-drift behavior.",
+      "proposed_resolution": "Add `SourceReference` as an explicit Phase 1 entity/value object with fields for source type, stable locator, passage/range, content hash, hash algorithm, source visibility, drift status, and optional multi-source role such as `primary`, `supporting`, or `counterpoint`."
+    },
+    {
+      "finding_id": "evidence-001",
+      "category": "push-back",
+      "topic": "mastery-rule",
+      "summary": "The proposed `EvidenceRecord` fields are strong but still insufficient for later learned models because they omit scoring rubric, item version, learner answer features, and validity metadata.",
+      "rationale": "The docs correctly treat the evidence schema as the load-bearing v1 decision and list timestamp, prompt id, demand level, knowledge type, response time, correctness, confidence, hint/reference use, support level, retrieval demand, transfer distance, and source-match quality. For BKT/IRT/Elo/half-life regression or learned FSRS parameters, the model also needs prompt version, item difficulty/discrimination proxies, scoring method, max score/partial credit, answer quality dimensions, rater or LLM judge identity/version, attempt context, and validity scope. Without these, future tuning may learn artifacts of prompt versions, graders, or UI context rather than learner state.",
+      "design_refs": [
+        "docs/product/early-design-decisions.md:91-102",
+        "docs/product/project-plan.md:110-121",
+        "docs/product/project-plan.md:451-471",
+        "docs/product/research-domain-model.md:502-521"
+      ],
+      "implementation_impact": "Phase 1 `EvidenceRecord`, `Attempt`, and `PromptVersion` schema; later mastery tuning at Milestones 6-7.",
+      "proposed_resolution": "Expand the Phase 1 evidence schema to include prompt version, scorer type/id/version, scoring rubric/version, raw score and normalized score, partial-credit dimensions, item difficulty estimate placeholder, attempt context, validity scope, and answer artifact reference."
+    },
+    {
+      "finding_id": "mastery-002",
+      "category": "open-question",
+      "topic": "mastery-rule",
+      "summary": "`MasteryEstimate` as a pure computed view is conceptually clean, but the docs need an explicit materialization threshold and cache policy.",
+      "rationale": "The design says `MasteryEstimate` should be a computed view over `EvidenceRecord`, which is right for rule changes and recomputation. However, the Inspect surface, scheduler, review queue, and gap analysis all read current estimates frequently, and the docs do not specify when recomputation becomes too expensive or how stale cached estimates are handled. Without a threshold, Phase 2 issues may either overbuild materialization or ship a scheduler that gets slow once records accumulate.",
+      "design_refs": [
+        "docs/product/early-design-decisions.md:97-101",
+        "docs/product/project-plan.md:112-121",
+        "docs/product/development-testing-surfaces.md:136-162",
+        "docs/product/project-plan.md:526-533"
+      ],
+      "implementation_impact": "Milestone 3 mastery view, Inspect surface, scheduler reads, and future empirical tuning pipeline.",
+      "proposed_resolution": "Keep the v1 computed view, but add a design rule: recompute on demand for local Phase 1, add optional materialized cache after either a measured latency threshold or record count threshold, and store estimator version plus generated timestamp when cached."
+    },
+    {
+      "finding_id": "scheduler-001",
+      "category": "push-back",
+      "topic": "sustainability",
+      "summary": "FSRS-4.5 is not a complete v1 scheduler decision unless the design defines how non-card evidence maps into FSRS review ratings.",
+      "rationale": "The scheduler decision chooses FSRS-4.5 defaults and adds daily cap, pause mode, and stale handling. FSRS expects review events with memory-state/rating semantics, while this LMS logs heterogeneous prompts with demand level, support level, transfer distance, partial correctness, confidence, and source use. The design needs a translation layer from `EvidenceRecord` to FSRS rating/state, otherwise implementation agents will improvise inconsistent mappings.",
+      "design_refs": [
+        "docs/product/early-design-decisions.md:417-435",
+        "docs/product/project-plan.md:526-533",
+        "docs/product/project-plan.md:462-471",
+        "docs/product/project-plan.md:1326-1337"
+      ],
+      "implementation_impact": "Milestone 4 review queue behavior, FSRS adapter, evidence-to-rating tests, and scheduler reason codes.",
+      "proposed_resolution": "Add a `SchedulerEvidenceAdapter` design note mapping correctness, confidence, demand level, hint/reference use, and support level into FSRS ratings and reason codes, with tests that make the mapping explicit and easy to replace."
+    },
+    {
+      "finding_id": "privacy-001",
+      "category": "push-back",
+      "topic": "privacy",
+      "summary": "Trace-class retention is useful, but privacy cannot rely on classification alone without local-first routing and deletion semantics.",
+      "rationale": "The docs require `evidence-grade`, `formative`, and `ephemeral` trace classes, LangSmith retention, PII detection on write, and learner keep/forget controls. They do not specify whether an `ephemeral` or PII-demoted session is prevented from leaving the local system before classification, how LangSmith deletion is verified, or what happens to derived structured evidence when a transcript is forgotten. The design currently risks sending sensitive personal or professional reflection to external tracing before the class and redaction decision has real effect.",
+      "design_refs": [
+        "docs/product/early-design-decisions.md:460-479",
+        "docs/product/project-plan.md:380-390",
+        "docs/product/development-testing-surfaces.md:65-80"
+      ],
+      "implementation_impact": "Milestone 4 LLM wrapper, trace persistence, LangSmith integration, retention jobs, and learner keep/forget controls.",
+      "proposed_resolution": "Modify the privacy design to classify and redact locally before external tracing, default `ephemeral` to no verbatim external trace, define deletion propagation for LangSmith/provider logs where supported, and distinguish transcript deletion from retained structured evidence."
+    },
+    {
+      "finding_id": "ownership-001",
+      "category": "push-back",
+      "topic": "ownership-scope",
+      "summary": "Schema-level `ownership_scope` is not enough; authorization and aggregation boundaries need explicit enforcement primitives from day one.",
+      "rationale": "The docs say every graph, node, and edge carries `ownership_scope`, cross-scope links are explicit, and the scope is enforced at schema level on joins, queries, and analytics. A column does not enforce query or analytics safety by itself, and future institutional use makes accidental cross-scope leakage a serious design risk. Even in a local v1, the implementation should establish the service-layer and test pattern that proves personal evidence cannot enter institutional analytics.",
+      "design_refs": [
+        "README.md:234-236",
+        "docs/product/project-plan.md:292-304",
+        "docs/product/early-design-decisions.md:343-349",
+        "docs/product/project-plan.md:799-832"
+      ],
+      "implementation_impact": "Phase 1 schema constraints, repository/query helpers, service authorization tests, and future deployment topology.",
+      "proposed_resolution": "Add an ownership-boundary design note requiring scoped query helpers, aggregation tests, cross-scope `GraphReference` constraints, and a later decision on Postgres RLS before institutional deployment."
+    },
+    {
+      "finding_id": "export-001",
+      "category": "new-concern",
+      "topic": "ui-and-export",
+      "summary": "The v1 export contract says JSONL and later says re-importable, but no import, versioning, or privacy redaction contract is defined.",
+      "rationale": "The brief and project plan require `lms export --out=jsonl`, and Milestone 3 acceptance says the export produces a re-importable JSONL artifact. A backup contract is only credible if the design names schema versioning, entity ordering, IDs, content inclusion/exclusion, secret/trace redaction, and an import validation path. This matters more because research-note content may remain local/gitignored while product data goes public.",
+      "design_refs": [
+        "docs/product/early-design-decisions.md:349-350",
+        "docs/product/project-plan.md:1305-1316",
+        "docs/product/project-plan.md:1459-1460",
+        "README.md:227-230"
+      ],
+      "implementation_impact": "Milestone 3 CLI/API contract, schema migrations, backup tests, and privacy controls for LLM traces and source material.",
+      "proposed_resolution": "Define export v1 as newline-delimited typed records with `schema_version`, stable IDs, dependency ordering or references, optional redaction modes, and an `lms import --dry-run` validation path before calling it a backup contract."
+    },
+    {
+      "finding_id": "demo-001",
+      "category": "push-back",
+      "topic": "minimum-demo",
+      "summary": "The day-30 retention criterion is directionally right but not falsifiable as written because the counterfactual is undefined.",
+      "rationale": "The minimum demo requires demonstrating retention on three items the learner would not otherwise have retained. That phrase is not measurable without a baseline, pre-registration, or a comparison set, so it will be easy to pass narratively. The design can stay lightweight while still requiring a simple protocol that distinguishes real delayed retention from self-impression.",
+      "design_refs": [
+        "docs/handoff/codex-design-review-brief.md:152-169",
+        "docs/product/project-plan.md:1211-1224",
+        "docs/product/project-plan.md:1341-1349"
+      ],
+      "implementation_impact": "Milestone 4 demo issue acceptance criteria, seed data, attempt scheduling, and empirical review notebook.",
+      "proposed_resolution": "Replace the informal clause with a small pre-registered demo protocol: choose at least six candidate items, record initial confidence and unaided attempt, schedule three through the system and hold three as informal comparison or deferred-review items, then report day-30 delayed retrieval outcomes."
+    },
+    {
+      "finding_id": "llm-001",
+      "category": "new-concern",
+      "topic": "llm-cost",
+      "summary": "The LLM wrapper is underspecified for the features the design already commits to: structured outputs, streaming, retries, cost accounting, trace policy, and eval replay.",
+      "rationale": "The docs require a single LLM wrapper, per-mode model config, cost logs, budget kill-switch, LangSmith traces, eval datasets, and source-constrained feedback. A thin model-selection wrapper will not be enough to enforce budgets before calls, normalize token usage and cost across providers, attach trace class, support structured outputs for prompts/evidence, or replay gold-set transcripts. These behaviors need to be part of the wrapper contract before the first LLM flow is built.",
+      "design_refs": [
+        "docs/product/early-design-decisions.md:504-531",
+        "docs/product/project-plan.md:380-390",
+        "docs/product/project-plan.md:1331-1337",
+        "docs/product/development-testing-surfaces.md:65-80"
+      ],
+      "implementation_impact": "Milestone 4 LLM client interface, config files, eval harness, tracing hooks, and cost-monitoring tests.",
+      "proposed_resolution": "Define the wrapper interface as more than model selection: mode config resolution, budget preflight, retry/timeouts, optional streaming, structured-output validation, token/cost accounting, trace-class metadata, source constraints, and eval replay hooks."
+    },
+    {
+      "finding_id": "research-001",
+      "category": "push-back",
+      "topic": "schema-trim",
+      "summary": "Keeping research claims as YAML is a good v1 trim, but the docs still describe runtime research APIs and tables as early deliverables.",
+      "rationale": "The Phase 1 decision moves `LearningPrinciple`, `LearningClaim`, and `EvidenceSource` to YAML/JSON with a build-time validator until a product feature reads them. Yet the research-domain model still sketches API resources, and the project plan's Milestone 2 requires research registry models and CRUD APIs. This undermines the intended trim and risks building a provenance CMS before the learner loop works.",
+      "design_refs": [
+        "docs/product/project-plan.md:172-185",
+        "docs/product/project-plan.md:1050-1063",
+        "docs/product/project-plan.md:1141-1147",
+        "docs/product/project-plan.md:1273-1291",
+        "docs/product/research-domain-model.md:134-145"
+      ],
+      "implementation_impact": "Milestones 0-2 backlog, docs validator, CI/pre-commit setup, and API route scope.",
+      "proposed_resolution": "Revise Milestone 2 to implement only `docs/research` YAML schemas plus a validator and reference linter; keep runtime research registry APIs explicitly out of Milestones 0-4 unless needed by a demo feature."
+    },
+    {
+      "finding_id": "graph-001",
+      "category": "open-question",
+      "topic": "other",
+      "summary": "The knowledge-graph bootstrap path remains unresolved and should be settled before Phase 2 issue generation.",
+      "rationale": "The brief explicitly flags the first 50 nodes bootstrap path as uncertain. The docs support manually reviewed graph drafts and importers that create draft records, but they do not choose whether the first graph comes from manual entry, Markdown headings, CSV, LLM-proposed nodes, or a hybrid. Without a chosen path, issue writers may overbuild graph authoring or underbuild import/provenance tooling needed for the minimum demo.",
+      "design_refs": [
+        "docs/handoff/codex-design-review-brief.md:175-177",
+        "docs/product/early-design-decisions.md:196-203",
+        "docs/product/project-plan.md:834-852",
+        "docs/product/project-plan.md:1215-1216"
+      ],
+      "implementation_impact": "Milestones 2-3 importer, graph authoring UI, prompt authoring, and demo seed workflow.",
+      "proposed_resolution": "Add a bootstrap decision: for v1, import Markdown or CSV note slices into draft nodes, allow optional LLM-proposed node/edge drafts, and require human approval before prompts or scheduler use them."
+    }
+  ],
+  "overall_assessment": "The design is coherent at the thesis level and has the right center of gravity: learner action, evidence, scheduler explainability, source provenance, and formative LLM use. It is not yet clean enough for Phase 2 issue generation without edits because the second-pass trimmed scope conflicts with older curriculum/research/API roadmap sections. The main blocking concern is not architecture choice but specification hygiene: make Phase 1 scope, source/import/export contracts, evidence fields, FSRS adapter behavior, and privacy enforcement explicit before generating implementation issues."
+}

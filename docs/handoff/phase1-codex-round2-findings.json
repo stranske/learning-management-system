@@ -1,0 +1,157 @@
+{
+  "agent": "codex",
+  "phase": "phase1-round2-verification",
+  "generated_at": "2026-05-25T02:45:49Z",
+  "verifications": [
+    {
+      "finding_id": "scope-001",
+      "status": "partially-resolved",
+      "summary": "The major Phase 1 trim inconsistencies were corrected, but the v1 API sketch still includes capability endpoints that conflict with the revised milestone/core-entity boundary.",
+      "rationale": "The README now summarizes Milestones 0-8 and states Phase 1 targets exactly the 11-entity core while deferring course/module/lesson, full FeedbackRecord, runtime research APIs, and certification artifacts (README.md:191-205). The Initial Product Boundary and Phase 1 core list now center SourceReference, prompts, attempts, evidence, review queue, learning goals, and LLMSession, with Course/Module/Lesson and runtime research registry APIs deferred (docs/product/project-plan.md:47-66, 1187-1224). However, the v1 API block still lists `/capability/targets`, `/capability/estimates`, and `/capability/gap-analyses` even though README puts those artifacts in Milestone 5 and they are absent from the 11-entity Phase 1 core (docs/product/project-plan.md:1128-1130; README.md:197-205).",
+      "design_refs": [
+        "README.md:191-205",
+        "docs/product/project-plan.md:47-66",
+        "docs/product/project-plan.md:1128-1130",
+        "docs/product/project-plan.md:1187-1224",
+        "docs/product/development-testing-surfaces.md:88-110"
+      ],
+      "follow_up_needed": "Move capability endpoints to Phase 2+/Milestone 5 or explicitly add the capability entities back into the Phase 1 core and milestone plan."
+    },
+    {
+      "finding_id": "source-001",
+      "status": "resolved",
+      "summary": "`SourceReference` is now a first-class Phase 1 entity with the required v1 schema and runtime surface.",
+      "rationale": "The Phase 1 core list includes `SourceReference` as an entity, and the schema now covers source type, stable locator, passage range, content hash, hash algorithm, visibility, drift status, multi-source role, and capture time (docs/product/project-plan.md:1191-1216). Milestone 2 also adds the runtime entity, CRUD endpoints, drift detection, and importers that create references with content hashes (docs/product/project-plan.md:1359-1379). The v1 API sketch includes `/source-references`, so issue generation has an implementation target (docs/product/project-plan.md:1111-1117).",
+      "design_refs": [
+        "docs/product/project-plan.md:1111-1117",
+        "docs/product/project-plan.md:1191-1216",
+        "docs/product/project-plan.md:1359-1379"
+      ],
+      "follow_up_needed": "none"
+    },
+    {
+      "finding_id": "evidence-001",
+      "status": "resolved",
+      "summary": "The `EvidenceRecord` schema was expanded with the scoring, versioning, context, and validity fields needed for later learned models.",
+      "rationale": "The Mastery section now names `EvidenceRecord` as the load-bearing decision and adds `prompt_version_id`, scorer identity/version, scoring method, raw/normalized/max scores, partial-credit dimensions, item difficulty placeholder, attempt context, validity scope, and answer artifact reference (docs/product/project-plan.md:113-121). Milestone 3 explicitly points evidence records back to this verbose schema (docs/product/project-plan.md:1394-1402). This resolves the prior risk that future tuning would be unable to separate learner state from prompt, scorer, rubric, or context artifacts.",
+      "design_refs": [
+        "docs/product/project-plan.md:113-121",
+        "docs/product/project-plan.md:1394-1402"
+      ],
+      "follow_up_needed": "none"
+    },
+    {
+      "finding_id": "mastery-002",
+      "status": "resolved",
+      "summary": "`MasteryEstimate` remains a computed view, with an explicit materialization threshold and cache invalidation policy.",
+      "rationale": "The design keeps `MasteryEstimate` as a computed view over `EvidenceRecord` rather than a separately-written table (docs/product/project-plan.md:115-116). It now specifies recompute-on-demand for v1 and an optional materialized cache after either a measured >=200ms p99 read threshold or about 10,000 EvidenceRecord rows per learner, with `estimator_version` and `generated_at` stored on cached entries (docs/product/project-plan.md:117-119). Milestone 3 acceptance also preserves the recompute behavior as the implementation expectation (docs/product/project-plan.md:1404-1412).",
+      "design_refs": [
+        "docs/product/project-plan.md:115-119",
+        "docs/product/project-plan.md:1404-1412"
+      ],
+      "follow_up_needed": "none"
+    },
+    {
+      "finding_id": "scheduler-001",
+      "status": "resolved",
+      "summary": "The FSRS placeholder now has a concrete `SchedulerEvidenceAdapter` mapping heterogeneous evidence into FSRS ratings.",
+      "rationale": "The Review Scheduler section now defines the v1 FSRS-4.5 placeholder and sustainability defaults, including daily cap, pause/vacation mode, and stale states (docs/product/project-plan.md:565-572). The new `SchedulerEvidenceAdapter` subsection gives a 5-row Again/Hard/Good/Easy mapping table, partial-credit thresholds, transfer-item exclusion from FSRS scheduling, and a pure-function implementation with data-driven config and tests (docs/product/project-plan.md:574-590). This gives Phase 2 issues a reproducible adapter contract instead of leaving agents to infer it.",
+      "design_refs": [
+        "docs/product/project-plan.md:565-590"
+      ],
+      "follow_up_needed": "none"
+    },
+    {
+      "finding_id": "privacy-001",
+      "status": "resolved",
+      "summary": "The LLM privacy design now enforces local-first classification and redaction before external tracing.",
+      "rationale": "The project plan now requires the privacy posture to be enforced locally before any external trace export, with the wrapper redacting outbound LangSmith payloads and demoting overly sensitive traces to local-only `ephemeral` handling (docs/product/project-plan.md:411-416). It also states that ephemeral traces are never exported verbatim and that learner forget actions trigger local deletion, LangSmith deletion where supported, and preservation only of surviving structured evidence (docs/product/project-plan.md:412-416). Segment 9 in early design decisions repeats the same enforcement order and forget semantics, closing the prior post-hoc-classification gap (docs/product/early-design-decisions.md:462-467).",
+      "design_refs": [
+        "docs/product/project-plan.md:411-416",
+        "docs/product/early-design-decisions.md:462-467"
+      ],
+      "follow_up_needed": "none"
+    },
+    {
+      "finding_id": "ownership-001",
+      "status": "resolved",
+      "summary": "Ownership-scope enforcement now includes repository, database, test, and future RLS layers.",
+      "rationale": "The Knowledge Graph section now says the `ownership_scope` column alone is insufficient and defines four enforcement layers (docs/product/project-plan.md:309-316). Those layers include explicit scoped repository functions, a database constraint requiring normal KnowledgeEdge rows to stay within scope unless represented by GraphReference, cross-scope contamination tests for mastery, scheduler, Inspect, and analytics queries, and deferred Postgres RLS before institutional deployment (docs/product/project-plan.md:311-316). That resolves the original concern that ownership was only a column and not an enforceable boundary.",
+      "design_refs": [
+        "docs/product/project-plan.md:309-316"
+      ],
+      "follow_up_needed": "none"
+    },
+    {
+      "finding_id": "export-001",
+      "status": "resolved",
+      "summary": "The v1 export/import contract now specifies typed NDJSON, versioning, dependency ordering, redaction defaults, and dry-run/apply import paths.",
+      "rationale": "Milestone 3 now requires the export to be re-importable and verifies redaction defaults in acceptance criteria (docs/product/project-plan.md:1404-1412). The contract specifies newline-delimited typed records shaped as `{\"type\", \"schema_version\", \"record\"}`, stable IDs, dependency ordering, redaction modes for LLM traces, source content, and PII, and both `lms import --dry-run` and `lms import --apply` (docs/product/project-plan.md:1414-1424). This is sufficient for Phase 2 issue generation around backup and migration behavior.",
+      "design_refs": [
+        "docs/product/project-plan.md:1404-1424"
+      ],
+      "follow_up_needed": "none"
+    },
+    {
+      "finding_id": "demo-001",
+      "status": "resolved",
+      "summary": "The day-30 demo check is now a pre-registered, falsifiable retention protocol.",
+      "rationale": "The Minimum Demo Criterion now points item 6 to a day-30 pre-registered retention test instead of the previous informal counterfactual claim (docs/product/project-plan.md:1288-1298). The protocol requires 8 candidate items, 4 system-routed and 4 held as comparison, day-0 confidence and unaided pre-attempts, and a day-30 unaided free-recall sitting with recall quality, time, and confidence recorded (docs/product/project-plan.md:1299-1306). Milestone 4 also requires the protocol document to be written and locked before demo prompts are authored (docs/product/project-plan.md:1432-1446).",
+      "design_refs": [
+        "docs/product/project-plan.md:1288-1308",
+        "docs/product/project-plan.md:1432-1458"
+      ],
+      "follow_up_needed": "none"
+    },
+    {
+      "finding_id": "llm-001",
+      "status": "resolved",
+      "summary": "The LLM wrapper is now specified as the enforcement point for routing, budget checks, tracing, redaction, structured output validation, and eval replay.",
+      "rationale": "The Operational requirements now keep all LLM calls behind one wrapper, with per-mode model config, cost monitoring, budget cap, eval gold set, trace classes, and local privacy enforcement (docs/product/project-plan.md:404-417). The new interface defines `complete(...)`, pre-call budget preflight, provider routing, retries/timeouts, post-call token/cost accounting, trace metadata, redaction, LangSmith export by trace class, Pydantic structured-output validation, source constraints, eval replay, and provider adapters (docs/product/project-plan.md:418-427). That resolves the prior thin-wrapper ambiguity.",
+      "design_refs": [
+        "docs/product/project-plan.md:404-427"
+      ],
+      "follow_up_needed": "none"
+    },
+    {
+      "finding_id": "research-001",
+      "status": "resolved",
+      "summary": "The research registry is now consistently scoped to YAML files and validators for v1, with runtime APIs deferred.",
+      "rationale": "Milestone 2 now delivers YAML schemas, a build-time validator, a reference linter, SourceReference, drift detection, and importers, while explicitly marking runtime `/research/*` CRUD APIs out of scope (docs/product/project-plan.md:1359-1386). The API sketch states `/research/*` resources are deferred indefinitely and the research entities live under `docs/research/` rather than runtime HTTP resources (docs/product/project-plan.md:1179-1183). The research-domain model now opens with a v1 scope note clarifying that its field tables are conceptual YAML schema, not SQLAlchemy tables or Phase 1 HTTP resources (docs/product/research-domain-model.md:1-5).",
+      "design_refs": [
+        "docs/product/project-plan.md:1179-1183",
+        "docs/product/project-plan.md:1359-1386",
+        "docs/product/research-domain-model.md:1-5"
+      ],
+      "follow_up_needed": "none"
+    },
+    {
+      "finding_id": "graph-001",
+      "status": "resolved",
+      "summary": "The knowledge graph bootstrap path is now explicit: Markdown/CSV importers, optional LLM proposals, human approval, and audit fields.",
+      "rationale": "The Knowledge Graph Bootstrap subsection now chooses a concrete v1 path for the first roughly 50 nodes from personal research notes (docs/product/project-plan.md:318-327). It specifies Markdown heading import to draft KnowledgeNodes with SourceReferences, CSV import for explicit node/edge columns, optional authoring-assist LLM proposals in Milestone 4, a publication gate before prompts or scheduler use drafts, and audit metadata such as imported/proposed/approved fields (docs/product/project-plan.md:320-325). Milestone 2 deliverables and acceptance criteria align with that path for Markdown/CSV import and drift detection (docs/product/project-plan.md:1367-1379).",
+      "design_refs": [
+        "docs/product/project-plan.md:318-327",
+        "docs/product/project-plan.md:1367-1379"
+      ],
+      "follow_up_needed": "none"
+    }
+  ],
+  "new_concerns": [
+    {
+      "finding_id": "scope-002",
+      "category": "new-concern",
+      "topic": "capability-api-scope",
+      "summary": "The v1 API surface still includes capability endpoints that the surrounding milestone and Phase 1 core text now places outside Milestones 0-4.",
+      "rationale": "README now puts personal gap-closing artifacts (`CapabilityTarget`, `CapabilityEstimate`, `GapAnalysis`, `MaintenancePlan`) in Milestone 5 and defines Phase 1/Milestones 0-4 as the 11-entity core, which does not include those entities (README.md:197-205). The project plan's Phase 1 core list likewise excludes capability entities (docs/product/project-plan.md:1187-1204). But the v1 API block still lists `/capability/targets`, `/capability/estimates`, and `/capability/gap-analyses`, creating an issue-generation ambiguity about whether these are Phase 1 requirements or Milestone 5 additions (docs/product/project-plan.md:1123-1136).",
+      "design_refs": [
+        "README.md:197-205",
+        "docs/product/project-plan.md:1123-1136",
+        "docs/product/project-plan.md:1187-1204"
+      ],
+      "implementation_impact": "API surface sketch, Milestone 0-4 issue queue, and Milestone 5 capability/gap-closing sequencing.",
+      "proposed_resolution": "Move the `/capability/*` endpoints from the v1 API block to the Phase 2+/Milestone 5 block, or explicitly revise the Phase 1 core and milestones to include the capability entities in Milestones 0-4."
+    }
+  ],
+  "overall_assessment": "Conditional go for Phase 2 collaborative issue generation. Eleven of the twelve round-1 findings are resolved cleanly, and the remaining issue is a narrow scope hygiene mismatch rather than an architectural blocker. Before generating implementation issues, clean up the `/capability/*` API placement so Milestones 0-4 agents do not pull Milestone 5 capability/gap-closing work into Phase 1 by accident."
+}

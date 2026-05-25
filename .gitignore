@@ -8,3 +8,6 @@ codex-prompt.md
 codex-output.md
 verifier-context.md
 autofix_report_enriched.json
+
+# LMS-specific: Codex spawn logs (local-only, regenerable)
+docs/handoff/logs/

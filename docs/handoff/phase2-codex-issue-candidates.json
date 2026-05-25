@@ -1,0 +1,466 @@
+{
+  "agent": "codex",
+  "phase": "phase2-issue-generation",
+  "generated_at": "2026-05-25T03:44:11+00:00",
+  "scope": "milestones-0-through-4",
+  "issues": [
+    {
+      "issue_id": "M0-001",
+      "milestone": "M0",
+      "title": "Record backend stack and product boundary",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M0"
+      ],
+      "depends_on": [],
+      "body_markdown": "## Why\n\nThe first implementation needs a stable technical and product boundary before agents write code. The design docs select a local/private personal-research-note slice, Python/FastAPI/Postgres, REST/OpenAPI, local auth, Workflows automation, and explicit Phase 1 exclusions.\n\n## Scope\n\n- Create `docs/architecture/decision-records/0001-backend-stack-and-boundary.md` using the decision-record shape from `docs/product/early-design-decisions.md`.\n- Document selected stack: Python, FastAPI, SQLAlchemy, Alembic, Pydantic, pytest, Postgres, REST/OpenAPI, Jupyter/pandas.\n- Document first user and slice: project-owner personal learning from research notes.\n- Document explicit M0-M4 non-goals: Course/Module/Lesson, runtime `/research/*`, `/capability/*`, certification artifacts, full web prototype polish.\n\n## Non-Goals\n\n- Implementing application code.\n- Choosing production hosting or firm deployment topology.\n- Creating Milestone 5+ capability or certification APIs.\n\n## Tasks\n\n- [ ] Add the decision record with Context, Options considered, Selected direction, Reasoning, Risks, Follow-up questions, and Review date.\n- [ ] Update `docs/architecture/README.md` to link the decision record.\n- [ ] Add a short Phase 1 boundary table to the decision record that lists included and deferred entities.\n- [ ] Mention that `CapabilityTarget`, `CapabilityEstimate`, `GapAnalysis`, and `MaintenancePlan` begin in Milestone 5, not M0-M4.\n\n## Acceptance Criteria\n\n- [ ] `docs/architecture/decision-records/0001-backend-stack-and-boundary.md` exists and names the selected backend stack.\n- [ ] `docs/architecture/README.md` links the decision record.\n- [ ] The decision record explicitly lists all 11 Phase 1 Minimum Core entities and the deferred `/capability/*` API block.\n- [ ] The record cites `docs/product/project-plan.md` Milestone 0 and `docs/product/early-design-decisions.md` Segments 1 and 7.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Initial Product Boundary\", \"Implementation Roadmap / Milestone 0\", and `docs/product/early-design-decisions.md` Segments 1 and 7. Keep this as a written architecture commitment; later issues implement the code."
+    },
+    {
+      "issue_id": "M0-002",
+      "milestone": "M0",
+      "title": "Install Workflows consumer scaffolding",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M0"
+      ],
+      "depends_on": [
+        "M0-001"
+      ],
+      "body_markdown": "## Why\n\nThe new repo will be created via `gh repo create stranske/learning-management-system --template stranske/Template --public`, which uses GitHub's template-repository mechanism. Consumer-template files therefore arrive pre-installed at repo creation, and `maint-68-sync-consumer-repos.yml` keeps them current after the repo is registered. This issue verifies the pre-installed scaffolding, adds project-specific Codex/agent content, and documents the installed surface.\n\n## Scope\n\n- Verify the template-installed `.github/workflows/`, `AGENTS.md`, `CLAUDE.md`, `docs/AGENT_ISSUE_FORMAT.md`, `docs/LABELS.md`, `scripts/sync_test_dependencies.py`, and `tools/resolve_mypy_pin.py` are present and current.\n- Set repo variable `USE_CONSOLIDATED_WORKFLOWS=true` to use the consolidated `agents-80-pr-event-hub.yml` + `agents-81-gate-followups.yml` hubs.\n- Add project-specific `.github/codex/AGENT_INSTRUCTIONS.md` and `.github/codex/prompts/` content tailored to the LMS domain.\n- Add `docs/automation/workflows-consumer-setup.md` documenting the installed template files and any project-specific deviations.\n- Document the secret-registration plan that references the local `Numbers/values.txt` source.\n\n## Non-Goals\n\n- Modifying the upstream `stranske/Workflows` reusable workflows.\n- Authoring CI/keepalive/agent workflow files from scratch (they come from the template).\n- Creating Milestone 5+ scope or custom label inventories beyond the template defaults.\n\n## Tasks\n\n- [ ] Confirm template-installed files match the current consumer-repo template (diff against `Workflows/templates/consumer-repo/`).\n- [ ] Set `USE_CONSOLIDATED_WORKFLOWS=true` as a repo variable via `gh variable set USE_CONSOLIDATED_WORKFLOWS true`.\n- [ ] Add LMS-specific `.github/codex/AGENT_INSTRUCTIONS.md` with project context (learner loop, source citation, ownership scope, formative LLM policy).\n- [ ] Add `.github/codex/prompts/` content with LMS-aware lane prompts that complement the template defaults.\n- [ ] Author `docs/automation/workflows-consumer-setup.md` listing installed template files, applicable secrets, and any deviations.\n- [ ] Verify `gh issue create` against this repo accepts AGENT_ISSUE_FORMAT bodies without errors.\n\n## Acceptance Criteria\n\n- [ ] All template-required files exist in the repo (verified by a diff against `Workflows/templates/consumer-repo/`).\n- [ ] `gh variable list` shows `USE_CONSOLIDATED_WORKFLOWS=true`.\n- [ ] `.github/codex/AGENT_INSTRUCTIONS.md` exists with LMS-domain context.\n- [ ] `docs/automation/workflows-consumer-setup.md` lists installed files, required secrets, and any deviations from the template default.\n- [ ] No template-default workflow files are duplicated or shadowed by local copies.\n\n## Implementation Notes\n\nSee `README.md` \"Development Workflow\", `docs/product/early-design-decisions.md` Segment 7, and `Workflows/templates/consumer-repo/README.md` for template architecture. The template provides ~30 workflow files via `stranske/Workflows` reusable references; this issue is configuration, not authoring those workflows. Secrets registration (Anthropic, LangSmith, service-bot PATs) is documented in the local-only `Numbers/values.txt`.\n"
+    },
+    {
+      "issue_id": "M0-003",
+      "milestone": "M0",
+      "title": "Document v1 API and data contracts",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M0"
+      ],
+      "depends_on": [
+        "M0-001"
+      ],
+      "body_markdown": "## Why\n\nSingle-source-of-truth design content lives in `docs/product/project-plan.md` and `docs/product/early-design-decisions.md`. Re-describing the same content in separate per-topic architecture docs would create drift. This issue establishes an index and a decision-record directory that point to the canonical sections.\n\n## Scope\n\n- Create `docs/architecture/README.md` as the architecture index, linking to the relevant sections of `docs/product/project-plan.md` and `docs/product/early-design-decisions.md`.\n- Create `docs/architecture/decision-records/` directory (M0-001 fills in `0001-backend-stack-and-boundary.md`).\n- Add stable heading anchors in the canonical docs if a section title is too generic for reliable linking.\n\n## Non-Goals\n\n- Duplicating the API surface, data model, source citation, prompt provenance, privacy, scheduler, or any content already in `project-plan.md` or `early-design-decisions.md`.\n- Creating separate per-topic architecture docs (`api-v1.md`, `data-model-v1.md`, `source-citation-and-provenance.md`, `privacy-trace-classification.md`) that would drift from the canonical sources.\n- Implementing any API or data-model code.\n\n## Tasks\n\n- [ ] Author `docs/architecture/README.md` with sections: \"Decision Records,\" \"Where the Authoritative Design Content Lives\" (with links to `project-plan.md` API Surface Sketch, Phase 1 Minimum Core, Mastery section, Source Citation Policy, Prompt Provenance, SchedulerEvidenceAdapter, Ownership-boundary enforcement, Knowledge Graph Bootstrap, Export and import contract, LLM Operational Requirements, Minimum Demo Criterion), and \"How to Add a Decision Record.\"\n- [ ] Create `docs/architecture/decision-records/` directory.\n- [ ] Verify stable headings/anchors in `project-plan.md` and `early-design-decisions.md` for each linked section; add anchor IDs only if a section title is too generic.\n\n## Acceptance Criteria\n\n- [ ] `docs/architecture/README.md` exists and links to at least 8 canonical sections across `project-plan.md` and `early-design-decisions.md`.\n- [ ] No new architecture doc duplicates content from `project-plan.md` (verified by inspection \u2014 links only).\n- [ ] `docs/architecture/decision-records/` directory exists and is ready for M0-001's first record.\n- [ ] Every link in the index resolves to a current heading in the canonical source.\n\n## Implementation Notes\n\nThe architecture index is a navigation aid; the design lives in `docs/product/`. If a domain area later genuinely needs its own architecture doc (e.g., once authoring-assist matures into a larger subsystem), create it then with a clear scope distinction from the project plan.\n"
+    },
+    {
+      "issue_id": "M0-004",
+      "milestone": "M0",
+      "title": "Define repo security and secret assumptions",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M0"
+      ],
+      "depends_on": [
+        "M0-002",
+        "M0-003"
+      ],
+      "body_markdown": "## Why\n\nMilestone 0 requires security assumptions before implementation. The early system is local/private, but it still needs clear boundaries for Postgres credentials, LLM provider keys, LangSmith tracing, local-only sources, PII handling, and future SSO readiness.\n\n## Scope\n\n- Create `docs/architecture/security-assumptions.md`.\n- Create `.env.example` with non-secret placeholder variables.\n- Document GitHub secret names for database, LLM provider, LangSmith, and budget cap configuration.\n- Document local-only research-note content policy for the public repo.\n\n## Non-Goals\n\n- Implementing encryption, SSO, or row-level security.\n- Choosing final production hosting.\n- Storing real secrets in the repo.\n\n## Tasks\n\n- [ ] Add `.env.example` entries for `DATABASE_URL`, `LLM_MODEL_STUDY_COACH`, `LLM_MODEL_PRACTICE`, `LLM_DAILY_BUDGET_USD`, provider API key placeholders, and LangSmith toggles.\n- [ ] Document that research-note source bodies marked `local-only` are excluded from default exports.\n- [ ] Describe personal vs institutional data boundary assumptions and the future separate-deployment preference.\n- [ ] Add a checklist for secrets/environments needed after GitHub repo creation.\n\n## Acceptance Criteria\n\n- [ ] `.env.example` contains placeholders only and no real credentials.\n- [ ] `docs/architecture/security-assumptions.md` includes personal/institutional boundary, local-only source policy, LLM trace handling, and SSO-ready identity notes.\n- [ ] The document cites `docs/product/project-plan.md` Governance/Security and Segment 9 privacy decisions.\n- [ ] A grep for common secret patterns in `.env.example` shows no committed real key material.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Governance, Security, And Audit\", \"LLM Learning Interaction Layer\", and `docs/product/early-design-decisions.md` Segments 7 and 9. Keep implementation modest; this issue is documentation and configuration scaffolding."
+    },
+    {
+      "issue_id": "M1-001",
+      "milestone": "M1",
+      "title": "Create FastAPI application skeleton",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M1"
+      ],
+      "depends_on": [
+        "M0-001",
+        "M0-003"
+      ],
+      "body_markdown": "## Why\n\nMilestone 1 starts the API-first backend. A minimal FastAPI app with health and OpenAPI support gives later model, importer, scheduler, and LLM work a stable integration target.\n\n## Scope\n\n- Create `pyproject.toml` for Python package `lms`.\n- Create `src/lms/main.py` with `create_app()` and FastAPI router wiring.\n- Create module directories: `api`, `auth`, `curriculum`, `evidence`, `feedback`, `graphs`, `llm`, `mastery`, `scheduling`, `analytics`.\n- Add `/health` endpoint.\n\n## Non-Goals\n\n- Implementing domain models beyond skeleton placeholders.\n- Adding frontend surfaces.\n- Connecting to real LLM providers.\n\n## Tasks\n\n- [ ] Configure dependencies for FastAPI, Pydantic, SQLAlchemy, Alembic, pytest, ruff, black, mypy, Jupyter, and pandas.\n- [ ] Implement `src/lms/api/health.py` returning status, app name, and version.\n- [ ] Add `tests/api/test_health.py` for `GET /health`.\n- [ ] Add README or docs snippet for running the dev server locally.\n\n## Acceptance Criteria\n\n- [ ] `pytest tests/api/test_health.py` passes.\n- [ ] `GET /health` returns HTTP 200 with JSON containing `status: ok`.\n- [ ] `python -m lms` or documented equivalent starts the app locally.\n- [ ] OpenAPI docs are available from the FastAPI app in development mode.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` Milestone 1 and `docs/product/early-design-decisions.md` Segment 7. Keep router boundaries aligned with the planned `src/lms/` structure in `README.md`."
+    },
+    {
+      "issue_id": "M1-002",
+      "milestone": "M1",
+      "title": "Add database session and Alembic baseline",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M1"
+      ],
+      "depends_on": [
+        "M1-001"
+      ],
+      "body_markdown": "## Why\n\nThe core learner loop depends on durable records and repeatable migrations. A Postgres-first SQLAlchemy/Alembic baseline lets subsequent issues add entities without inventing persistence setup each time.\n\n## Scope\n\n- Add `src/lms/db/base.py`, `src/lms/db/session.py`, and `src/lms/settings.py`.\n- Configure SQLAlchemy engine/session from `DATABASE_URL`.\n- Initialize Alembic under `alembic/`.\n- Add a baseline migration that can run against an empty database.\n\n## Non-Goals\n\n- Adding domain entity tables other than a minimal migration marker if needed.\n- Supporting SQLite as a first-class database.\n- Implementing RLS.\n\n## Tasks\n\n- [ ] Create typed settings using Pydantic settings or equivalent.\n- [ ] Add `lms db upgrade` or documented Alembic command.\n- [ ] Add test database fixture in `tests/conftest.py`.\n- [ ] Document local Postgres setup in `docs/development/backend-setup.md`.\n\n## Acceptance Criteria\n\n- [ ] `alembic upgrade head` succeeds against a fresh Postgres database.\n- [ ] `alembic downgrade base` or documented reset path succeeds for the baseline.\n- [ ] `tests/conftest.py` provides an isolated DB session fixture for later model tests.\n- [ ] `docs/development/backend-setup.md` documents local Postgres creation and migration commands.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` Milestone 1 acceptance criteria and `docs/product/early-design-decisions.md` Segment 7 Postgres-first decision. Use migration-friendly model naming because later issues will add all Phase 1 entities."
+    },
+    {
+      "issue_id": "M1-003",
+      "milestone": "M1",
+      "title": "Wire lint, formatting, typing, tests, and CI",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M1"
+      ],
+      "depends_on": [
+        "M1-001",
+        "M0-002"
+      ],
+      "body_markdown": "## Why\n\nThe consumer template's `ci.yml` is a thin caller for `stranske/Workflows/.github/workflows/reusable-10-ci-python.yml@main`, which already runs Ruff, Black, mypy, and pytest on Python 3.12 and 3.13 with an 80% coverage minimum. This issue configures the `pyproject.toml` tooling so the template-provided CI runs cleanly on this codebase. The keepalive loop needs deterministic local + CI check commands without us authoring a new CI workflow.\n\n## Scope\n\n- Configure `pyproject.toml` sections for `[tool.ruff]`, `[tool.black]`, `[tool.mypy]`, and `[tool.pytest.ini_options]` so they match the conventions used by `reusable-10-ci-python.yml`.\n- Add `Makefile` or `justfile` aliases for local checks that mirror the CI behavior.\n- Verify the template-provided `ci.yml` runs green against this repo's tooling on the first PR.\n- Configure coverage minimum to the template default (80%) and document any deviation.\n\n## Non-Goals\n\n- Authoring `.github/workflows/ci.yml` from scratch (it comes from the template).\n- Modifying the reusable CI workflow in `stranske/Workflows`.\n- Adding deployment or integration-test workflows.\n- Configuring real LLM provider credentials in CI.\n\n## Tasks\n\n- [ ] Configure `[tool.ruff]` with rules and line length consistent with the template's expected default.\n- [ ] Configure `[tool.black]` with Python 3.12 / 3.13 target.\n- [ ] Configure `[tool.mypy]` strict-enough mode for the modules to be added in M1-M4; document any per-module loosening.\n- [ ] Configure `[tool.pytest.ini_options]` with `testpaths`, async support if needed, and the test-database fixture pattern.\n- [ ] Add `Makefile` or `justfile` targets: `lint`, `format`, `typecheck`, `test`, `check`.\n- [ ] Confirm `make check` runs locally in under 2 minutes; verify CI green on the first PR.\n\n## Acceptance Criteria\n\n- [ ] `pyproject.toml` includes valid Ruff, Black, mypy, and pytest sections.\n- [ ] `make check` (or `just check`) runs lint, format check, typecheck, and tests in under 2 minutes on a clean checkout.\n- [ ] The template-provided CI workflow (`reusable-10-ci-python.yml`) passes on a PR with the M1-001 health endpoint.\n- [ ] No CI workflow YAML is authored locally (verified by `git status` showing template-provided workflow files unchanged except for documented deviations).\n- [ ] Coverage minimum is 80% (template default) or a documented project-specific deviation.\n\n## Implementation Notes\n\nSee `Workflows/templates/consumer-repo/.github/workflows/ci.yml` for the template's invocation signature (`python-versions: '[\"3.12\", \"3.13\"]'`, `typecheck: true`, `coverage: true`, `coverage-min: '80'`). The reusable workflow at `stranske/Workflows/.github/workflows/reusable-10-ci-python.yml@main` is the actual CI logic; this issue's job is to make our `pyproject.toml` and project structure compatible with it. Required local files per the template: `scripts/sync_test_dependencies.py`, `tools/resolve_mypy_pin.py` (both arrive via the template at repo creation).\n"
+    },
+    {
+      "issue_id": "M1-004",
+      "milestone": "M1",
+      "title": "Implement User and Learner auth placeholder",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M1"
+      ],
+      "depends_on": [
+        "M1-002"
+      ],
+      "body_markdown": "## Why\n\nPhase 1 includes `User` and `Learner`, and the backend needs a local auth placeholder that does not block later SSO. This establishes identity ownership for attempts, evidence, review queue items, audit events, and LLM sessions.\n\n## Scope\n\n- Add SQLAlchemy models for `User` and `Learner` under `src/lms/auth/models.py` and `src/lms/learners/models.py` or an equivalent local pattern.\n- Add Alembic migration for `users` and `learners` tables.\n- Add minimal `/auth/users` and `/learners` API routes for local development.\n- Add auth dependency placeholder that returns a local user in development/test mode.\n\n## Non-Goals\n\n- Implementing production password auth, OAuth, or SSO.\n- Adding roles and permissions tables beyond documented placeholders.\n- Building manager or tenant dashboards.\n\n## Tasks\n\n- [ ] Implement `User` with stable id, email or username, display name, local auth marker, and timestamps.\n- [ ] Implement `Learner` linked to `User` with profile defaults needed by later learning-goal and scheduling work.\n- [ ] Add repository functions that require explicit learner id rather than using global state.\n- [ ] Write tests for user/learner creation and development auth dependency.\n\n## Acceptance Criteria\n\n- [ ] `alembic upgrade head` creates `users` and `learners` tables.\n- [ ] `tests/auth/test_users.py::test_create_local_user` passes.\n- [ ] `tests/learners/test_learners.py::test_create_learner_for_user` passes.\n- [ ] OpenAPI includes `/auth/users` and `/learners` endpoints with local-development semantics documented.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Phase 1 Minimum Core\" and `docs/product/early-design-decisions.md` Segment 7 local auth with SSO-ready identity design. Keep role/permission depth deferred."
+    },
+    {
+      "issue_id": "M2-001",
+      "milestone": "M2",
+      "title": "Add research YAML schemas and validator",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M2"
+      ],
+      "depends_on": [
+        "M1-003",
+        "M0-003"
+      ],
+      "body_markdown": "## Why\n\nMilestone 2 keeps learning principles, claims, and evidence sources as YAML with build-time validation instead of runtime DB tables. This preserves research provenance while avoiding premature `/research/*` APIs.\n\n## Scope\n\n- Add seed YAML files under `docs/research/registry/`: `principles.yml`, `claims.yml`, `evidence-sources.yml`.\n- Add schemas under `src/lms/research_registry/schemas.py` or `schemas/` using Pydantic or JSON Schema.\n- Add CLI command `lms validate-research-registry`.\n- Add linter support for content references to undefined principle or claim ids.\n\n## Non-Goals\n\n- Creating runtime research registry database tables.\n- Adding `/research/*` HTTP endpoints.\n- Fully migrating all existing research notes into YAML.\n\n## Tasks\n\n- [ ] Implement enums for evidence level, claim status including `deprecated`, source type, and review cadence from `docs/product/research-domain-model.md`.\n- [ ] Seed at least the Chapter 1 and Section 2.3 records needed for retrieval and evidence design.\n- [ ] Validate cross-references between claims, principles, and evidence sources.\n- [ ] Add a failing fixture that references an unknown principle id.\n\n## Acceptance Criteria\n\n- [ ] `lms validate-research-registry` passes for committed seed YAML.\n- [ ] `tests/research_registry/test_validator.py::test_unknown_principle_reference_fails` passes.\n- [ ] The schema allows `claimStatus: deprecated` and `evidenceLevel: deprecated` where applicable.\n- [ ] No runtime `/research/*` endpoint or SQLAlchemy table is added.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` Milestone 2 and `docs/product/research-domain-model.md` v1 scope note plus Core Entities. This validator is build-time provenance hygiene, not product CRUD."
+    },
+    {
+      "issue_id": "M2-002",
+      "milestone": "M2",
+      "title": "Implement audit log for authoring actions",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M2"
+      ],
+      "depends_on": [
+        "M1-004"
+      ],
+      "body_markdown": "## Why\n\nPrompt, graph, and source authoring must be auditable from v1 even though personal scope does not enforce author/learner separation. The audit log becomes the common trail for importer actions and future institutional review.\n\n## Scope\n\n- Add `AuditLog` SQLAlchemy model under `src/lms/audit/models.py`.\n- Add Alembic migration for `audit_events` table.\n- Add repository helper `record_audit_event(...)`.\n- Add read endpoint `/audit/events` with explicit filters for entity type and actor.\n\n## Non-Goals\n\n- Adding manager dashboards.\n- Implementing immutable event sourcing for every table.\n- Adding institutional role separation.\n\n## Tasks\n\n- [ ] Represent actor id, action, entity type, entity id, before/after summary JSON, timestamp, and source subsystem.\n- [ ] Call the audit helper from local create/update paths added in this issue only through tests or fixtures.\n- [ ] Add tests for recording and filtering events.\n- [ ] Document required audited entities: `KnowledgeNode`, `KnowledgeEdge`, `Prompt`, `SourceReference`, and future `Rubric`.\n\n## Acceptance Criteria\n\n- [ ] `alembic upgrade head` creates `audit_events`.\n- [ ] `tests/audit/test_audit_log.py::test_record_authoring_event` passes.\n- [ ] `GET /audit/events?entity_type=SourceReference` returns only matching events in an API test.\n- [ ] Implementation notes or docs state that importers and CRUD issues must call `record_audit_event`.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` Prompt provenance and Milestone 2 audit-log deliverable. Keep the schema simple but stable; later issues wire this into each authoring path."
+    },
+    {
+      "issue_id": "M2-003",
+      "milestone": "M2",
+      "title": "Implement SourceReference CRUD and drift scan",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M2"
+      ],
+      "depends_on": [
+        "M1-002",
+        "M2-002"
+      ],
+      "body_markdown": "## Why\n\nEvery prompt and imported node needs a first-class `SourceReference` with stable locator, content hash, visibility, and drift status. Without this, the Minimum Demo cannot prove source-grounded prompts or stale-prompt detection.\n\n## Scope\n\n- Add `SourceReference` model in `src/lms/curriculum/source_references.py` or a dedicated `src/lms/sources/` module.\n- Add Alembic migration for `source_references`.\n- Add `/source-references` CRUD endpoints.\n- Add content hashing and drift-scan service.\n\n## Non-Goals\n\n- Prompt creation.\n- Markdown or CSV importers.\n- Exporting source content bodies.\n\n## Tasks\n\n- [ ] Implement fields: id, source_type, stable_locator, passage_range, content_hash, hash_algorithm, source_visibility, drift_status, multi_source_role, captured_at.\n- [ ] Implement `compute_source_hash(...)` for markdown file passages and generic string content.\n- [ ] Implement `lms source-references scan-drift` that marks changed sources `stale` and missing sources `missing`.\n- [ ] Record audit events on create/update and drift-status changes.\n\n## Acceptance Criteria\n\n- [ ] `alembic upgrade head` creates `source_references` with enum or constrained values for source type, visibility, and drift status.\n- [ ] `tests/sources/test_source_references.py::test_create_source_reference_with_sha256_hash` passes.\n- [ ] `tests/sources/test_drift_scan.py::test_changed_markdown_passage_marks_reference_stale` passes.\n- [ ] `POST /source-references` records an `audit_events` row.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"SourceReference schema (v1)\", \"Source citation policy\", and Milestone 2. `local-only` source visibility must be preserved for export/redaction issues later."
+    },
+    {
+      "issue_id": "M2-004",
+      "milestone": "M2",
+      "title": "Implement KnowledgeNode and KnowledgeEdge models",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M2"
+      ],
+      "depends_on": [
+        "M1-004",
+        "M2-002"
+      ],
+      "body_markdown": "## Why\n\nThe Minimum Demo starts by importing research notes into draft `KnowledgeNode` records and prerequisite relationships. The graph model must include `ownership_scope` and enforce that normal edges do not cross personal/institutional boundaries.\n\n## Scope\n\n- Add graph models under `src/lms/graphs/models.py`.\n- Add Alembic migration for `knowledge_nodes`, `knowledge_edges`, and explicit `graph_references` if needed for cross-scope links.\n- Add repository functions that accept explicit `scope`.\n- Add CRUD endpoints for `/knowledge/nodes` and `/knowledge/edges`.\n\n## Non-Goals\n\n- Building graph visualization UI.\n- Implementing advanced graph edge types beyond v1 needs unless enum-backed.\n- Adding performance-driven graph-change proposals.\n\n## Tasks\n\n- [ ] Implement `KnowledgeNode` with id, title, description, knowledge_type, ownership_scope, status, provenance, imported_from, source_reference_id, timestamps.\n- [ ] Implement `KnowledgeEdge` with source/target ids, edge_type, ownership_scope or source_scope/target_scope, confidence, status, and audit fields.\n- [ ] Add DB constraint preventing cross-scope normal edges unless an explicit graph reference mechanism is used.\n- [ ] Add repository tests that require an explicit `scope` parameter and reject implicit all-scope reads.\n\n## Acceptance Criteria\n\n- [ ] `alembic upgrade head` creates node and edge tables with `ownership_scope` constraints.\n- [ ] `tests/graphs/test_models.py::test_normal_edge_cannot_cross_ownership_scope` passes.\n- [ ] `tests/graphs/test_repositories.py::test_node_queries_require_explicit_scope` passes.\n- [ ] `POST /knowledge/nodes` and `POST /knowledge/edges` create audit events.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Knowledge Graph\", \"Ownership-boundary enforcement\", and \"Knowledge Graph Bootstrap (v1)\". V1 may start with prerequisite edges, but model the enum so later allowed edge types can be added deliberately."
+    },
+    {
+      "issue_id": "M2-005",
+      "milestone": "M2",
+      "title": "Build Markdown note importer",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M2"
+      ],
+      "depends_on": [
+        "M2-003",
+        "M2-004"
+      ],
+      "body_markdown": "## Why\n\nThe first Minimum Demo requirement is importing about 10 research notes into draft `KnowledgeNode` records with `SourceReference` links and content hashes. The Markdown importer is the main path for seeding those notes without losing provenance.\n\n## Scope\n\n- Add CLI command `lms import-notes <path>`.\n- Parse Markdown headings from files or directories.\n- Create draft `KnowledgeNode` records from H1/H2 headings.\n- Create candidate prerequisite `KnowledgeEdge` records from nested heading structure where reasonable.\n- Create heading-level `SourceReference` records with hashes.\n\n## Non-Goals\n\n- Publishing imported nodes automatically.\n- Importing PDFs or Kindle highlights directly.\n- Generating prompts from imported notes.\n\n## Tasks\n\n- [ ] Use a structured Markdown parser rather than ad hoc line splitting where feasible.\n- [ ] Mark imported nodes with `status: draft`, `provenance: imported`, and `imported_from` path.\n- [ ] Set `source_visibility` based on CLI option with safe default for local research notes.\n- [ ] Record audit events for created source references, nodes, and edges.\n- [ ] Add dry-run mode that reports planned creates without writing.\n\n## Acceptance Criteria\n\n- [ ] `tests/importers/test_markdown_importer.py::test_h1_h2_create_draft_nodes_with_source_references` passes.\n- [ ] `tests/importers/test_markdown_importer.py::test_dry_run_does_not_write_records` passes.\n- [ ] Running `lms import-notes docs/research --limit 10 --dry-run` produces a summary of planned nodes and sources.\n- [ ] Imported draft nodes cannot be consumed by prompt creation until published by later authoring logic.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Knowledge Graph Bootstrap (v1)\" and Minimum Demo Criterion item 1. Keep source bodies out of the public repo when `source_visibility=local-only`."
+    },
+    {
+      "issue_id": "M2-006",
+      "milestone": "M2",
+      "title": "Build CSV graph importer",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M2"
+      ],
+      "depends_on": [
+        "M2-003",
+        "M2-004"
+      ],
+      "body_markdown": "## Why\n\nThe CSV importer provides a controlled way to seed explicit node and prerequisite data from outlines, spreadsheets, or OPML conversions. It complements Markdown import when headings are not enough to express the intended graph.\n\n## Scope\n\n- Add CLI command `lms import-graph <path>`.\n- Support columns for node title, knowledge type, prerequisite list, ownership scope, status, source locator, and optional source range.\n- Create draft nodes, source references, and prerequisite edges.\n- Add dry-run validation before writes.\n\n## Non-Goals\n\n- Building spreadsheet UI.\n- Supporting every graph edge type in CSV from day one.\n- Publishing nodes automatically.\n\n## Tasks\n\n- [ ] Define CSV schema in `docs/importers/csv-graph-format.md`.\n- [ ] Validate missing columns and unknown prerequisite references with clear errors.\n- [ ] Record audit events for created records.\n- [ ] Add tests for successful import and validation failure.\n\n## Acceptance Criteria\n\n- [ ] `docs/importers/csv-graph-format.md` exists with example CSV.\n- [ ] `tests/importers/test_csv_graph_importer.py::test_import_nodes_and_prerequisite_edges` passes.\n- [ ] `tests/importers/test_csv_graph_importer.py::test_unknown_prerequisite_fails_before_writes` passes.\n- [ ] `lms import-graph sample.csv --dry-run` reports counts for nodes, edges, and source references.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` Milestone 2 and \"Knowledge Graph Bootstrap (v1)\". This issue stays focused on explicit CSV input; LLM-assisted graph proposals wait until Milestone 4."
+    },
+    {
+      "issue_id": "M3-001",
+      "milestone": "M3",
+      "title": "Add LearningGoal and publication gate",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M3"
+      ],
+      "depends_on": [
+        "M2-004"
+      ],
+      "body_markdown": "## Why\n\nFor Phase 1, `LearningGoal` carries the personal objective role that a separate `LearningObjective` would play later. Published nodes and knowledge-type-tagged goals are prerequisites for prompts, attempts, mastery, and review.\n\n## Scope\n\n- Add `LearningGoal` model under `src/lms/learners/models.py` or `src/lms/goals/models.py`.\n- Add endpoints for `/learners/{learnerId}/learning-goals`.\n- Add publication gate helpers for `KnowledgeNode` status.\n- Prevent prompts from targeting draft nodes.\n\n## Non-Goals\n\n- Adding CapabilityTarget, GapAnalysis, or curriculum LearningObjective entities.\n- Building a full goal planning UI.\n- Implementing scheduler recommendations.\n\n## Tasks\n\n- [ ] Implement fields for learner id, title, knowledge_type, target node ids, status, ownership_scope, and timestamps.\n- [ ] Add repository functions for creating, updating, and listing goals by learner and scope.\n- [ ] Add tests for creating a goal tied to published nodes.\n- [ ] Add tests that draft nodes are rejected as prompt targets.\n\n## Acceptance Criteria\n\n- [ ] `alembic upgrade head` creates `learning_goals` and relationship tables if needed.\n- [ ] `tests/goals/test_learning_goals.py::test_create_knowledge_type_tagged_goal` passes.\n- [ ] `tests/goals/test_publication_gate.py::test_prompt_target_rejects_draft_node` passes.\n- [ ] `GET /learners/{learnerId}/learning-goals` returns only that learner\u2019s goals.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Phase 1 Minimum Core\", \"Moved out of Phase 1\", and `docs/product/development-testing-surfaces.md` Surface 1 and Surface 3. Do not introduce Milestone 5 capability artifacts."
+    },
+    {
+      "issue_id": "M3-002",
+      "milestone": "M3",
+      "title": "Implement Prompt model with provenance",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M3"
+      ],
+      "depends_on": [
+        "M2-003",
+        "M2-004",
+        "M3-001"
+      ],
+      "body_markdown": "## Why\n\nThe Minimum Demo needs about 30 retrieval prompts with source citations, knowledge-type tags, demand levels, and provenance. Prompt provenance is cheap to capture now and hard to retrofit once LLM-assisted authoring exists.\n\n## Scope\n\n- Add `Prompt` and `PromptVersion` models under `src/lms/evidence/models.py` or `src/lms/prompts/models.py`.\n- Add source-reference join table enforcing at least one `SourceReference` per prompt.\n- Add CRUD endpoints for `/prompts`.\n- Add publication status and provenance validation.\n\n## Non-Goals\n\n- Implementing LLM authoring-assist generation.\n- Scoring attempts.\n- Adding a separate FeedbackRecord table.\n\n## Tasks\n\n- [ ] Implement fields for target node, learning goal, knowledge_type, intended cognitive action, demand_level, expected_answer_form, source references, status, and version.\n- [ ] Record provenance fields: authoring_method, authoring_actor, reviewing_actor, approval_timestamp, llm_model, prompt_template_version.\n- [ ] Require human review for `llm-generated` prompts before publication.\n- [ ] Record audit events on create/update and publish.\n- [ ] Add API tests for create, version, and publish.\n\n## Acceptance Criteria\n\n- [ ] `tests/prompts/test_prompts.py::test_prompt_requires_source_reference` passes.\n- [ ] `tests/prompts/test_prompts.py::test_llm_generated_prompt_starts_draft` passes.\n- [ ] `tests/prompts/test_prompts.py::test_publish_prompt_records_reviewing_actor_and_approval_timestamp` passes.\n- [ ] `POST /prompts` returns the linked `SourceReference` ids and provenance fields.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Retrieval And Assessment Engine\", \"Source citation policy\", \"Prompt provenance\", and Minimum Demo Criterion item 2. Keep source references visible after attempts by default in later learner-loop work."
+    },
+    {
+      "issue_id": "M3-003",
+      "milestone": "M3",
+      "title": "Implement Attempt and structured feedback field",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M3"
+      ],
+      "depends_on": [
+        "M3-002",
+        "M1-004"
+      ],
+      "body_markdown": "## Why\n\nLearner attempts are the observable action layer between prompts and evidence. Phase 1 keeps feedback as a structured field on `Attempt`, not a separate `FeedbackRecord` table, so attempts must capture response, confidence, support, and next action cleanly.\n\n## Scope\n\n- Add `Attempt` model under `src/lms/evidence/models.py`.\n- Add `/attempts` create and read endpoints.\n- Capture response metadata, confidence rating, hint/reference use, support level, elapsed time, and structured feedback.\n- Link attempts to learner, prompt, and optional LLM session later.\n\n## Non-Goals\n\n- Creating verbose `EvidenceRecord` rows in this issue unless needed through a placeholder service.\n- Adding separate FeedbackRecord/Rubric tables.\n- Implementing review scheduling.\n\n## Tasks\n\n- [ ] Implement a Pydantic request model for attempt submission.\n- [ ] Record whether reference access occurred during the attempt and expose that in API responses.\n- [ ] Represent feedback as structured JSON with goal, observed evidence, gap, and next action fields.\n- [ ] Add tests for attempt creation, confidence validation, and reference-use tracking.\n\n## Acceptance Criteria\n\n- [ ] `alembic upgrade head` creates `attempts`.\n- [ ] `tests/evidence/test_attempts.py::test_submit_attempt_with_confidence_and_reference_use` passes.\n- [ ] `tests/evidence/test_attempts.py::test_structured_feedback_requires_next_action` passes.\n- [ ] `POST /attempts` returns a stable attempt id linked to learner and prompt.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Learner Completes A Learning Activity\", \"Retrieval And Assessment Engine\", and Milestone 4 feedback-next-action deliverable. A separate `FeedbackRecord` table is intentionally deferred."
+    },
+    {
+      "issue_id": "M3-004",
+      "milestone": "M3",
+      "title": "Implement verbose EvidenceRecord schema",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M3"
+      ],
+      "depends_on": [
+        "M3-003"
+      ],
+      "body_markdown": "## Why\n\nThe design treats `EvidenceRecord`, not the first mastery formula, as the load-bearing schema decision. Verbose evidence is required for future learned mastery models and for the Minimum Demo attempt-to-mastery path.\n\n## Scope\n\n- Add `EvidenceRecord` model under `src/lms/evidence/models.py`.\n- Add service that creates observed evidence from an `Attempt`.\n- Separate observed evidence from inferred evidence in the schema.\n- Add `/evidence-records` read endpoint with learner/node filters.\n\n## Non-Goals\n\n- Implementing a learned mastery model.\n- Adding rubrics or human-review workflows beyond scorer metadata fields.\n- Adding implicit graph review credit.\n\n## Tasks\n\n- [ ] Implement fields from the Mastery section: timestamp, prompt id, prompt_version_id, demand level, knowledge type, time since last attempt, response time, correctness, confidence, hint/reference use, support level, retrieval demand, transfer distance, source-match quality, scorer metadata, raw/normalized/max score, partial_credit_dimensions, item_difficulty_estimate, attempt_context, validity_scope, answer_artifact_ref.\n- [ ] Add `evidence_kind` or equivalent to distinguish observed and inferred evidence.\n- [ ] Create evidence in the attempt submission flow where correctness/scoring is supplied.\n- [ ] Write roundtrip and validation tests for binary and partial-credit records.\n\n## Acceptance Criteria\n\n- [ ] `alembic upgrade head` creates `evidence_records` with the verbose schema.\n- [ ] `tests/evidence/test_evidence_records.py::test_evidence_record_roundtrip_full_schema` passes.\n- [ ] `tests/evidence/test_evidence_records.py::test_observed_and_inferred_evidence_are_distinct` passes.\n- [ ] `POST /attempts` can create an `EvidenceRecord` when scoring fields are provided.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Mastery Is An Evidence-Backed Estimate\" and \"Phase 1 Minimum Core\". Preserve raw signals even if the v1 estimator ignores many fields."
+    },
+    {
+      "issue_id": "M3-005",
+      "milestone": "M3",
+      "title": "Compute MasteryEstimate from evidence",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M3"
+      ],
+      "depends_on": [
+        "M3-004"
+      ],
+      "body_markdown": "## Why\n\nMastery must be a recomputed view over evidence, not a separately-written table. V1 uses an FSRS-4.5 placeholder policy so the system can show current mastery while preserving future recompute ability.\n\n## Scope\n\n- Add `src/lms/mastery/policy.py` with `MasteryEstimatorPolicy` keyed by knowledge type.\n- Add `src/lms/mastery/service.py` to recompute mastery estimates from `EvidenceRecord` history.\n- Add `/learners/{learnerId}/mastery-estimates` endpoint.\n- Expose model attribution and generated timestamp in the computed response.\n\n## Non-Goals\n\n- Persisting a materialized mastery cache.\n- Tuning FSRS parameters from project data.\n- Adding capability or gap-analysis records.\n\n## Tasks\n\n- [ ] Integrate a lightweight FSRS-4.5-compatible library or isolate a placeholder adapter behind a policy interface.\n- [ ] Return current estimate, confidence, recency, evidence count, last evidence id, estimator_version, and model attribution.\n- [ ] Add tests that changing evidence changes recomputed mastery without writing a mastery table.\n- [ ] Document cache thresholds for future materialization but do not implement cache.\n\n## Acceptance Criteria\n\n- [ ] `tests/mastery/test_mastery_estimates.py::test_mastery_recomputes_from_evidence_history` passes.\n- [ ] `tests/mastery/test_mastery_estimates.py::test_no_mastery_estimate_table_is_required` passes or an equivalent schema assertion exists.\n- [ ] `GET /learners/{learnerId}/mastery-estimates` returns per-node estimates with `estimator_version` and `generated_at`.\n- [ ] Implementation docs state that materialized cache waits until latency or record-count thresholds are crossed.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` Mastery section and `docs/product/early-design-decisions.md` Segment 2. Treat FSRS as throwaway scaffolding and the evidence schema as the durable decision."
+    },
+    {
+      "issue_id": "M3-006",
+      "milestone": "M3",
+      "title": "Build Inspect surface backend and UI shell",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M3"
+      ],
+      "depends_on": [
+        "M3-005",
+        "M2-003"
+      ],
+      "body_markdown": "## Why\n\nThe Inspect surface is load-bearing for debugging mastery, evidence, scheduler decisions, prompt provenance, and source drift before the demo depends on them. It must be mobile-friendly and useful with sparse early data.\n\n## Scope\n\n- Add Inspect API endpoints under `src/lms/api/inspect.py`.\n- Add a minimal internal web UI or server-rendered shell with tabs for Evidence, Mastery, Prompts, Sources, and Scheduler placeholders.\n- Show evidence timeline, current mastery per node, prompt provenance, and source drift status.\n- Handle empty states and mobile-sized viewports.\n\n## Non-Goals\n\n- Building the polished learner web app.\n- Adding full graph visualization.\n- Implementing scheduler logic beyond placeholder log display.\n\n## Tasks\n\n- [ ] Add `/inspect/learners/{learnerId}/overview` API returning mastery, recent evidence, prompt provenance, and source drift summaries.\n- [ ] Add UI route `/inspect` if the app includes a browser surface, or document the JSON Inspect surface if UI is deferred by repo pattern.\n- [ ] Add responsive CSS framework consistent with project defaults.\n- [ ] Add tests for Inspect aggregation staying within explicit ownership scope.\n\n## Acceptance Criteria\n\n- [ ] `tests/inspect/test_inspect_api.py::test_overview_includes_mastery_evidence_prompt_and_source_status` passes.\n- [ ] `tests/inspect/test_inspect_scope.py::test_inspect_does_not_mix_ownership_scopes` passes.\n- [ ] A mobile-width screenshot or documented browser check shows Inspect content fits without horizontal-only interaction.\n- [ ] The Inspect surface shows model attribution for mastery estimates.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` Milestone 3 and `docs/product/development-testing-surfaces.md` Design Defaults and Surface 5. This surface is a debugging tool, not a production dashboard."
+    },
+    {
+      "issue_id": "M3-007",
+      "milestone": "M3",
+      "title": "Implement v1 export and dry-run import",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M3"
+      ],
+      "depends_on": [
+        "M3-004",
+        "M2-003",
+        "M2-004"
+      ],
+      "body_markdown": "## Why\n\nPersonal learning data accumulates long-term value, so backup/export is part of v1. The full agreed contract requires both `lms export` and `lms import --apply` (not just `--dry-run`) to ship in Milestone 3, per `docs/product/project-plan.md` \"Export and import contract (v1)\" \u2014 \"Both ship in v1.\"\n\n## Scope\n\n- Add CLI commands `lms export --out <file>`, `lms import --dry-run <file>`, and `lms import --apply <file>`.\n- Emit newline-delimited typed JSON records with per-entity schema versions.\n- Preserve stable IDs and dependency ordering.\n- Implement redaction defaults for LLM traces, local-only source content, and PII-flagged fields.\n- `--apply` reuses `--dry-run` validation logic; fails-closed if validation does not pass.\n\n## Non-Goals\n\n- Exporting Milestone 5+ capability artifacts.\n- Bypassing safe defaults with automatic `all` modes (requires explicit confirmation flag).\n- Cross-environment migration tooling beyond what JSONL transport allows.\n\n## Tasks\n\n- [ ] Export `User`, `Learner`, `KnowledgeNode`, `KnowledgeEdge`, `SourceReference`, `Prompt`, `Attempt`, `EvidenceRecord`, `LearningGoal`, and `LLMSession` records that exist by this milestone.\n- [ ] Emit records as `{\"type\": \"<entity>\", \"schema_version\": <int>, \"record\": {...}}` newline-delimited.\n- [ ] Order records so dependencies come first (entities before relationships; `SourceReference` before `Prompt`; `Prompt` before `Attempt`; etc.).\n- [ ] Implement `lms import --dry-run <file>`: validates schema, FK integrity, and ID-collision checks without writing.\n- [ ] Implement `lms import --apply <file>`: runs `--dry-run` validation first; if valid, writes records inside a single transaction. Fail-closed and roll back on any partial failure.\n- [ ] Default `--include-llm-traces` to `evidence-grade-only`, `--include-source-content` to `public-only`, `--include-pii` to `never`.\n- [ ] Require an explicit confirmation flag (e.g., `--yes-i-mean-it`) to use the `all` value for any redaction flag.\n- [ ] For `source_visibility=local-only` `SourceReference` records: export the metadata only, never resolve or include the local-only body content.\n\n## Acceptance Criteria\n\n- [ ] `tests/export_import/test_export_contract.py::test_export_emits_jsonl_typed_records_in_dependency_order` passes.\n- [ ] `tests/export_import/test_import_dry_run.py::test_dry_run_validates_foreign_keys_without_writing` passes.\n- [ ] `tests/export_import/test_import_apply.py::test_apply_writes_after_dry_run_validation_passes` passes.\n- [ ] `tests/export_import/test_import_apply.py::test_apply_rolls_back_on_partial_failure` passes.\n- [ ] `tests/export_import/test_redaction_defaults.py::test_default_export_excludes_local_only_source_body_and_pii` passes.\n- [ ] `lms export | lms import --dry-run` roundtrip succeeds on a seeded test database.\n- [ ] `lms export | lms import --apply` into an empty database reproduces the original record set (verified by row counts and stable-ID equality).\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Export and import contract (v1)\" and Milestone 3 acceptance criteria. Both `--dry-run` and `--apply` ship in v1; do not split `--apply` into a follow-up. Validation logic is shared between the two paths so `--apply` cannot succeed where `--dry-run` would fail.\n"
+    },
+    {
+      "issue_id": "M4-001",
+      "milestone": "M4",
+      "title": "Implement FSRS evidence adapter",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M4"
+      ],
+      "depends_on": [
+        "M3-005"
+      ],
+      "body_markdown": "## Why\n\nThe scheduler needs an explicit, testable mapping from heterogeneous `EvidenceRecord` rows to FSRS ratings. The rule table must be reproducible so the placeholder scheduler can be swapped later without losing meaning.\n\n## Scope\n\n- Add `src/lms/scheduling/fsrs_adapter.py` with `evidence_to_fsrs_rating(EvidenceRecord) -> FSRSRating`.\n- Represent the adapter rule table as data-driven config.\n- Exclude transfer evidence from FSRS interval calculation while preserving it as evidence.\n- Add tests for each rule-table row and edge cases.\n\n## Non-Goals\n\n- Building the full review queue.\n- Tuning FSRS parameters.\n- Using transfer evidence for capability/gap analysis.\n\n## Tasks\n\n- [ ] Map incorrect to Again.\n- [ ] Map correct with hint/reference/support or low confidence to Hard.\n- [ ] Map correct with medium+ confidence and no support to Good.\n- [ ] Map first-attempt high-confidence fast responses to Easy.\n- [ ] Pre-threshold partial credit at 0.85 and 0.5 before applying the table.\n- [ ] Mark transfer-distance evidence as excluded from scheduling when `transfer_distance >= near`.\n\n## Acceptance Criteria\n\n- [ ] `tests/scheduling/test_fsrs_adapter.py::test_incorrect_maps_to_again` passes.\n- [ ] `tests/scheduling/test_fsrs_adapter.py::test_supported_correct_maps_to_hard` passes.\n- [ ] `tests/scheduling/test_fsrs_adapter.py::test_partial_credit_boundaries` passes.\n- [ ] `tests/scheduling/test_fsrs_adapter.py::test_transfer_evidence_is_excluded_from_fsrs_scheduling` passes.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"SchedulerEvidenceAdapter (EvidenceRecord -> FSRS rating)\". Keep this pure and easy to replace when mastery tuning begins in later milestones."
+    },
+    {
+      "issue_id": "M4-002",
+      "milestone": "M4",
+      "title": "Implement ReviewQueueItem scheduler",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M4"
+      ],
+      "depends_on": [
+        "M4-001",
+        "M3-001"
+      ],
+      "body_markdown": "## Why\n\nThe Minimum Demo requires a review queue with reason codes. The v1 scheduler should assign review, remediation, and new-learning items from evidence and goals while staying explainable.\n\n## Scope\n\n- Add `ReviewQueueItem` model under `src/lms/scheduling/models.py`.\n- Add scheduler service that creates and updates queue items from attempts/evidence.\n- Add `/learners/{learnerId}/review-queue` endpoint.\n- Add scheduler decision log records or structured fields sufficient for Inspect display.\n\n## Non-Goals\n\n- Implementing graph-based implicit review credit.\n- Adding manager dashboards.\n- Implementing a separate ReviewSchedule table if not needed for v1.\n\n## Tasks\n\n- [ ] Implement reason codes such as `new-learning`, `due-review`, `overdue`, `remediation`, `stale`, and `blocked-prerequisite`.\n- [ ] Schedule future review after successful retrieval using FSRS adapter output.\n- [ ] Trigger remediation after failed retrieval or low-confidence success.\n- [ ] Expose plain-language reason explanations in API responses.\n- [ ] Record scheduler decisions for Inspect.\n\n## Acceptance Criteria\n\n- [ ] `alembic upgrade head` creates `review_queue_items`.\n- [ ] `tests/scheduling/test_review_queue.py::test_successful_retrieval_schedules_future_review` passes.\n- [ ] `tests/scheduling/test_review_queue.py::test_failed_retrieval_creates_remediation_item` passes.\n- [ ] `GET /learners/{learnerId}/review-queue` returns items with reason codes and explanations.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Review Scheduler\", Milestone 4, and `docs/product/development-testing-surfaces.md` Surface 6. Keep v1 explainable rather than clever."
+    },
+    {
+      "issue_id": "M4-003",
+      "milestone": "M4",
+      "title": "Add daily cap, pause mode, and stale handling",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M4"
+      ],
+      "depends_on": [
+        "M4-002"
+      ],
+      "body_markdown": "## Why\n\nThe scheduler must be sustainable for irregular personal use. Daily caps, pause/vacation mode, and stale-item handling are v1 features so the review loop does not become punishing or abandoned.\n\n## Scope\n\n- Add scheduler settings for daily cap and conservative new-card introduction.\n- Add learner-level pause/vacation mode fields or settings.\n- Add stale item state and re-engage/retire/adjust-goal actions.\n- Expose these controls in scheduler API and Inspect/Review debugger surface.\n\n## Non-Goals\n\n- Gamified streaks or XP.\n- Empirical cadence tuning from 30 days of data.\n- Full PWA learner dashboard polish.\n\n## Tasks\n\n- [ ] Implement configurable daily cap defaulting around 20-30 items.\n- [ ] Freeze due times during a declared pause window and gradually reintroduce overdue items on resume.\n- [ ] Mark very old unattempted or abandoned items as stale instead of forcing plow-through.\n- [ ] Make total backlog informational in API/UI text.\n- [ ] Add tests for cap, pause, resume, and stale transitions.\n\n## Acceptance Criteria\n\n- [ ] `tests/scheduling/test_sustainability.py::test_daily_cap_limits_returned_queue_items` passes.\n- [ ] `tests/scheduling/test_sustainability.py::test_pause_freezes_due_times_and_resume_ramps_items` passes.\n- [ ] `tests/scheduling/test_sustainability.py::test_stale_item_can_be_retired_or_reengaged` passes.\n- [ ] Review queue API includes backlog total without treating it as an obligation score.\n\n## Implementation Notes\n\nSee `docs/product/early-design-decisions.md` Segment 8 and `docs/product/project-plan.md` Initial scheduler rule. This issue protects long-term use; do not add shallow motivational metrics."
+    },
+    {
+      "issue_id": "M4-004",
+      "milestone": "M4",
+      "title": "Implement LLM client wrapper and LLMSession",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M4"
+      ],
+      "depends_on": [
+        "M1-004",
+        "M3-003",
+        "M0-004"
+      ],
+      "body_markdown": "## Why\n\nEvery LLM call must pass through a single wrapper that enforces model routing, budget preflight, cost accounting, trace classification, redaction, structured-output validation, and source constraints. `LLMSession` is one of the 11 Phase 1 core entities.\n\n## Scope\n\n- Add `LLMSession` model under `src/lms/llm/models.py` with `trace_class`.\n- Add `src/lms/llm/client.py` with `complete(...)` and `replay(...)` interfaces.\n- Add per-mode model configuration from env/settings.\n- Add budget preflight and per-mode daily cost accounting.\n- Add redaction hook before external trace export.\n\n## Non-Goals\n\n- Building full study-coach orchestration.\n- Making real provider calls in unit tests.\n- Choosing final per-mode models beyond configurable defaults.\n\n## Tasks\n\n- [ ] Implement `BudgetExceeded` exception and hard kill-switch when projected daily budget is exceeded.\n- [ ] Normalize token and cost accounting through provider adapter stubs.\n- [ ] Attach trace-class metadata to every session/call.\n- [ ] Validate structured responses against a provided Pydantic schema.\n- [ ] Enforce `source_constraints` for cited responses where possible.\n- [ ] Add fake provider adapter for tests.\n\n## Acceptance Criteria\n\n- [ ] `alembic upgrade head` creates `llm_sessions` with `trace_class` constrained to `evidence-grade`, `formative`, or `ephemeral`.\n- [ ] `tests/llm/test_client_budget.py::test_budget_preflight_blocks_over_cap_call` passes.\n- [ ] `tests/llm/test_client_routing.py::test_mode_resolves_model_from_config` passes.\n- [ ] `tests/llm/test_trace_redaction.py::test_redactor_runs_before_external_export` passes.\n- [ ] No unit test requires a real provider API key.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"LLM client wrapper interface (v1)\" and `docs/product/early-design-decisions.md` Segments 9 and 10. Default provider posture is Anthropic API with no training opt-in, but keep provider adapters swappable."
+    },
+    {
+      "issue_id": "M4-005",
+      "milestone": "M4",
+      "title": "Create LLM eval gold set and replay harness",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M4"
+      ],
+      "depends_on": [
+        "M4-004"
+      ],
+      "body_markdown": "## Why\n\nThe design requires a 10-30 transcript gold set before the first `study-coach` flow ships. This gives model and prompt changes a regression target instead of relying on impressions.\n\n## Scope\n\n- Create `docs/llm/eval-sets/study-coach-v1.jsonl`.\n- Define transcript schema and labels for learning-policy outcomes.\n- Add replay command using `LLMClient.replay(...)` against fake or configured providers.\n- Version eval set alongside interaction policy docs.\n\n## Non-Goals\n\n- Collecting production traces automatically.\n- Choosing final model defaults from eval data.\n- Building a full LangSmith dashboard.\n\n## Tasks\n\n- [ ] Seed 10-30 hand-curated cases covering answer-seeking, confusion repair, retrieval prompt, hint overuse, high-confidence weak evidence, and direct explanation when appropriate.\n- [ ] Add expected labels such as `asks_for_retrieval`, `gives_direct_explanation`, `flags_unverified_claim`, `offers_next_action`, and `respects_quiet_mode`.\n- [ ] Add docs explaining how to add entries and when to refresh the set.\n- [ ] Add tests validating JSONL schema.\n\n## Acceptance Criteria\n\n- [ ] `docs/llm/eval-sets/study-coach-v1.jsonl` contains at least 10 valid entries.\n- [ ] `tests/llm/test_eval_set_schema.py::test_study_coach_gold_set_schema_valid` passes.\n- [ ] `lms llm replay-eval docs/llm/eval-sets/study-coach-v1.jsonl --dry-run` validates entries without production log writes.\n- [ ] Eval docs cite the formative interaction policy and cost/routing decision.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` LLM operational requirements and `docs/product/early-design-decisions.md` Segments 3 and 10. Keep entries small and privacy-safe; do not use personal verbatim traces unless intentionally retained."
+    },
+    {
+      "issue_id": "M4-006",
+      "milestone": "M4",
+      "title": "Implement study-coach and practice policies",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M4"
+      ],
+      "depends_on": [
+        "M4-004",
+        "M4-005",
+        "M3-002"
+      ],
+      "body_markdown": "## Why\n\nThe Minimum Demo requires one `study-coach` session per topic with formative policy active. The LLM should redirect answer-seeking into retrieval or explanation when appropriate while still answering directly when instructionally useful.\n\n## Scope\n\n- Add policy module `src/lms/llm/interaction_policy.py` for `study-coach` and `practice` modes.\n- Add `/llm/sessions` endpoint to create and continue sessions.\n- Load relevant learner goal, node, prompt, source constraints, and mastery context.\n- Record session turns with trace class, cost summary, and policy decisions.\n\n## Non-Goals\n\n- Implementing transfer or authoring-assist modes.\n- Using LLM output as summative assessment evidence without validation.\n- Creating full chat UI polish.\n\n## Tasks\n\n- [ ] Implement formative behavior detection for answer-seeking during retrieval, passive rereading, overuse of hints, high confidence with weak evidence, rapid guessing, and avoidance of attempts.\n- [ ] Return formative feedback with goal, observed behavior, learning risk, and next action.\n- [ ] Constrain `study-coach` responses to linked `SourceReference` sets and flag uncited claims `unverified`.\n- [ ] Support assessment-restricted mode flags that disable hints or direct feedback.\n- [ ] Add policy tests using fake model responses.\n\n## Acceptance Criteria\n\n- [ ] `tests/llm/test_study_coach_policy.py::test_answer_seeking_during_retrieval_gets_retrieval_nudge` passes.\n- [ ] `tests/llm/test_study_coach_policy.py::test_direct_explanation_allowed_for_orientation` passes.\n- [ ] `tests/llm/test_source_constraints.py::test_uncited_claim_is_flagged_unverified` passes.\n- [ ] `POST /llm/sessions` can run a fake-provider study-coach turn tied to a prompt and learner.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"LLM Learning Interaction Layer\" and `docs/product/early-design-decisions.md` Segment 3. The policy should avoid turning every question into friction; productive learning is the target."
+    },
+    {
+      "issue_id": "M4-007",
+      "milestone": "M4",
+      "title": "Add learner LLM nudge and trace controls",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M4"
+      ],
+      "depends_on": [
+        "M4-006"
+      ],
+      "body_markdown": "## Why\n\nLearners must be able to reduce formative nudges and control trace retention where policy allows. These controls are part of the trust model for the first LLM study loop.\n\n## Scope\n\n- Add learner preference fields for coaching intensity: full coaching, light nudges, quiet mode.\n- Add keep/forget trace controls for `LLMSession` records.\n- Implement local trace deletion and external deletion hook placeholder.\n- Expose controls in the LLM Study testing surface or API.\n\n## Non-Goals\n\n- Overriding assessment restrictions.\n- Implementing firm/institutional retention overrides.\n- Building a full privacy settings product area.\n\n## Tasks\n\n- [ ] When quiet mode is selected, show or return one reminder explaining the formative approach before honoring it where policy allows.\n- [ ] Prevent quiet mode from disabling restrictions in summative or diagnostic sessions.\n- [ ] Implement `forget` action that deletes local verbatim transcript while preserving structured evidence records.\n- [ ] Implement `keep` action that marks eligible formative traces for retention.\n- [ ] Audit preference and retention-control changes.\n\n## Acceptance Criteria\n\n- [ ] `tests/llm/test_learner_controls.py::test_quiet_mode_honored_after_policy_reminder` passes.\n- [ ] `tests/llm/test_learner_controls.py::test_assessment_restricted_session_ignores_nudge_disable` passes.\n- [ ] `tests/llm/test_trace_controls.py::test_forget_deletes_verbatim_transcript_but_preserves_evidence` passes.\n- [ ] LLM session API responses include coaching intensity, trace class, model identity, and cost summary.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Surface 2 and `docs/product/early-design-decisions.md` Segments 3 and 9. Keep personal defaults privacy-preferring; institutional overrides wait for later scope."
+    },
+    {
+      "issue_id": "M4-008",
+      "milestone": "M4",
+      "title": "Build minimal Learn and Review testing surfaces",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M4"
+      ],
+      "depends_on": [
+        "M4-003",
+        "M3-006"
+      ],
+      "body_markdown": "## Why\n\nThe Minimum Demo needs a workable way to attempt prompts with confidence ratings, see feedback, inspect sources after the attempt, and view review queue reason codes. A lightweight internal surface is enough; it must make the learning loop observable.\n\n## Scope\n\n- Add a minimal Learn surface for assigned next task, prompt response, confidence rating, reference access, feedback, next action, and post-attempt source citation panel.\n- Add a Review surface or Inspect tab for due review queue, reason codes, daily cap, pause status, and stale actions.\n- Make surfaces mobile-friendly and empty-state friendly.\n- Connect surfaces to existing API endpoints.\n\n## Non-Goals\n\n- Building a polished production PWA.\n- Adding authoring, public education, coach, or capability dashboards.\n- Adding unsupported gamification.\n\n## Tasks\n\n- [ ] Use the responsive CSS framework selected for Inspect or add one consistently.\n- [ ] Show prompt provenance and linked `SourceReference` set after attempts.\n- [ ] Track reference access during attempts.\n- [ ] Show confidence versus correctness after evidence exists.\n- [ ] Add browser or integration tests for submitting an attempt and viewing review queue reason codes.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_learner_loop.py::test_submit_prompt_attempt_with_confidence` or equivalent integration test passes.\n- [ ] `tests/ui/test_review_surface.py::test_review_queue_displays_reason_codes` or equivalent passes.\n- [ ] A mobile-width browser check shows Learn and Review controls fit without hover-only interaction.\n- [ ] The UI shows source citations after an attempt and does not show local-only source bodies when not allowed.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Design Defaults, Surface 1, and Surface 6. This is a testing tool for the core loop, not the Milestone 6 web prototype."
+    },
+    {
+      "issue_id": "M4-009",
+      "milestone": "M4",
+      "title": "Add authoring-assist draft proposals",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M4"
+      ],
+      "depends_on": [
+        "M4-006",
+        "M2-005",
+        "M3-002"
+      ],
+      "body_markdown": "## Why\n\nLLM-assisted graph and prompt proposals can help seed the demo, but the design requires they remain draft-only until human approval. This issue adds a bounded `authoring-assist` path without letting generated content become trusted automatically.\n\n## Scope\n\n- Add `authoring-assist` mode to LLM routing config and policy.\n- Implement service to propose draft `KnowledgeNode`, `KnowledgeEdge`, and `Prompt` records from existing draft/published nodes and source content.\n- Record `provenance: llm-proposed`, `proposed_by`, and `proposal_session_id`.\n- Require human approval before publication or scheduler use.\n\n## Non-Goals\n\n- Automatically publishing generated nodes, edges, or prompts.\n- Building a full graph design studio.\n- Using LLM-proposed content without source constraints.\n\n## Tasks\n\n- [ ] Add endpoint or CLI `lms authoring-assist propose --source-reference <id>` using fake provider in tests.\n- [ ] Ensure proposals link to existing `SourceReference` records and inherit source visibility constraints.\n- [ ] Record audit events for proposals and approvals.\n- [ ] Add tests that proposed prompts/nodes are draft-only and rejected by scheduler until approved.\n\n## Acceptance Criteria\n\n- [ ] `tests/llm/test_authoring_assist.py::test_proposed_node_and_prompt_are_draft_only` passes.\n- [ ] `tests/llm/test_authoring_assist.py::test_proposal_records_model_and_session_id` passes.\n- [ ] `tests/goals/test_publication_gate.py::test_scheduler_rejects_llm_proposed_unapproved_prompt` passes.\n- [ ] Generated proposals are trace-classed and cost-accounted through the LLM wrapper.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Knowledge Graph Bootstrap (v1)\" and LLM interaction modes. This issue helps reach 30 prompts but keeps human approval as the trust boundary."
+    },
+    {
+      "issue_id": "M4-010",
+      "milestone": "M4",
+      "title": "Lock demo retention protocol and smoke script",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M4"
+      ],
+      "depends_on": [
+        "M4-008",
+        "M4-009",
+        "M3-007"
+      ],
+      "body_markdown": "## Why\n\nThe v1 thesis is not met until the six-part Minimum Demo can run end-to-end and the day-30 retention test is pre-registered before item selection. A smoke script makes that criterion falsifiable rather than aspirational.\n\n## Scope\n\n- Create `docs/handoff/demo-retention-protocol.md` with the day-30 protocol.\n- Add a demo smoke command `lms demo smoke` or script under `scripts/` that exercises the M4 demo path on seeded test data.\n- Seed or fixture enough data to simulate 10 notes, 30 prompts, attempts, evidence, review queue, Inspect, and one fake-provider study-coach session per topic.\n- Document manual steps for the real project-owner demo run.\n\n## Non-Goals\n\n- Completing the actual day-30 waiting period in this issue.\n- Claiming learning efficacy from smoke-test data.\n- Adding Milestone 5 capability/gap-analysis features.\n\n## Tasks\n\n- [ ] Write the protocol before selecting real demo items: 8 candidate items, 4 system-routed, 4 passive comparison, day-0 confidence and unaided pre-attempt, day-30 unaided free recall, recall quality categories and elapsed seconds.\n- [ ] Make smoke command import 10 fixture notes or note stubs into draft/published nodes with sources.\n- [ ] Generate or load 30 prompts with source citations and provenance.\n- [ ] Submit attempts with confidence ratings and create verbose evidence records.\n- [ ] Verify review queue reason codes, Inspect mastery display, LLM session trace classification, and daily cost summary.\n- [ ] Add a final coverage matrix mapping all six Minimum Demo requirements to commands or manual steps.\n\n## Acceptance Criteria\n\n- [ ] `docs/handoff/demo-retention-protocol.md` exists and states it must be locked before real item selection.\n- [ ] `tests/demo/test_minimum_demo_smoke.py::test_minimum_demo_smoke_path` passes or the documented smoke script exits 0 in CI-safe fake-provider mode.\n- [ ] The smoke output confirms 10 notes, 30 prompts, evidence rows, review queue reason codes, Inspect data, and study-coach sessions.\n- [ ] `docs/handoff/minimum-demo-coverage.md` maps each of the six demo criteria to implemented commands/surfaces.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` \"Minimum Demo Criterion\" and \"Day-30 retention protocol\". The smoke path demonstrates mechanics; the real retention result remains empirical and cannot be faked by tests."
+    }
+  ],
+  "sequencing_notes": "M0 establishes the decision, automation, API, security, and issue-format foundation. M1 builds the FastAPI/Postgres/test skeleton and local User/Learner identity; M2 then adds YAML provenance, SourceReference, audit logging, and importers that seed the graph. M3 builds the authorable learner loop records, evidence schema, computed mastery view, Inspect surface, and export contract. M4 layers scheduling, sustainability, LLM wrapper/policies/controls, lightweight learner surfaces, authoring assist, and a demo smoke path to satisfy the Minimum Demo Criterion.",
+  "overall_assessment": "This queue is ready to file once the repo exists and the Workflows consumer template is installed. The main residual dependency is operational rather than architectural: real provider credentials, LangSmith retention settings, and the actual project-owner research-note slice must be supplied when the M4 demo is run. The queue intentionally excludes Milestone 5+ capability and certification endpoints to preserve the corrected Phase 1 boundary."
+}

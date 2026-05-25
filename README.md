@@ -1,222 +1,233 @@
-# Template
+# Learning Management System
 
-A template Python repository with [stranske/Workflows](https://github.com/stranske/Workflows) CI integration and CLI Codex agent automation.
+An API-first learning management system for evidence-informed personal learning, investment analyst training, company-wide project and technology onboarding, and public-facing education.
 
-## Features
+The project starts from a learning-science premise: an LMS should not merely host content. It should help learners build durable, usable knowledge through retrieval, elaboration, spaced practice, feedback, transfer, and self-regulated learning. The early design work is anchored in *How Do We Learn?: A Scientific Approach to Learning and Teaching* by Hector Ruiz Martin, supplemented by primary research from cognitive science and educational psychology.
 
-- 🐍 **Python 3.11+** - Modern Python with type hints
-- 🔧 **Ruff** - Fast Python linting and formatting
-- 🔍 **MyPy** - Strict type checking
-- 🧪 **Pytest** - Testing with 80% coverage requirement
-- 🤖 **CLI Codex Automation** - Gate-triggered keepalive for automated development
-- 🔄 **Dual Checkout Pattern** - Consumer repo + centralized Workflows scripts
+## Product Vision
 
-## Quick Start
+This system will support four major audience families:
 
-```bash
-# Clone the repository
-git clone https://github.com/stranske/Template.git
-cd Template
+- Personal learning: a structured environment for turning reading, notes, and projects into durable knowledge.
+- New analyst training: a controlled curriculum for investment philosophy, firm strategies, research workflows, data practices, and decision standards.
+- Company-wide learning: repeatable onboarding and continuing education for internal projects, technology, processes, and operating norms.
+- Public education: client- or community-facing learning paths that explain products, services, and domain concepts while giving the organization aggregate feedback on public understanding.
 
-# Install in development mode
-pip install -e ".[dev]"
+The initial implementation target is an API-first backend. A web application is a planned product surface, but the backend should define the core learning model, data contracts, assessment engine, scheduling logic, and analytics before the UI becomes the primary driver.
 
-# Run tests
-pytest
+## Design Commitments
 
-# Run linting
-ruff check src/ tests/
+Every major feature should map to a learning principle, an observable learner action, and a measurable outcome.
 
-# Run type checking
-mypy src/ tests/
+| Learning principle | Product commitment |
+| --- | --- |
+| Learning depends on meaningful mental activity | Lessons must ask learners to explain, compare, classify, predict, solve, or apply, not just consume content. |
+| Retrieval strengthens durable memory | Courses should include low-stakes recall, practice questions, case prompts, and cumulative checks. |
+| Spacing improves retention | The platform should schedule review over time and reintroduce important ideas in later contexts. |
+| Working memory is limited | Content should be chunked, sequenced, scaffolded, and paired with examples before complex performance tasks. |
+| Feedback guides improvement | Feedback should tell learners the goal, current gap, and next action, not merely mark work right or wrong. |
+| Transfer requires varied practice | Analyst and employee training should use realistic cases, edge cases, and scenario variation. |
+| Learners need metacognitive calibration | The system should compare confidence, performance, and time to reveal overconfidence and weak areas. |
+| Motivation and self-regulation affect persistence | Learners should see goals, progress, next actions, and reflection prompts without turning learning into shallow gamification. |
+| Evidence beats intuition alone | Design decisions should be tracked in a research register and revised when evidence or product data warrants it. |
+
+## Planned System Modules
+
+### Learning Object Model
+
+Defines the durable units of learning:
+
+- Concepts: atomic ideas, definitions, models, and distinctions.
+- Procedures: repeatable workflows and operating steps.
+- Cases: realistic decisions, examples, postmortems, and simulations.
+- Assessments: retrieval prompts, application tasks, reflections, and performance rubrics.
+- Competencies: observable capabilities tied to roles, goals, or domains.
+
+### Content and Curriculum API
+
+Stores courses, modules, prerequisites, learning objectives, source references, internal ownership, and publication status. This should support both personal material and controlled firm training content.
+
+### Knowledge Graph and Graph Design
+
+Represents institution-designed and learner-authored knowledge graphs, including prerequisites, transfer contexts, competency relationships, and graph-improvement signals from learner performance.
+
+### Retrieval and Assessment Engine
+
+Generates and serves quizzes, free-recall prompts, case questions, confidence ratings, and applied tasks. Assessment should be treated as a learning activity, not just a certification event.
+
+### LLM Learning Interaction Layer
+
+Supports guided learning conversations, exploration, practice, transfer prompts, and authoring assistance while enforcing formative-learning policies and learner controls for feedback nudges.
+
+### Spaced Review Scheduler
+
+Schedules review based on importance, prior performance, confidence, elapsed time, and target mastery. This should eventually support adaptive spacing without hiding the rationale from learners or administrators.
+
+### Feedback and Rubric System
+
+Supports answer-level feedback, rubric-based review, model answers, hints, and next-step recommendations. For analyst training, rubrics should capture reasoning quality, evidence use, risk awareness, and investment judgment.
+
+### Scenario and Simulation Layer
+
+Provides realistic analyst cases and employee workflow simulations. Examples include manager research, strategy selection, data-quality triage, investment memo review, technology rollout decisions, and incident response.
+
+### Learner Model and Analytics
+
+Tracks progress, mastery estimates, retrieval history, confidence calibration, time-on-task, forgotten items, and competency coverage. Analytics should help learners and managers decide what to do next.
+
+### Current Capability and Gap Analysis
+
+Estimates what a learner appears to know and be able to do right now, how confident the system is, how that compares with a target, and what learning path would close the gap.
+
+### Administration, Governance, and Security
+
+Controls roles, access, sensitive content boundaries, audit trails, data retention, and separation between personal learning data and firm training records.
+
+## Repository Structure
+
+Current documentation structure:
+
+```text
+.
+|-- README.md
+|-- docs/
+|   |-- README.md
+|   |-- project-review-brief.md
+|   |-- product/
+|   |   |-- project-plan.md
+|   |   |-- early-design-decisions.md
+|   |   |-- development-testing-surfaces.md
+|   |   `-- research-domain-model.md
+|   |-- research/
+|   |   |-- learning-principles.md
+|   |   |-- references.md
+|   |   |-- kindle-source-notes.md
+|   |   |-- math-academy-way-outline.md
+|   |   |-- math-academy-way/
+|   |   `-- section and chapter summaries
 ```
 
-## Project Structure
+Planned implementation structure after repo setup:
 
-```
-Template/
-├── .github/
-│   ├── codex/
-│   │   ├── AGENT_INSTRUCTIONS.md  # Codex agent guidelines
-│   │   └── prompts/               # Task execution templates
-│   ├── scripts/                   # Agent automation scripts (dual checkout from Workflows)
-│   └── workflows/                 # GitHub Actions workflows
-├── docs/                          # Documentation
-├── src/
-│   └── my_project/                # Main package
-├── tests/                         # Test suite
-├── Issues.txt                     # Agent issue queue
-├── pyproject.toml                 # Project configuration
-└── README.md
-```
-
-## Workflows
-
-This repository uses reusable workflows from [stranske/Workflows](https://github.com/stranske/Workflows):
-
-### Core CI & Quality
-
-| Workflow | Purpose | Trigger |
-|----------|---------|---------|
-| **Gate** | PR validation (CI, lint, tests) | Pull request |
-| **CI** | Push-to-main continuous integration | Push to main |
-| **Autofix** | Automatic lint/format fixes | Label: `autofix` |
-
-### Agent Workflows (CLI Codex)
-
-| Workflow | Purpose | Trigger |
-|----------|---------|---------|
-| **Keepalive Loop** | Runs Codex CLI after Gate passes | Gate completion, PR label |
-| **PR Meta** | Updates PR status summaries | PR events |
-| **Issue Intake** | Creates PRs from labeled issues | Issue labeled |
-| **Guard** | Security checks for agent execution | Before agent runs |
-| **Bot Comment Handler** | Processes @codex commands | Issue comments |
-| **Autofix Loop** | Autofix integration with keepalive | Autofix + agent label |
-
-**Note:** `agents-orchestrator.yml` is legacy and can be removed. The current architecture uses `agents-keepalive-loop.yml` which integrates with the Gate workflow for event-driven triggering.
-
-## Agent Automation
-
-This template uses the **Gate-triggered keepalive** architecture:
-
-### How It Works
-
-1. **Create Issue** with structured Scope/Tasks/Acceptance sections
-2. **Label Issue** with `agent:codex`
-3. **Issue Intake** creates PR from issue
-4. **Gate Workflow** runs CI validation
-5. **Keepalive Loop** triggers after Gate completion
-   - Evaluates eligibility (unchecked tasks, no pause labels)
-   - Runs CLI Codex via `reusable-codex-run.yml`
-   - Codex implements changes and pushes commits
-6. **Gate Runs Again** → loop continues
-7. **Completion** when all acceptance criteria checked
-
-### Key Components
-
-- **Activation**: PR must have `agent:codex` label, Gate success, unchecked tasks
-- **Task Tracking**: Agent updates checkboxes in PR body after completing work
-- **Progress Detection**: Automatic checkbox reconciliation via session analysis
-- **Failure Handling**: After 3 failures, adds `needs-human` label and pauses
-- **Concurrency**: One keepalive run per PR (configurable via `agents:max-parallel:N`)
-
-### Control Labels
-
-| Label | Effect |
-|-------|--------|
-| `agent:codex` | Enables Codex automation |
-| `agents:pause` | Halts all agent activity |
-| `needs-human` | Auto-added after failures, blocks keepalive |
-| `agents:max-parallel:N` | Override concurrent run limit (default: 1) |
-
-### Using Issues.txt
-
-Add issues to `Issues.txt` using the structured format, then trigger the intake workflow:
-
-```
-1) Issue title here
-Labels: agent:codex, enhancement
-
-## Scope
-Explanation of what needs to be done and why.
-
-## Tasks
-- [ ] Task 1
-- [ ] Task 2
-- [ ] Task 3
-
-## Acceptance Criteria
-- [ ] All tests pass
-- [ ] Code is documented
-- [ ] Coverage ≥80%
-
-Implementation notes
-- Technical details or constraints
+```text
+.
+|-- src/
+|   `-- lms/
+|       |-- api/
+|       |-- auth/
+|       |-- curriculum/
+|       |-- evidence/
+|       |-- feedback/
+|       |-- graphs/
+|       |-- llm/
+|       |-- mastery/
+|       |-- scheduling/
+|       `-- analytics/
+|-- tests/
+|-- scripts/
+|-- tools/
+|-- config/
+`-- .github/
+    |-- workflows/
+    `-- codex/
 ```
 
-## Setup for New Repos
+## Research Register
 
-### Required Secrets
+The working research register is in [docs/research/learning-principles.md](docs/research/learning-principles.md). It links principles from the book and related research to concrete LMS design implications.
 
-| Secret | Purpose | Alternative |
-|--------|---------|-------------|
-| `CODEX_AUTH_JSON` | ChatGPT auth for Codex CLI | Recommended |
-| `WORKFLOWS_APP_ID` | GitHub App ID | Use with APP_PRIVATE_KEY |
-| `WORKFLOWS_APP_PRIVATE_KEY` | GitHub App private key | Use with APP_ID |
-| `SERVICE_BOT_PAT` | Bot PAT for automation | Required |
-| `OWNER_PR_PAT` | Owner PAT for PR operations | Optional |
+Supporting research artifacts:
 
-**Note:** Choose either `CODEX_AUTH_JSON` OR the GitHub App credentials, not both.
+- [Documentation index](docs/README.md): organized map of product and research docs for local review.
+- [Project review brief](docs/project-review-brief.md): handoff summary for a second local-agent review.
+- [Research references](docs/research/references.md): reusable bibliography and claim support notes.
+- [LMS project plan](docs/product/project-plan.md): implementation-facing design structure, module map, roadmap, backlog sequence, and decision questions.
+- [Early design decisions](docs/product/early-design-decisions.md): segmented decision queue for narrowing scope before implementation.
+- [Development testing surfaces](docs/product/development-testing-surfaces.md): lightweight UI surfaces needed to test the learning loop during development.
+- [Research-to-product domain model](docs/product/research-domain-model.md): initial conceptual schema for principles, evidence, interventions, outcomes, and experiments.
+- [The Math Academy Way outline](docs/research/math-academy-way-outline.md): index for the detailed batch outline of the Math Academy working draft.
+- [The Math Academy Way detailed worklog](docs/research/math-academy-way/README.md): chapter inventory, batch status, and completed outline batches.
+- [The Math Academy Way and How Do We Learn? synthesis](docs/research/math-academy-way/synthesis-with-how-do-we-learn.md): common understanding, tensions, unique contributions, LMS implications, and claim-review register.
+- Current book/section summaries: [Chapter 1](docs/research/chapter-01-scientific-study-summary.md), [Section 2.1](docs/research/chapter-02-components-of-memory-summary.md), [Section 2.2](docs/research/section-02-02-organization-of-memory-summary.md), [Section 2.3](docs/research/section-02-03-memory-processes-summary.md), [Section 2.4](docs/research/section-02-04-reorganization-of-memory-summary.md), [Section 2.5](docs/research/section-02-05-transfer-of-learning-summary.md), [Section 2.6](docs/research/section-02-06-working-memory-summary.md), [Section 2.7](docs/research/section-02-07-deep-learning-summary.md), [Section 3.1](docs/research/section-03-01-role-of-emotions-in-learning-summary.md), [Section 3.2](docs/research/section-03-02-motivation-summary.md), [Section 3.3](docs/research/section-03-03-beliefs-summary.md), [Section 3.4](docs/research/section-03-04-social-dimension-of-learning-summary.md), [Section 4.1](docs/research/section-04-01-metacognition-summary.md), [Section 4.2](docs/research/section-04-02-self-control-summary.md), [Section 4.3](docs/research/section-04-03-emotional-self-regulation-summary.md), [Section 4.4](docs/research/section-04-04-resilience-and-grit-summary.md), [Section 5](docs/research/section-05-key-teaching-processes-summary.md), [Section 5.1](docs/research/section-05-01-instruction-summary.md), [Section 5.2](docs/research/section-05-02-feedback-summary.md), [Section 5.3](docs/research/section-05-03-assessment-summary.md), [Appendix](docs/research/appendix-pseudoscientific-myths-summary.md).
 
-### Required Environments
+The Kindle extraction notes are in [docs/research/kindle-source-notes.md](docs/research/kindle-source-notes.md). Current local Kindle data shows:
 
-Create in **Settings** → **Environments**:
-- `agent-standard` - For standard agent execution
+- 192 personal highlight records for the book in the newer Kindle annotation database.
+- 10 popular-highlight text records in the legacy annotation store.
+- Personal highlight records include positions and timestamps, but not the highlighted text in the inspected database.
+- Popular highlights are useful as signals, but they must be labeled separately from personal annotations.
 
-### Repository Variables
+## Development Workflow
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `ALLOWED_KEEPALIVE_LOGINS` | Users who can trigger keepalive | `stranske` |
+The project is intended to become a GitHub repository using the local Workflows system in `/Users/teacher/Library/CloudStorage/Dropbox/Learning/Code/Workflows`.
 
-### Branch Protection
+Planned setup:
 
-Configure branch protection for `main`:
-- Require status checks: `Gate / gate`
-- Require pull request reviews: 1 approval
-- Dismiss stale reviews on new commits
+- Initialize this folder as a Git repo.
+- Create the GitHub repository when the project name is final enough.
+- Copy the Workflows consumer template files needed for CI, issue intake, agent automation, and verification.
+- Use GitHub issues as structured implementation units.
+- Use acceptance criteria that connect product behavior to learning-science intent.
+- Keep research, product, and architecture decisions in docs before broad implementation.
 
-## Development
+Example issue shape:
 
-```bash
-# Install dependencies
-pip install -e ".[dev]"
+```text
+Goal: Implement retrieval-practice prompt records.
 
-# Run all checks
-ruff check src/ tests/
-mypy src/ tests/
-pytest --cov
+Why: Retrieval should be a first-class learning activity, not just a quiz result.
 
-# Format code
-ruff format src/ tests/
+Scope:
+- Add backend model for retrieval prompts.
+- Support prompt type, target concept, expected answer form, difficulty, and feedback hooks.
+- Add tests for creation and retrieval.
+
+Acceptance criteria:
+- API can create and retrieve a prompt tied to a learning objective.
+- Prompt records can be scheduled for later review.
+- Documentation states which learning principle the feature supports.
 ```
 
-## Troubleshooting
+## Early Milestones
 
-### Keepalive Not Triggering
+See [docs/product/project-plan.md](docs/product/project-plan.md) for the authoritative milestone definitions with deliverables and acceptance criteria. Summary:
 
-- Verify PR has `agent:codex` label
-- Check Gate workflow passed
-- Ensure PR body has unchecked tasks
-- Look for `agents:pause` or `needs-human` labels
-- Review keepalive summary comment for skip reasons
+1. **Milestone 0** — Repo and decision foundation (`stranske/Template` consumer setup, Workflows scaffolding, initial backlog).
+2. **Milestone 1** — Backend skeleton (FastAPI / Postgres / migrations / CI / health check / auth placeholder).
+3. **Milestone 2** — Research registry (YAML) + `SourceReference` + Markdown/CSV importers + drift-detection.
+4. **Milestone 3** — Knowledge graph (with `ownership_scope`), evidence records (verbose schema), `MasteryEstimate` as a computed view (FSRS-4.5 placeholder), Inspect surface, v1 export/import contract.
+5. **Milestone 4** — Retrieval, review queue with FSRS adapter and sustainability features, LLM client wrapper with cost monitoring and trace classification, formative `study-coach` / `practice` modes. **End-of-milestone gate: the Minimum Demo Criterion runs end-to-end on the project owner's personal-research-note slice with a pre-registered day-30 retention test.**
+6. **Milestone 5** — Feedback, rubrics, transfer cases; personal gap-closing artifacts (`CapabilityTarget`, `CapabilityEstimate`, `GapAnalysis`, `MaintenancePlan`).
+7. **Milestone 6** — Authoring and learner web prototype (mobile-friendly); begin empirical mastery-rule tuning.
+8. **Milestone 7** — Analyst training pilot (one competency, one work product, separate deployment when firm scope enters).
+9. **Milestone 8** — Public education and accessibility pilots.
 
-### No Automated Status Summary
+Phase 1 (Milestones 0-4) targets the 11-entity minimum core (`User`, `Learner`, `KnowledgeNode`, `KnowledgeEdge`, `SourceReference`, `Prompt`, `Attempt`, `EvidenceRecord`, `ReviewQueueItem`, `LearningGoal`, `LLMSession`). `Course`/`Module`/`Lesson`, full `FeedbackRecord` table, runtime research-registry APIs, and certification artifacts (`CertificationSnapshot`, `RecertificationPolicy`, `EvidenceDecayPolicy`) are explicitly deferred.
 
-- Verify issue has Scope/Tasks/Acceptance sections
-- Run `agents-pr-meta.yml` manually
-- Check PR links to source issue
+## Open Decisions
 
-### Agent Failures
+Still open:
 
-After 3 failures, keepalive pauses and adds `needs-human`:
-1. Review failure reason in keepalive summary
-2. Fix the issue (code, prompt, auth)
-3. Remove `needs-human` label to resume
+- Final repository name.
+- Initial analyst-training curriculum scope (one competency, one work product, picked once the personal-learning slice is running).
+- How much Kindle-derived material should be manually re-highlighted or exported before becoming part of the research register.
+- Realistic daily/weekly attempt volume for the project owner — answered empirically at Milestone 4-5 from ~30 days of real use.
+- Per-mode LLM model defaults — answered empirically once the eval gold set and cost data exist.
+- Specific FSRS-4.5 parameter adjustments per knowledge type — answered empirically from ~500-1000 evidence records on overlapping nodes (Milestone 6-7).
 
-### Permission Errors
+Resolved during the second-review-pass design:
 
-- Verify `CODEX_AUTH_JSON` or GitHub App credentials are set
-- Check environment `agent-standard` exists
-- Ensure PATs have required scopes: `repo`, `workflow`
-
-## Documentation
-
-- [Workflows Repo](https://github.com/stranske/Workflows) - Central workflow library
-- [Consumer README](https://github.com/stranske/Workflows/blob/main/templates/consumer-repo/README.md) - Complete setup guide
-- [Keepalive Architecture](https://github.com/stranske/Workflows/blob/main/docs/keepalive/GoalsAndPlumbing.md) - Detailed design
-- [Setup Checklist](docs/keepalive/SETUP_CHECKLIST.md) - Step-by-step configuration
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
+- Repository name: `learning-management-system`.
+- Repository visibility: public. Research-note content (chapter/section summaries of *How Do We Learn?*, Math Academy outline and synthesis, Kindle-derived highlights) is kept in a separate local folder and is **not** committed to the public repo. The public repo carries product/design docs, code, the principles register (paraphrase-only), and references; copyright-restricted-to-paraphrase content stays local. The split is reversible (can convert the repo to private later, or move local notes in) and is a Milestone-0 decision when the repo is created.
+- License: to be selected at repo creation. Default candidates: MIT for permissive engine code, or CC-BY-4.0 for design docs. Decide at `gh repo create` time.
+- Repo creation mechanism: use the `stranske/Template` GitHub template-repository (or the equivalent SETUP_CHECKLIST.md procedure under `Workflows/docs/templates/`) so consumer-template workflow files arrive pre-installed; the new repo is then registered for ongoing sync via `maint-68-sync-consumer-repos.yml`.
+- Backend stack: Python, FastAPI, SQLAlchemy, Alembic, Pydantic, pytest, Jupyter/pandas for analysis.
+- Persistence: Postgres first.
+- Authentication: local auth first for personal use; SSO-ready identity model.
+- Personal vs. firm boundary: schema-level `ownership_scope` enforced; cross-scope links explicit; separate deployments preferred over multi-tenant rows when firm content enters scope.
+- Mastery rule for v1: FSRS-4.5 placeholder; `MasteryEstimate` is a computed view; empirical tuning at Milestone 6-7.
+- Certification: personal gap-closing (`CapabilityTarget`, `CapabilityEstimate`, `GapAnalysis`, `MaintenancePlan`) in v1; institutional certification artifacts deferred.
+- LLM posture: single client wrapper, per-mode model config, daily cost monitoring, budget kill-switch, trace-class retention, Anthropic API with no training opt-in, eval gold set required before first study-coach flow.
+- Inspect surface: built in Milestone 3 to debug the engine, not deferred.
+- Export/backup contract: shipped in v1.
+- Mobile: mobile-friendly default on every UI surface; PWA on the roadmap.
