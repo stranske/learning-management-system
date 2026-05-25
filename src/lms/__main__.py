@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from lms.db.session import session_scope
+from lms.importers.csv_graph import CsvGraphImportError, import_csv_graph
 from lms.importers.markdown import import_markdown_notes
 from lms.research_registry import ResearchRegistryError, load_registry
 from lms.sources.repository import scan_source_references
@@ -79,6 +80,21 @@ def main() -> None:
         default="system:import-notes",
         help="actor id recorded in import audit events",
     )
+    import_graph_parser = subparsers.add_parser(
+        "import-graph",
+        help="import knowledge graph nodes and prerequisite edges from CSV",
+    )
+    import_graph_parser.add_argument("path", type=Path, help="CSV graph file to import")
+    import_graph_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate and report counts without writing records",
+    )
+    import_graph_parser.add_argument(
+        "--actor-id",
+        default="system:csv-graph-importer",
+        help="actor id recorded in audit events created by the import",
+    )
 
     args = parser.parse_args()
     if args.command == "validate-research-registry":
@@ -134,6 +150,25 @@ def main() -> None:
                 )
         for line in import_summary.to_cli_summary_lines():
             print(line)
+        return
+    if args.command == "import-graph":
+        try:
+            with session_scope() as session:
+                csv_summary = import_csv_graph(
+                    session,
+                    args.path,
+                    dry_run=args.dry_run,
+                    actor_id=args.actor_id,
+                )
+        except CsvGraphImportError as exc:
+            raise SystemExit(f"CSV graph import failed: {exc}") from exc
+        print(
+            "CSV graph import "
+            f"{'dry run' if csv_summary.dry_run else 'complete'}: "
+            f"nodes={csv_summary.nodes} "
+            f"edges={csv_summary.edges} "
+            f"source_references={csv_summary.source_references}"
+        )
         return
 
     _run_dev_server()
