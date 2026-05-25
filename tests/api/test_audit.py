@@ -17,7 +17,7 @@ from lms.main import create_app
 
 
 @pytest.fixture
-def api_client() -> Generator[tuple[TestClient, Session], None, None]:
+def api_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
     """Provide a FastAPI test client backed by a shared in-memory SQLite engine."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -32,7 +32,6 @@ def api_client() -> Generator[tuple[TestClient, Session], None, None]:
         autocommit=False,
         expire_on_commit=False,
     )
-    session = session_factory()
 
     def override_get_session() -> Generator[Session, None, None]:
         request_session = session_factory()
@@ -46,15 +45,15 @@ def api_client() -> Generator[tuple[TestClient, Session], None, None]:
 
     try:
         with TestClient(app) as client:
-            yield client, session
+            yield client, session_factory
     finally:
-        session.close()
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
         engine.dispose()
 
 
-def _seed_three_events(session: Session) -> None:
+def _seed_three_events(session_factory: sessionmaker[Session]) -> None:
+    session = session_factory()
     record_audit_event(
         session,
         actor_id="user:alice",
@@ -83,14 +82,15 @@ def _seed_three_events(session: Session) -> None:
         after_summary={"title": "Quantum Mechanics, 3e (reprint)"},
     )
     session.commit()
+    session.close()
 
 
 def test_audit_events_endpoint_filters_by_entity_type(
-    api_client: tuple[TestClient, Session],
+    api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
     """GET /audit/events?entity_type=SourceReference returns only matching events."""
-    client, session = api_client
-    _seed_three_events(session)
+    client, session_factory = api_client
+    _seed_three_events(session_factory)
 
     response = client.get("/audit/events", params={"entity_type": "SourceReference"})
 
@@ -101,11 +101,11 @@ def test_audit_events_endpoint_filters_by_entity_type(
 
 
 def test_audit_events_endpoint_filters_by_actor(
-    api_client: tuple[TestClient, Session],
+    api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
     """GET /audit/events?actor_id=user:bob returns only bob's events."""
-    client, session = api_client
-    _seed_three_events(session)
+    client, session_factory = api_client
+    _seed_three_events(session_factory)
 
     response = client.get("/audit/events", params={"actor_id": "user:bob"})
 
@@ -115,11 +115,11 @@ def test_audit_events_endpoint_filters_by_actor(
 
 
 def test_audit_events_endpoint_returns_all_when_unfiltered(
-    api_client: tuple[TestClient, Session],
+    api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
     """GET /audit/events without filters returns every recorded event."""
-    client, session = api_client
-    _seed_three_events(session)
+    client, session_factory = api_client
+    _seed_three_events(session_factory)
 
     response = client.get("/audit/events")
 
@@ -129,19 +129,21 @@ def test_audit_events_endpoint_returns_all_when_unfiltered(
 
 
 def test_audit_events_endpoint_rejects_invalid_limit(
-    api_client: tuple[TestClient, Session],
+    api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
     """Limits below 1 are rejected by the FastAPI query validator."""
-    client, _session = api_client
+    client, _session_factory = api_client
 
     response = client.get("/audit/events", params={"limit": 0})
 
     assert response.status_code == 422
 
 
-def test_openapi_exposes_audit_events_path(api_client: tuple[TestClient, Session]) -> None:
+def test_openapi_exposes_audit_events_path(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
     """The /audit/events path appears in the OpenAPI schema."""
-    client, _session = api_client
+    client, _session_factory = api_client
 
     response = client.get("/openapi.json")
 
