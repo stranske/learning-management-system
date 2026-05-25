@@ -10,6 +10,7 @@ from lms.auth.api import router as auth_router
 from lms.evidence.api import router as attempts_router
 from lms.graphs.api import router as graphs_router
 from lms.learners.api import router as learners_router
+from lms.llm.api import router as llm_router
 from lms.mastery.api import router as mastery_router
 from lms.prompts.api import router as prompts_router
 from lms.scheduling.api import router as review_queue_router
@@ -45,6 +46,7 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     app.include_router(attempts_router)
     app.include_router(mastery_router)
     app.include_router(review_queue_router)
+    app.include_router(llm_router)
     return app
 
 
