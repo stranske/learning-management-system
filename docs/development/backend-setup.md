@@ -10,14 +10,26 @@ database owned by your local development user:
 
 ```bash
 cp .env.example .env
-createdb lms
+createdb lms_dev
 ```
 
-Example URL:
+The placeholder URL in `.env.example` connects as your local OS user without an
+embedded password (which keeps real credentials out of the repository):
 
 ```text
-DATABASE_URL=postgresql+psycopg://lms:lms@localhost:5432/lms
+DATABASE_URL=postgresql+psycopg://localhost:5432/lms_dev
 ```
+
+If you prefer a dedicated Postgres role, create it first and update
+`DATABASE_URL` in your private `.env` accordingly. For example:
+
+```bash
+createuser lms --pwprompt
+createdb --owner=lms lms_dev
+```
+
+Then set `DATABASE_URL=postgresql+psycopg://lms:<your-password>@localhost:5432/lms_dev`
+in `.env` (never commit a real password).
 
 ## Migrations
 

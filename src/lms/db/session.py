@@ -34,7 +34,7 @@ SessionLocal = sessionmaker(autoflush=False, autocommit=False, expire_on_commit=
 
 
 @contextmanager
-def session_scope() -> Generator[Session]:
+def session_scope() -> Generator[Session, None, None]:
     """Provide a transactional session scope for scripts and services."""
     session = SessionLocal(bind=get_engine())
     try:
@@ -47,7 +47,7 @@ def session_scope() -> Generator[Session]:
         session.close()
 
 
-def get_session() -> Generator[Session]:
+def get_session() -> Generator[Session, None, None]:
     """FastAPI dependency that yields a request-scoped database session."""
     with session_scope() as session:
         yield session

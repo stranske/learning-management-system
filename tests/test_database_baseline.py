@@ -48,12 +48,19 @@ def test_session_scope_rolls_back_on_error(monkeypatch: Any) -> None:
     monkeypatch.setattr(db_session_module, "get_engine", lambda: engine)
 
     try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE scratch (id INTEGER PRIMARY KEY)"))
+
         try:
             with session_scope() as session:
-                session.execute(text("select 1"))
+                session.execute(text("INSERT INTO scratch (id) VALUES (1)"))
                 raise RuntimeError("force rollback")
         except RuntimeError as exc:
             assert str(exc) == "force rollback"
+
+        with engine.connect() as conn:
+            remaining = conn.execute(text("SELECT COUNT(*) FROM scratch")).scalar_one()
+            assert remaining == 0
     finally:
         engine.dispose()
 
@@ -87,6 +94,9 @@ def test_alembic_baseline_revision_is_discoverable() -> None:
     config = Config(Path("alembic.ini"))
     script_directory = ScriptDirectory.from_config(config)
 
-    heads = script_directory.get_heads()
+    bases = script_directory.get_bases()
+    baseline = script_directory.get_revision("20260525_0001")
 
-    assert heads == ["20260525_0001"]
+    assert bases == ["20260525_0001"]
+    assert baseline is not None
+    assert baseline.down_revision is None

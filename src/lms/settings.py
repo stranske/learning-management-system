@@ -12,8 +12,12 @@ class Settings(BaseSettings):
     """Runtime configuration loaded from environment variables."""
 
     database_url: str = Field(
-        default="postgresql+psycopg://lms:lms@localhost:5432/lms",
-        description="SQLAlchemy database URL for the LMS Postgres database.",
+        default="postgresql+psycopg://localhost:5432/lms_dev",
+        description=(
+            "SQLAlchemy database URL for the LMS Postgres database. The default has no "
+            "embedded credentials so missing local configuration fails loudly; set "
+            "DATABASE_URL in a private .env file or environment secret."
+        ),
     )
     database_echo: bool = Field(
         default=False,
