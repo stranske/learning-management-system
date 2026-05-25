@@ -60,6 +60,35 @@ def test_create_user_and_learner_endpoints() -> None:
         learner_payload = learner_response.json()
         assert learner_payload["user_id"] == user_payload["id"]
         assert learner_payload["display_name"] == "Maria"
+
+        node_response = client.post(
+            "/knowledge/nodes",
+            json={
+                "title": "Concept mapping",
+                "knowledge_type": "conceptual",
+                "ownership_scope": "personal",
+                "status": "published",
+                "actor_id": user_payload["id"],
+            },
+        )
+        assert node_response.status_code == 201
+        node_payload = node_response.json()
+
+        goal_response = client.post(
+            f"/learners/{learner_payload['id']}/learning-goals",
+            json={
+                "title": "Use concept mapping",
+                "knowledge_type": "conceptual",
+                "target_node_ids": [node_payload["id"]],
+                "ownership_scope": "personal",
+            },
+        )
+        assert goal_response.status_code == 201
+        assert goal_response.json()["target_nodes"][0]["id"] == node_payload["id"]
+
+        list_response = client.get(f"/learners/{learner_payload['id']}/learning-goals")
+        assert list_response.status_code == 200
+        assert [goal["title"] for goal in list_response.json()] == ["Use concept mapping"]
     finally:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
