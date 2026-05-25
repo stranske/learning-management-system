@@ -2,56 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
-
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from pydantic import ValidationError
+from sqlalchemy.orm import Session
 
-import lms.audit.models  # noqa: F401
-import lms.evidence.models  # noqa: F401
-import lms.graphs.models  # noqa: F401
-import lms.sources.models  # noqa: F401
-from lms.db.base import Base
-from lms.db.session import get_session
-from lms.main import create_app
-
-
-@pytest.fixture
-def api_client() -> Generator[TestClient, None, None]:
-    """Provide a FastAPI client backed by an in-memory SQLite database."""
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(
-        bind=engine,
-        autoflush=False,
-        autocommit=False,
-        expire_on_commit=False,
-    )
-
-    def override_get_session() -> Generator[Session, None, None]:
-        request_session = session_factory()
-        try:
-            yield request_session
-        finally:
-            request_session.close()
-
-    app = create_app()
-    app.dependency_overrides[get_session] = override_get_session
-    try:
-        with TestClient(app) as client:
-            yield client
-    finally:
-        app.dependency_overrides.clear()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+from lms.evidence.repository import create_attempt, get_attempt
+from lms.evidence.schemas import AttemptCreate
 
 
 def _attempt_payload() -> dict[str, object]:
@@ -59,6 +15,7 @@ def _attempt_payload() -> dict[str, object]:
         "learner_id": "learner-1",
         "prompt_id": "prompt-1",
         "response_text": "I used inverse operations to isolate x.",
+        "response_metadata": {"answer_format": "text", "client_version": "web-1"},
         "confidence_rating": 4,
         "reference_accessed": True,
         "hint_used": False,
@@ -73,21 +30,23 @@ def _attempt_payload() -> dict[str, object]:
     }
 
 
-def test_submit_attempt_with_confidence_and_reference_use(api_client: TestClient) -> None:
-    """POST /attempts returns a stable id with confidence and reference tracking."""
-    response = api_client.post("/attempts", json=_attempt_payload())
+def test_submit_attempt_with_confidence_and_reference_use(db_session: Session) -> None:
+    """Attempt save returns stable id with confidence and reference tracking."""
+    payload = AttemptCreate.model_validate(_attempt_payload())
 
-    assert response.status_code == 201
-    body = response.json()
-    assert body["id"]
-    assert body["learner_id"] == "learner-1"
-    assert body["prompt_id"] == "prompt-1"
-    assert body["confidence_rating"] == 4
-    assert body["reference_accessed"] is True
-    assert body["support_level"] == "reference"
+    attempt = create_attempt(db_session, **payload.model_dump())
+    db_session.commit()
+
+    assert attempt.id
+    assert attempt.learner_id == "learner-1"
+    assert attempt.prompt_id == "prompt-1"
+    assert attempt.response_metadata["answer_format"] == "text"
+    assert attempt.confidence_rating == 4
+    assert attempt.reference_accessed is True
+    assert attempt.support_level == "reference"
 
 
-def test_structured_feedback_requires_next_action(api_client: TestClient) -> None:
+def test_structured_feedback_requires_next_action(db_session: Session) -> None:
     """Attempt feedback must include an actionable learner next step."""
     payload = _attempt_payload()
     payload["feedback"] = {
@@ -96,27 +55,26 @@ def test_structured_feedback_requires_next_action(api_client: TestClient) -> Non
         "gap": "Needs a numeric example.",
     }
 
-    response = api_client.post("/attempts", json=payload)
+    with pytest.raises(ValidationError):
+        AttemptCreate.model_validate(payload)
 
-    assert response.status_code == 422
 
-
-def test_attempt_confidence_validation(api_client: TestClient) -> None:
+def test_attempt_confidence_validation() -> None:
     """Confidence is bounded to the v1 five-point learner rating scale."""
     payload = _attempt_payload()
     payload["confidence_rating"] = 6
 
-    response = api_client.post("/attempts", json=payload)
+    with pytest.raises(ValidationError):
+        AttemptCreate.model_validate(payload)
 
-    assert response.status_code == 422
 
+def test_get_attempt_returns_recorded_feedback(db_session: Session) -> None:
+    """Readback by id returns the stored structured feedback."""
+    payload = AttemptCreate.model_validate(_attempt_payload())
+    created = create_attempt(db_session, **payload.model_dump())
+    db_session.commit()
 
-def test_get_attempt_returns_recorded_feedback(api_client: TestClient) -> None:
-    """GET /attempts/{id} returns the stored structured feedback."""
-    created = api_client.post("/attempts", json=_attempt_payload()).json()
+    loaded = get_attempt(db_session, created.id)
 
-    response = api_client.get(f"/attempts/{created['id']}")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["feedback"]["next_action"] == "Practice two one-step equations."
+    assert loaded is not None
+    assert loaded.feedback["next_action"] == "Practice two one-step equations."

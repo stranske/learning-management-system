@@ -23,6 +23,7 @@ def upgrade() -> None:
         sa.Column("learner_id", sa.String(length=36), nullable=False),
         sa.Column("prompt_id", sa.String(length=36), nullable=False),
         sa.Column("response_text", sa.Text(), nullable=False),
+        sa.Column("response_metadata", sa.JSON(), nullable=True),
         sa.Column("confidence_rating", sa.Integer(), nullable=True),
         sa.Column("reference_accessed", sa.Boolean(), server_default="0", nullable=False),
         sa.Column("hint_used", sa.Boolean(), server_default="0", nullable=False),

@@ -42,6 +42,7 @@ class Attempt(Base):
     learner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     prompt_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     response_text: Mapped[str] = mapped_column(Text, nullable=False)
+    response_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     confidence_rating: Mapped[int | None] = mapped_column(Integer)
     reference_accessed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0", index=True
