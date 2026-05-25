@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy.orm import Session
 
 from lms.audit.models import AuditLog
@@ -10,8 +12,8 @@ from lms.sources.repository import create_source_reference, scan_source_referenc
 
 def test_changed_markdown_passage_marks_reference_stale(
     db_session: Session,
-    tmp_path,
-) -> None:  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
     """A changed markdown passage flips drift_status to stale and records audit."""
     note = tmp_path / "research.md"
     note.write_text("# Heading\noriginal passage\n", encoding="utf-8")
@@ -42,8 +44,8 @@ def test_changed_markdown_passage_marks_reference_stale(
 
 def test_missing_markdown_file_marks_reference_missing(
     db_session: Session,
-    tmp_path,
-) -> None:  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
     """A missing markdown file flips drift_status to missing."""
     note = tmp_path / "missing.md"
     note.write_text("content\n", encoding="utf-8")

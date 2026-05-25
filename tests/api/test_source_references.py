@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -96,7 +97,7 @@ def test_openapi_exposes_source_reference_paths(
 
 def test_create_markdown_file_reference_requires_client_supplied_hash(
     api_client: tuple[TestClient, Session],
-    tmp_path,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
 ) -> None:
     """POST rejects markdown-file references without content/content_hash."""
     client, session = api_client

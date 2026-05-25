@@ -3,11 +3,12 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 
-def _load_module():
+def _load_module() -> ModuleType:
     script_path = Path("scripts/verify_agent_issue_create.py")
     spec = importlib.util.spec_from_file_location("verify_agent_issue_create", script_path)
     assert spec is not None
@@ -18,7 +19,7 @@ def _load_module():
     return module
 
 
-def test_validate_issue_body_accepts_required_sections():
+def test_validate_issue_body_accepts_required_sections() -> None:
     mod = _load_module()
     body = """
 ## Why
@@ -33,7 +34,7 @@ x
     mod.validate_issue_body(body)
 
 
-def test_validate_issue_body_rejects_missing_required_sections():
+def test_validate_issue_body_rejects_missing_required_sections() -> None:
     mod = _load_module()
     body = """
 ## Why
@@ -47,7 +48,7 @@ x
         mod.validate_issue_body(body)
 
 
-def test_run_dry_run_prints_command(tmp_path, capsys):
+def test_run_dry_run_prints_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     mod = _load_module()
 
     body_file = tmp_path / "body.md"

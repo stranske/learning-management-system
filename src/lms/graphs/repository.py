@@ -100,6 +100,24 @@ def get_knowledge_node(session: Session, node_id: str, *, scope: str) -> Knowled
     return node
 
 
+def get_knowledge_node_for_prompt_creation(
+    session: Session,
+    node_id: str,
+    *,
+    scope: str,
+) -> KnowledgeNode | None:
+    """Return a node only when it is eligible for prompt creation.
+
+    Prompt creation is intentionally restricted to published nodes so imported
+    draft notes cannot be consumed until later authoring/publish workflow marks
+    them ready.
+    """
+    node = get_knowledge_node(session, node_id, scope=scope)
+    if node is None or node.status != "published":
+        return None
+    return node
+
+
 def list_knowledge_nodes(
     session: Session,
     *,

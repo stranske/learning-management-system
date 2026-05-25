@@ -4,11 +4,13 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import pytest
 
 
-def _load_module():
+def _load_module() -> ModuleType:
     script_path = Path("scripts/verify_repo_variable.py")
     spec = importlib.util.spec_from_file_location("verify_repo_variable", script_path)
     assert spec is not None
@@ -19,10 +21,12 @@ def _load_module():
     return module
 
 
-def test_verify_variable_passes_when_name_and_value_match(monkeypatch):
+def test_verify_variable_passes_when_name_and_value_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     mod = _load_module()
 
-    def _fake_run(*_args, **_kwargs):
+    def _fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
             args=[],
             returncode=0,
@@ -34,10 +38,10 @@ def test_verify_variable_passes_when_name_and_value_match(monkeypatch):
     mod.verify_variable("owner/repo", "USE_CONSOLIDATED_WORKFLOWS", "true")
 
 
-def test_verify_variable_fails_when_missing(monkeypatch):
+def test_verify_variable_fails_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     mod = _load_module()
 
-    def _fake_run(*_args, **_kwargs):
+    def _fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
             args=[],
             returncode=0,
@@ -51,10 +55,10 @@ def test_verify_variable_fails_when_missing(monkeypatch):
         mod.verify_variable("owner/repo", "USE_CONSOLIDATED_WORKFLOWS", "true")
 
 
-def test_verify_variable_fails_when_value_differs(monkeypatch):
+def test_verify_variable_fails_when_value_differs(monkeypatch: pytest.MonkeyPatch) -> None:
     mod = _load_module()
 
-    def _fake_run(*_args, **_kwargs):
+    def _fake_run(*_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
             args=[],
             returncode=0,

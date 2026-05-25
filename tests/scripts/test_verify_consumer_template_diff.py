@@ -3,10 +3,12 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+
+import pytest
 
 
-def _load_module():
+def _load_module() -> ModuleType:
     script_path = Path("scripts/verify_consumer_template_diff.py")
     spec = importlib.util.spec_from_file_location("verify_consumer_template_diff", script_path)
     assert spec is not None
@@ -17,7 +19,7 @@ def _load_module():
     return module
 
 
-def test_run_check_reports_unavailable_sources(tmp_path):
+def test_run_check_reports_unavailable_sources(tmp_path: Path) -> None:
     mod = _load_module()
 
     template_root = tmp_path / "template"
@@ -46,7 +48,7 @@ workflows:
     assert report["strict_diffs"][0]["kind"] == "missing_template_source"
 
 
-def test_run_check_flags_untracked_local_workflow_files(tmp_path):
+def test_run_check_flags_untracked_local_workflow_files(tmp_path: Path) -> None:
     mod = _load_module()
 
     template_root = tmp_path / "template"
@@ -86,7 +88,9 @@ workflows:
     assert report["strict_diffs"][0]["target"] == ".github/workflows/local-shadow.yml"
 
 
-def test_main_fails_with_require_create_only_clean(tmp_path, monkeypatch):
+def test_main_fails_with_require_create_only_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     mod = _load_module()
 
     template_root = tmp_path / "template"
@@ -125,7 +129,9 @@ docs:
     assert mod.main() == 1
 
 
-def test_main_allows_create_only_diffs_without_flag(tmp_path, monkeypatch):
+def test_main_allows_create_only_diffs_without_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     mod = _load_module()
 
     template_root = tmp_path / "template"

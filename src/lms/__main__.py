@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from lms.db.session import session_scope
+from lms.importers.markdown import import_markdown_notes
 from lms.research_registry import ResearchRegistryError, load_registry
 from lms.sources.repository import scan_source_references
 
@@ -45,6 +46,39 @@ def main() -> None:
         default="system:drift-scan",
         help="actor id recorded in audit events created by the scan",
     )
+    import_parser = subparsers.add_parser(
+        "import-notes",
+        help="import Markdown notes into draft knowledge graph records",
+    )
+    import_parser.add_argument("path", type=Path, help="Markdown file or directory to import")
+    import_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="maximum number of heading sections to import",
+    )
+    import_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print planned creates without writing records",
+    )
+    import_parser.add_argument(
+        "--scope",
+        choices=("personal", "institutional"),
+        default="personal",
+        help="ownership scope assigned to imported nodes and edges",
+    )
+    import_parser.add_argument(
+        "--source-visibility",
+        choices=("public", "local-only"),
+        default="local-only",
+        help="visibility assigned to heading-level source references",
+    )
+    import_parser.add_argument(
+        "--actor-id",
+        default="system:import-notes",
+        help="actor id recorded in import audit events",
+    )
 
     args = parser.parse_args()
     if args.command == "validate-research-registry":
@@ -62,21 +96,45 @@ def main() -> None:
     if args.command == "source-references":
         if args.source_references_command == "scan-drift":
             with session_scope() as session:
-                summary = scan_source_references(
+                drift_summary = scan_source_references(
                     session,
                     base_path=args.base_path,
                     actor_id=args.actor_id,
                 )
             print(
                 "source reference drift scan: "
-                f"scanned={summary.scanned} "
-                f"current={summary.current} "
-                f"stale={summary.stale} "
-                f"missing={summary.missing} "
-                f"skipped={summary.skipped}"
+                f"scanned={drift_summary.scanned} "
+                f"current={drift_summary.current} "
+                f"stale={drift_summary.stale} "
+                f"missing={drift_summary.missing} "
+                f"skipped={drift_summary.skipped}"
             )
             return
         parser.error("source-references requires a subcommand")
+    if args.command == "import-notes":
+        if args.dry_run:
+            import_summary = import_markdown_notes(
+                None,
+                args.path,
+                limit=args.limit,
+                dry_run=True,
+                scope=args.scope,
+                source_visibility=args.source_visibility,
+                actor_id=args.actor_id,
+            )
+        else:
+            with session_scope() as session:
+                import_summary = import_markdown_notes(
+                    session,
+                    args.path,
+                    limit=args.limit,
+                    scope=args.scope,
+                    source_visibility=args.source_visibility,
+                    actor_id=args.actor_id,
+                )
+        for line in import_summary.to_cli_summary_lines():
+            print(line)
+        return
 
     _run_dev_server()
 
