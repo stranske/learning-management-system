@@ -398,6 +398,8 @@ traitlets==5.15.0
     #   nbclient
     #   nbconvert
     #   nbformat
+types-pyyaml==6.0.12.20260518
+    # via lms (pyproject.toml)
 typing-extensions==4.15.0
     # via
     #   alembic

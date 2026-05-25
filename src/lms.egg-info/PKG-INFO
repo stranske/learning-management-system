@@ -31,6 +31,7 @@ Requires-Dist: ruff>=0.15.13; extra == "dev"
 Requires-Dist: mypy>=2.1.0; extra == "dev"
 Requires-Dist: black==26.3.1; extra == "dev"
 Requires-Dist: jupyter>=1.1.0; extra == "dev"
+Requires-Dist: types-PyYAML>=6.0.0; extra == "dev"
 Dynamic: license-file
 
 # Learning Management System
