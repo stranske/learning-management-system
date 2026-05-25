@@ -13,7 +13,12 @@ src/lms.egg-info/requires.txt
 src/lms.egg-info/top_level.txt
 src/lms/analytics/__init__.py
 src/lms/api/__init__.py
+src/lms/api/audit.py
 src/lms/api/health.py
+src/lms/audit/__init__.py
+src/lms/audit/models.py
+src/lms/audit/repository.py
+src/lms/audit/schemas.py
 src/lms/auth/__init__.py
 src/lms/auth/api.py
 src/lms/auth/dependencies.py
