@@ -8,7 +8,8 @@ from lms.api.audit import router as audit_router
 from lms.api.health import router as health_router
 from lms.api.inspect import router as inspect_router
 from lms.auth.api import router as auth_router
-from lms.evidence.api import evidence_router, router as attempts_router
+from lms.evidence.api import evidence_router
+from lms.evidence.api import router as attempts_router
 from lms.graphs.api import router as graphs_router
 from lms.learners.api import router as learners_router
 from lms.mastery.api import router as mastery_router

@@ -62,7 +62,9 @@ def test_first_attempt_high_confidence_fast_response_maps_to_easy() -> None:
 
 
 def test_unsupported_correct_maps_to_good() -> None:
-    result = evidence_to_fsrs_rating(_record(correctness=True, confidence_rating=4, support_level="none"))
+    result = evidence_to_fsrs_rating(
+        _record(correctness=True, confidence_rating=4, support_level="none")
+    )
 
     assert result.rating == FSRSRating.GOOD
 

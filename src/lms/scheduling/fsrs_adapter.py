@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Callable
 
 from lms.evidence.models import EvidenceRecord
 
@@ -49,6 +49,7 @@ class RatingRule:
     name: str
     matcher: Callable[[FSRSEvidence], bool]
     rating: FSRSRating
+
 
 TRANSFER_EXCLUDED_VALUES = {"medium", "far", "novel", "remote"}
 
