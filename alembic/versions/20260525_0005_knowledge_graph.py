@@ -147,7 +147,7 @@ def upgrade() -> None:
             name=op.f("ck_knowledge_edges_confidence_unit_interval"),
         ),
         sa.CheckConstraint(
-            "source_scope = target_scope OR is_graph_reference = 1",
+            "source_scope = target_scope OR is_graph_reference",
             name=op.f("ck_knowledge_edges_no_cross_scope_normal_edge"),
         ),
         sa.CheckConstraint(

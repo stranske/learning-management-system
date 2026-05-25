@@ -219,9 +219,9 @@ def create_knowledge_edge(
 
     ``scope`` is the source-side scope. ``target_scope`` defaults to the same
     value, matching the v1 expectation that edges stay within one scope. To
-    create a cross-scope link, callers must pass ``is_graph_reference=True``;
-    a ``GraphReference`` row is the documented mechanism for cross-scope links
-    and the database constraint refuses any other cross-scope edge.
+    create a cross-scope link, callers must pass ``is_graph_reference=True``.
+    The explicit flag documents the boundary crossing, and the database
+    constraint refuses any other cross-scope edge.
     """
     _require_scope(scope)
     if target_scope is None:
@@ -234,8 +234,8 @@ def create_knowledge_edge(
         raise ValueError("knowledge edge cannot point to its own source node")
     if scope != target_scope and not is_graph_reference:
         raise ValueError(
-            "cross-scope edges require is_graph_reference=True; use a GraphReference "
-            "row for personal/institutional linkage"
+            "cross-scope edges require is_graph_reference=True for "
+            "personal/institutional linkage"
         )
     if confidence is not None and not 0.0 <= confidence <= 1.0:
         raise ValueError("confidence must be between 0.0 and 1.0 (inclusive)")

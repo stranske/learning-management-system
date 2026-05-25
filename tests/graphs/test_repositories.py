@@ -161,5 +161,6 @@ def test_create_prerequisite_edge_creates_audit_event(db_session: Session) -> No
     assert audit.after_summary["source_scope"] == "personal"
 
     edges = list_knowledge_edges(db_session, scope="personal")
-    assert [edge.id for edge in edges] == [edge.id for edge in edges]
+    assert len(edges) == 1
+    assert edges[0].id == edge.id
     assert all(edge.source_scope == "personal" for edge in edges)

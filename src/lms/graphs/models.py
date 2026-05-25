@@ -145,7 +145,7 @@ class KnowledgeEdge(Base):
             name="confidence_unit_interval",
         ),
         CheckConstraint(
-            "source_scope = target_scope OR is_graph_reference = 1",
+            "source_scope = target_scope OR is_graph_reference",
             name="no_cross_scope_normal_edge",
         ),
         CheckConstraint(
