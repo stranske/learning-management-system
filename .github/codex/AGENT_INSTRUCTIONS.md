@@ -95,7 +95,7 @@ You should assume you're running in `agent-standard` unless explicitly told othe
 
 ---
 
-<!-- LMS-DOMAIN-APPEND:start -->
+LMS-DOMAIN-APPEND START
 ## LMS Domain Context
 
 This repository implements a learning-management system centered on this loop:
@@ -116,8 +116,8 @@ Path ownership for LMS-specific context:
 
 - `.github/codex/PROJECT_CONTEXT.md` is the long-form repo-local domain reference.
 - `.github/codex/prompts/lms_project_context.md` is the repo-local lane-prompt addendum.
-- This marked LMS append is repo-local context layered below the synced base instructions. If consumer sync refreshes the base body, preserve or reapply the content between `LMS-DOMAIN-APPEND` markers.
-<!-- LMS-DOMAIN-APPEND:end -->
+- This marked LMS append is repo-local context layered below the synced base instructions. If consumer sync refreshes the base body, preserve or reapply the content between the `LMS-DOMAIN-APPEND START` and `LMS-DOMAIN-APPEND END` sentinel lines.
+LMS-DOMAIN-APPEND END
 
 ---
 

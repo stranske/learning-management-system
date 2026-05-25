@@ -50,7 +50,7 @@ LLM behavior in this repo is bounded:
 | `src/`, `tests/`, `docs/product/`                | This repo              | Application + research/design content. |
 | `docs/automation/workflows-consumer-setup.md`    | This repo              | Per-repo automation documentation. |
 | `.github/codex/PROJECT_CONTEXT.md` (this file)   | This repo              | Repo-local lane-prompt reference. |
-| `.github/codex/AGENT_INSTRUCTIONS.md`            | Shared                 | Base body is synced from `stranske/Workflows`; the marked `LMS-DOMAIN-APPEND` block is repo-local and must be preserved/reapplied after sync. |
+| `.github/codex/AGENT_INSTRUCTIONS.md`            | Shared                 | Base body is synced from `stranske/Workflows`; the `LMS-DOMAIN-APPEND START` / `END` block is repo-local and must be preserved/reapplied after sync. |
 | `.github/codex/prompts/*.md` except `lms_*.md`   | `stranske/Workflows`   | Synced base prompts. Fix upstream. |
 | `.github/codex/prompts/lms_*.md`                 | This repo              | Repo-local lane addenda. |
 | `.github/workflows/agents-*.yml`                 | `stranske/Workflows`   | Reusable workflow thin callers. Fix upstream. |
