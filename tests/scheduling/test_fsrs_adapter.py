@@ -74,6 +74,22 @@ def test_partial_credit_boundaries(db_session: Session) -> None:
     assert evidence_to_fsrs_rating(good).label == "good"
 
 
+def test_incorrect_precedes_partial_credit_rules(db_session: Session) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=False,
+        normalized_score=0.84,
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.label == "again"
+    assert rating.value == 1
+    assert rating.rule_id == "incorrect"
+
+
 def test_transfer_evidence_is_excluded_from_fsrs_scheduling(db_session: Session) -> None:
     record = create_evidence_record(
         db_session,
