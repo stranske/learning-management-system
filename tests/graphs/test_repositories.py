@@ -13,6 +13,7 @@ from lms.graphs.repository import (
     delete_knowledge_node,
     get_knowledge_edge,
     get_knowledge_node,
+    get_knowledge_node_for_prompt_creation,
     list_knowledge_edges,
     list_knowledge_nodes,
     list_knowledge_nodes_across_scopes,
@@ -206,6 +207,45 @@ def test_get_knowledge_node_returns_none_for_wrong_scope(db_session: Session) ->
     db_session.commit()
     result = get_knowledge_node(db_session, node.id, scope="personal")
     assert result is None
+
+
+def test_get_knowledge_node_for_prompt_creation_rejects_imported_draft(
+    db_session: Session,
+) -> None:
+    """Prompt creation cannot consume imported draft nodes."""
+    node = create_knowledge_node(
+        db_session,
+        title="Imported note",
+        knowledge_type="factual",
+        scope="personal",
+        actor_id="u:a",
+        status="draft",
+        provenance="imported",
+        imported_from="docs/research/example.md",
+    )
+    db_session.commit()
+
+    result = get_knowledge_node_for_prompt_creation(db_session, node.id, scope="personal")
+    assert result is None
+
+
+def test_get_knowledge_node_for_prompt_creation_allows_published_nodes(
+    db_session: Session,
+) -> None:
+    """Prompt creation may consume published nodes."""
+    node = create_knowledge_node(
+        db_session,
+        title="Published node",
+        knowledge_type="factual",
+        scope="personal",
+        actor_id="u:a",
+        status="published",
+    )
+    db_session.commit()
+
+    result = get_knowledge_node_for_prompt_creation(db_session, node.id, scope="personal")
+    assert result is not None
+    assert result.id == node.id
 
 
 def test_list_knowledge_nodes_with_status_filter(db_session: Session) -> None:
