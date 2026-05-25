@@ -6,6 +6,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 import mistune
 from sqlalchemy.orm import Session
@@ -189,7 +190,7 @@ def _parse_heading_sections(file_path: Path) -> list[MarkdownHeading]:
 def _extract_h1_h2_headings(*, text: str, lines: list[str]) -> list[tuple[int, int, str]]:
     """Parse heading tokens with Mistune and map each H1/H2 token to a source line."""
     markdown = mistune.create_markdown(renderer="ast")
-    tokens = markdown(text)
+    tokens = cast(list[dict[str, Any]], markdown(text))
     raw: list[tuple[int, int, str]] = []
     next_scan_index = 0
     for token in tokens:
