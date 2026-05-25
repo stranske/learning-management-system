@@ -10,7 +10,13 @@ Use **Python + FastAPI + SQLAlchemy + Alembic + Pydantic + pytest + Postgres + R
 
 ## Context
 
-The Learning Management System project is a public-but-personal v1 learning engine: API-first, evidence-driven, formative-LLM-mediated, with the project owner as the first user. The design corpus (see `docs/product/project-plan.md` and `docs/product/early-design-decisions.md`) converged through two rounds of parallel-agent design review. Implementation begins from a Workflows consumer-template scaffolding installed via the `stranske/Template` GitHub template-repository mechanism.
+The Learning Management System project is a public-but-personal v1 learning engine: API-first, evidence-driven, formative-LLM-mediated, with the project owner as the first user. The design corpus converged through two rounds of parallel-agent design review across two source documents:
+
+- **[`docs/product/project-plan.md`](../../product/project-plan.md) — Milestone 0: Repo And Decision Foundation** establishes that the repo needs a written stack decision and initial backlog before implementation begins, with acceptance criteria tied to learning-science intent.
+- **[`docs/product/early-design-decisions.md`](../../product/early-design-decisions.md) — Segment 1: First Product Boundary** selected a local/private personal-research-note slice as the first concrete content path, with the project owner as the first real user, keeping the core learning loop broad enough for other use cases.
+- **[`docs/product/early-design-decisions.md`](../../product/early-design-decisions.md) — Segment 7: Stack, Governance, And Implementation** selected Python + FastAPI + Postgres + REST/OpenAPI + local auth + Workflows consumer setup as the working technical defaults.
+
+Implementation begins from a Workflows consumer-template scaffolding installed via the `stranske/Template` GitHub template-repository mechanism.
 
 Before any module-level code lands, the repo needs a written commitment on the stack and on what Phase 1 includes vs. defers, so issue-driven implementation work doesn't drift back toward older, broader scope.
 
