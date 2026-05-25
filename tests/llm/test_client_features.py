@@ -30,7 +30,7 @@ class _Schema:
     value: str
 
     @classmethod
-    def model_validate_json(cls, payload: str) -> "_Schema":
+    def model_validate_json(cls, payload: str) -> _Schema:
         import json
 
         data = json.loads(payload)
