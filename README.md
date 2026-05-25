@@ -157,6 +157,23 @@ The Kindle extraction notes are in [docs/research/kindle-source-notes.md](docs/r
 - Personal highlight records include positions and timestamps, but not the highlighted text in the inspected database.
 - Popular highlights are useful as signals, but they must be labeled separately from personal annotations.
 
+## Running The Backend Locally
+
+The Milestone 1 backend skeleton ships as the Python package `lms` under `src/lms/`. To start the FastAPI development server:
+
+```bash
+uv sync --extra dev          # install runtime + dev dependencies into .venv
+uv run python -m lms          # start uvicorn on http://127.0.0.1:8000 with reload
+```
+
+Useful endpoints once the server is running:
+
+- `GET /health` — returns `{"status": "ok", "app": "lms", "version": "<package version>"}`.
+- `GET /docs` — interactive Swagger UI for the current router tree.
+- `GET /openapi.json` — OpenAPI schema (also covered by `tests/api/test_health.py`).
+
+Run the test suite with `uv run pytest`. The skeleton modules under `src/lms/` (`api`, `auth`, `curriculum`, `evidence`, `feedback`, `graphs`, `llm`, `mastery`, `scheduling`, `analytics`) are intentionally empty placeholders so later milestones can attach domain models, routers, and services without reshaping the package layout.
+
 ## Development Workflow
 
 The project is intended to become a GitHub repository using the local Workflows system in `/Users/teacher/Library/CloudStorage/Dropbox/Learning/Code/Workflows`.
