@@ -12,6 +12,7 @@ from lms.graphs.repository import (
     list_knowledge_edges,
     list_knowledge_nodes,
 )
+from lms.sources.repository import create_source_reference
 
 
 def test_node_queries_require_explicit_scope(db_session: Session) -> None:
@@ -88,3 +89,35 @@ def test_create_node_and_edge_record_audit_events(db_session: Session) -> None:
         "KnowledgeNode",
     ]
     assert edge.ownership_scope == "personal"
+
+
+def test_create_knowledge_node_persists_import_metadata(db_session: Session) -> None:
+    """Node records keep source linkage, provenance metadata, and timestamps."""
+    reference = create_source_reference(
+        db_session,
+        source_type="url",
+        stable_locator="https://example.com/research-notes",
+        content=b"citation payload",
+        actor_id="user:alice",
+    )
+    node = create_knowledge_node(
+        db_session,
+        title="Flashcard spacing",
+        description="Imported from prior note set.",
+        knowledge_type="concept",
+        ownership_scope="personal",
+        status="draft",
+        provenance={"importer": "notes-md", "line_start": 12, "line_end": 30},
+        imported_from="research/notes.md#L12-L30",
+        source_reference_id=reference.id,
+        actor_id="user:alice",
+    )
+    db_session.commit()
+
+    stored = db_session.get(type(node), node.id)
+    assert stored is not None
+    assert stored.provenance == {"importer": "notes-md", "line_start": 12, "line_end": 30}
+    assert stored.imported_from == "research/notes.md#L12-L30"
+    assert stored.source_reference_id == reference.id
+    assert stored.created_at is not None
+    assert stored.updated_at is not None
