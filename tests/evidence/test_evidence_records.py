@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy.orm import Session
@@ -35,6 +36,7 @@ def _evidence_payload() -> dict[str, object]:
     return {
         "knowledge_node_id": "node-1",
         "prompt_version_id": "prompt-version-1",
+        "timestamp": datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
         "evidence_kind": "observed",
         "demand_level": "medium",
         "knowledge_type": "procedural",
@@ -74,6 +76,7 @@ def test_evidence_record_roundtrip_full_schema(db_session: Session) -> None:
     assert record.attempt_id == attempt.id
     assert record.prompt_id == "prompt-1"
     assert record.prompt_version_id == "prompt-version-1"
+    assert record.timestamp.replace(tzinfo=UTC) == datetime(2026, 5, 1, 12, 30, tzinfo=UTC)
     assert record.evidence_kind == "observed"
     assert record.demand_level == "medium"
     assert record.knowledge_type == "procedural"
@@ -89,6 +92,7 @@ def test_evidence_record_roundtrip_full_schema(db_session: Session) -> None:
 
     read = EvidenceRecordRead.model_validate(record)
     assert read.id == record.id
+    assert read.timestamp.replace(tzinfo=UTC) == datetime(2026, 5, 1, 12, 30, tzinfo=UTC)
     assert read.answer_artifact_ref == "artifact://attempts/1"
 
 

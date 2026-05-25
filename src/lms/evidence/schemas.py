@@ -81,6 +81,7 @@ class AttemptEvidenceCreate(BaseModel):
 
     knowledge_node_id: str = Field(min_length=1, max_length=36)
     prompt_version_id: str | None = Field(default=None, max_length=36)
+    timestamp: datetime | None = None
     evidence_kind: EvidenceKind = "observed"
     demand_level: DemandLevel | None = None
     knowledge_type: KnowledgeType | None = None
@@ -109,6 +110,7 @@ class EvidenceRecordCreate(BaseModel):
     attempt_id: str | None = Field(default=None, max_length=36)
     prompt_id: str | None = Field(default=None, max_length=36)
     prompt_version_id: str | None = Field(default=None, max_length=36)
+    timestamp: datetime | None = None
     evidence_kind: EvidenceKind = "observed"
     demand_level: DemandLevel | None = None
     knowledge_type: KnowledgeType | None = None
@@ -139,5 +141,6 @@ class EvidenceRecordRead(EvidenceRecordCreate):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    timestamp: datetime
     observed_at: datetime
     created_at: datetime

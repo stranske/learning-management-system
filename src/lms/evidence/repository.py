@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -51,6 +52,7 @@ def create_attempt(
             attempt_id=attempt.id,
             prompt_id=prompt_id,
             prompt_version_id=evidence.get("prompt_version_id"),
+            timestamp=evidence.get("timestamp"),
             evidence_kind=evidence.get("evidence_kind", "observed"),
             demand_level=evidence.get("demand_level"),
             knowledge_type=evidence.get("knowledge_type"),
@@ -90,6 +92,7 @@ def create_evidence_record(
     attempt_id: str | None = None,
     prompt_id: str | None = None,
     prompt_version_id: str | None = None,
+    timestamp: datetime | None = None,
     evidence_kind: str = "observed",
     demand_level: str | None = None,
     knowledge_type: str | None = None,
@@ -120,6 +123,7 @@ def create_evidence_record(
         attempt_id=attempt_id,
         prompt_id=prompt_id,
         prompt_version_id=prompt_version_id,
+        timestamp=timestamp,
         evidence_kind=evidence_kind,
         demand_level=demand_level,
         knowledge_type=knowledge_type,

@@ -158,6 +158,13 @@ class EvidenceRecord(Base):
         nullable=False,
         index=True,
     )
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
     demand_level: Mapped[str | None] = mapped_column(String(32), index=True)
     knowledge_type: Mapped[str | None] = mapped_column(String(32), index=True)
     time_since_last_attempt_seconds: Mapped[int | None] = mapped_column(Integer)
