@@ -216,6 +216,25 @@ def test_fast_high_confidence_first_attempt_maps_to_easy(db_session: Session) ->
     assert rating.rule_id == "fast-first-attempt"
 
 
+def test_fast_high_confidence_non_first_attempt_does_not_map_to_easy(db_session: Session) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=True,
+        confidence_rating=5,
+        response_time_seconds=12,
+        support_level="none",
+        attempt_context={"attempt_number": 2},
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.label == "good"
+    assert rating.value == 3
+    assert rating.rule_id == "unsupported-correct"
+
+
 def test_adapter_rule_table_is_data_driven() -> None:
     assert [rule.rule_id for rule in FSRS_RULES] == [
         "transfer-excluded",

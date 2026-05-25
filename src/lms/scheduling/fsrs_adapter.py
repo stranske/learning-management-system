@@ -69,13 +69,23 @@ def _is_supported_correct_or_low_confidence(record: EvidenceRecord) -> bool:
 
 
 def _is_fast_first_attempt(record: EvidenceRecord) -> bool:
+    """Return true for explicitly first-attempt, fast, high-confidence correctness."""
+
+    attempt_context = record.attempt_context or {}
+    attempt_number = attempt_context.get("attempt_number")
+    is_first_attempt = (
+        attempt_number == 1
+        if isinstance(attempt_number, int)
+        else record.time_since_last_attempt_seconds is None
+    )
+
     return (
         record.correctness is True
         and not _has_support(record)
         and (record.confidence_rating or 0) >= HIGH_CONFIDENCE_MIN
         and record.response_time_seconds is not None
         and record.response_time_seconds <= FAST_FIRST_ATTEMPT_SECONDS
-        and record.time_since_last_attempt_seconds is None
+        and is_first_attempt
     )
 
 
