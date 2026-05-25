@@ -48,10 +48,11 @@ def _score(record: EvidenceRecord) -> float | None:
 
 
 def _has_support(record: EvidenceRecord) -> bool:
+    support_level = (record.support_level or "").strip().lower()
     return (
         record.hint_used
         or record.reference_accessed
-        or record.support_level in {"hint", "reference", "worked-example", "coach"}
+        or support_level in {"hint", "reference", "worked-example", "coach"}
     )
 
 
