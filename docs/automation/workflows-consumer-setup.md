@@ -1,6 +1,6 @@
 # Workflows Consumer Setup
 
-Status: Phase 1 baseline. This document records what arrived with the GitHub template, what was added per-repo for LMS, and where each surface is owned.
+Status: M0-002 pass complete (2026-05-25). Template diff verified; one missing file (`config/coverage-baseline.json`) was restored. This document records what arrived with the GitHub template, what was added per-repo for LMS, and where each surface is owned.
 
 ## Provenance
 
@@ -81,6 +81,14 @@ Repo-only (LMS-specific):
 
 - `.github/codex/PROJECT_CONTEXT.md` — long-form LMS domain context (learner loop, source citation contract, formative LLM policy, ownership table, Phase 1 entities).
 - `.github/codex/prompts/lms_project_context.md` — lane-prompt addendum referenced from the synced prompts in this directory.
+
+### `config/`
+
+Template-required (owned upstream, sync-managed):
+
+- `config/coverage-baseline.json` — coverage floor used by `maint-coverage-guard.yml`. Added in the M0-002 diff pass (was absent from the initial template-delivered snapshot; fetched from `stranske/Workflows/templates/consumer-repo/config/coverage-baseline.json`). **Set the `coverage` value to match the project's actual floor before the first coverage-guard run.**
+- `config/llm_slots.json` — LLM slot routing table.
+- `config/model_registry.json` — model registry for the agent surface.
 
 ### `scripts/` and `tools/`
 
