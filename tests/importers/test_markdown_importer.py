@@ -131,3 +131,4 @@ def test_cli_dry_run_reports_planned_nodes(monkeypatch: Any, tmp_path: Path, cap
     assert "markdown import planned" in out
     assert "nodes=3" in out
     assert "sources=3" in out
+    assert "planned creates:" in out

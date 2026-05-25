@@ -35,8 +35,8 @@ def test_import_notes_defaults_source_visibility_to_local_only(
     captured: dict[str, object] = {}
 
     class StubSummary:
-        def to_cli_line(self) -> str:
-            return "ok"
+        def to_cli_summary_lines(self) -> list[str]:
+            return ["ok"]
 
     def fake_import_markdown_notes(
         session: object,
@@ -76,8 +76,8 @@ def test_import_notes_accepts_source_visibility_override(monkeypatch: Any, tmp_p
     captured: dict[str, object] = {}
 
     class StubSummary:
-        def to_cli_line(self) -> str:
-            return "ok"
+        def to_cli_summary_lines(self) -> list[str]:
+            return ["ok"]
 
     def fake_import_markdown_notes(
         session: object,

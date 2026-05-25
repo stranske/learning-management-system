@@ -132,7 +132,8 @@ def main() -> None:
                     source_visibility=args.source_visibility,
                     actor_id=args.actor_id,
                 )
-        print(import_summary.to_cli_line())
+        for line in import_summary.to_cli_summary_lines():
+            print(line)
         return
 
     _run_dev_server()

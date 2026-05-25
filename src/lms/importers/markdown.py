@@ -56,6 +56,16 @@ class MarkdownImportSummary:
             f"edges={self.planned_edges if self.dry_run else self.created_edges}"
         )
 
+    def to_cli_summary_lines(self) -> list[str]:
+        """Return CLI-friendly summary lines for import and dry-run modes."""
+        lines = [self.to_cli_line()]
+        if self.dry_run:
+            lines.append(
+                "planned creates: "
+                f"nodes={self.planned_nodes} sources={self.planned_sources} edges={self.planned_edges}"
+            )
+        return lines
+
 
 def plan_markdown_notes(path: str | Path, *, limit: int | None = None) -> Sequence[MarkdownHeading]:
     """Return H1/H2 heading sections that would become draft knowledge nodes."""
