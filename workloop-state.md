@@ -6,7 +6,8 @@
 - Selected issue: #9, "Add research YAML schemas and validator".
 - Branch: `codex/issue-9-research-yaml-schemas-validator`.
 - PR: #43, https://github.com/stranske/learning-management-system/pull/43.
-- PR routing: non-draft with `agent:codex`, `agents:keepalive`, `autofix`, `priority:high`, `repo-review-approved`, and `milestone:M2`.
+- PR routing: non-draft with `agent:codex`, `agent:retry`, `agents:keepalive`, `autofix`, `priority:high`, `repo-review-approved`, and `milestone:M2`.
+- Post-open hygiene: after the first workflow batch, removed a mechanical `needs-human` label from PR #43 because fresh Gate activity existed and no concrete human decision was evident.
 - Related cap hygiene before selection: removed stale `needs-human` from PR #42 and added `agent:retry`; fresh cap-health reported PRs #36, #40, and #42 all draining, raw cap below five.
 - Scoped blocker recorded before selection: issue #8 waits for PR #40 database session/Alembic baseline to land so the auth placeholder does not duplicate migration/session work.
 
