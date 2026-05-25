@@ -36,6 +36,14 @@ LOW_CONFIDENCE_MAX = 2
 MEDIUM_CONFIDENCE_MIN = 3
 HIGH_CONFIDENCE_MIN = 5
 FAST_FIRST_ATTEMPT_SECONDS = 30
+SUPPORTED_LEVELS = frozenset(
+    {
+        "hint",
+        "reference",
+        "worked-example",
+        "coach",
+    }
+)
 
 
 def _score(record: EvidenceRecord) -> float | None:
@@ -49,11 +57,7 @@ def _score(record: EvidenceRecord) -> float | None:
 
 def _has_support(record: EvidenceRecord) -> bool:
     support_level = (record.support_level or "").strip().lower()
-    return (
-        record.hint_used
-        or record.reference_accessed
-        or support_level in {"hint", "reference", "worked-example", "coach"}
-    )
+    return record.hint_used or record.reference_accessed or support_level in SUPPORTED_LEVELS
 
 
 def _is_supported_correct_or_low_confidence(record: EvidenceRecord) -> bool:
@@ -100,7 +104,7 @@ FSRS_RULES: tuple[FSRSRule, ...] = (
         value=None,
         scheduling_included=False,
         reason="Transfer evidence is retained but excluded from FSRS interval calculation.",
-        applies=lambda record: (record.transfer_distance or "").lower()
+        applies=lambda record: (record.transfer_distance or "").strip().lower()
         in TRANSFER_EXCLUDED_DISTANCES,
     ),
     FSRSRule(

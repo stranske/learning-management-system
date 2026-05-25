@@ -43,6 +43,25 @@ def test_supported_correct_maps_to_hard(db_session: Session) -> None:
     assert rating.rule_id == "supported-or-low-confidence-correct"
 
 
+def test_reference_accessed_maps_to_hard_even_without_support_level(db_session: Session) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=True,
+        confidence_rating=5,
+        support_level="none",
+        hint_used=False,
+        reference_accessed=True,
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.label == "hard"
+    assert rating.value == 2
+    assert rating.rule_id == "supported-or-low-confidence-correct"
+
+
 def test_low_confidence_unsupported_correct_maps_to_hard(db_session: Session) -> None:
     record = create_evidence_record(
         db_session,
@@ -118,6 +137,24 @@ def test_transfer_evidence_is_excluded_from_fsrs_scheduling(db_session: Session)
         correctness=True,
         normalized_score=1.0,
         transfer_distance="near",
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.label == "excluded"
+    assert rating.value is None
+    assert rating.scheduling_included is False
+    assert rating.rule_id == "transfer-excluded"
+
+
+def test_transfer_distance_is_trimmed_and_case_insensitive(db_session: Session) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=True,
+        normalized_score=1.0,
+        transfer_distance=" Near ",
     )
 
     rating = evidence_to_fsrs_rating(record)
