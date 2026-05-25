@@ -27,6 +27,18 @@ def create_source_reference_route(
     session: SessionDep,
 ) -> SourceReferenceRead:
     """Create a source reference and record an audit event."""
+    if (
+        payload.source_type == "markdown-file"
+        and payload.content is None
+        and payload.content_hash is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "content or content_hash is required for markdown-file source references "
+                "created via the HTTP API"
+            ),
+        )
     try:
         reference = create_source_reference(
             session,

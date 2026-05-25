@@ -92,3 +92,49 @@ def test_openapi_exposes_source_reference_paths(
     assert response.status_code == 200
     paths = response.json()["paths"]
     assert "/source-references" in paths
+
+
+def test_create_markdown_file_reference_requires_client_supplied_hash(
+    api_client: tuple[TestClient, Session],
+    tmp_path,  # type: ignore[no-untyped-def]
+) -> None:
+    """POST rejects markdown-file references without content/content_hash."""
+    client, session = api_client
+    target = tmp_path / "secret.md"
+    target.write_text("sensitive\n", encoding="utf-8")
+
+    response = client.post(
+        "/source-references",
+        json={
+            "source_type": "markdown-file",
+            "stable_locator": str(target),
+            "actor_id": "user:attacker",
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "markdown-file" in detail
+    assert session.query(AuditLog).count() == 0
+
+
+def test_create_markdown_file_reference_accepts_client_supplied_hash(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """POST accepts markdown-file references when caller supplies content_hash."""
+    client, session = api_client
+
+    response = client.post(
+        "/source-references",
+        json={
+            "source_type": "markdown-file",
+            "stable_locator": "docs/research/citation.md",
+            "content_hash": "0" * 64,
+            "actor_id": "user:alice",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["content_hash"] == "0" * 64
+    assert session.query(AuditLog).filter_by(entity_id=payload["id"]).count() == 1
