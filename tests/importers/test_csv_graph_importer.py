@@ -79,6 +79,26 @@ def test_unknown_prerequisite_fails_before_writes(tmp_path: Path, db_session: Se
     assert db_session.query(SourceReference).count() == 0
 
 
+def test_missing_required_column_fails_before_writes(tmp_path: Path, db_session: Session) -> None:
+    csv_path = tmp_path / "graph.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "title,knowledge_type,prerequisites,ownership_scope,status",
+                "Probability Basics,conceptual,,personal,draft",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CsvGraphImportError, match="missing required columns: source_locator"):
+        import_csv_graph(db_session, csv_path)
+
+    assert db_session.query(KnowledgeNode).count() == 0
+    assert db_session.query(KnowledgeEdge).count() == 0
+    assert db_session.query(SourceReference).count() == 0
+
+
 def test_dry_run_reports_counts_without_writes(tmp_path: Path, db_session: Session) -> None:
     csv_path = tmp_path / "graph.csv"
     csv_path.write_text(
