@@ -18,18 +18,12 @@ SessionDep = Annotated[Session, Depends(get_session)]
 @router.post("", response_model=AttemptRead, status_code=status.HTTP_201_CREATED)
 def create_attempt_route(payload: AttemptCreate, session: SessionDep) -> AttemptRead:
     """Record a learner attempt."""
-    try:
-        attempt = create_attempt(
-            session,
-            **payload.model_dump(),
-        )
-        session.commit()
-        session.refresh(attempt)
-    except ValueError as exc:
-        session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
+    attempt = create_attempt(
+        session,
+        **payload.model_dump(),
+    )
+    session.commit()
+    session.refresh(attempt)
     return AttemptRead.model_validate(attempt)
 
 

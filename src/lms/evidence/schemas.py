@@ -57,8 +57,8 @@ class AttemptRead(BaseModel):
     confidence_rating: int | None
     reference_accessed: bool
     hint_used: bool
-    support_level: str
+    support_level: SupportLevel
     elapsed_seconds: int | None
-    feedback: dict[str, object]
+    feedback: StructuredFeedback
     llm_session_id: str | None
     created_at: datetime

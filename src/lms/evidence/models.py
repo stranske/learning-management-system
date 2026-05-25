@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Integer, String, Text, func
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Integer, String, Text, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lms.auth.models import new_uuid, utc_now
@@ -45,10 +45,10 @@ class Attempt(Base):
     response_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     confidence_rating: Mapped[int | None] = mapped_column(Integer)
     reference_accessed: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default="0", index=True
+        Boolean, nullable=False, default=False, server_default=false(), index=True
     )
     hint_used: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default="0"
+        Boolean, nullable=False, default=False, server_default=false()
     )
     support_level: Mapped[str] = mapped_column(
         String(32), nullable=False, default="none", server_default="none", index=True

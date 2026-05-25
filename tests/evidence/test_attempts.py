@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -41,7 +43,8 @@ def test_submit_attempt_with_confidence_and_reference_use(db_session: Session) -
     assert attempt.id
     assert attempt.learner_id == "learner-1"
     assert attempt.prompt_id == "prompt-1"
-    assert attempt.response_metadata["answer_format"] == "text"
+    response_metadata = cast(dict[str, Any], attempt.response_metadata)
+    assert response_metadata["answer_format"] == "text"
     assert attempt.confidence_rating == 4
     assert attempt.reference_accessed is True
     assert attempt.support_level == "reference"

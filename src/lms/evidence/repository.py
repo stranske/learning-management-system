@@ -25,8 +25,6 @@ def create_attempt(
     llm_session_id: str | None = None,
 ) -> Attempt:
     """Persist a learner attempt with structured feedback."""
-    if not feedback.get("next_action"):
-        raise ValueError("structured feedback requires next_action")
     attempt = Attempt(
         learner_id=learner_id,
         prompt_id=prompt_id,

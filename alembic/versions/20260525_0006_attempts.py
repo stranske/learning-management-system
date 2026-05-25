@@ -1,7 +1,7 @@
 """Create attempts table.
 
 Revision ID: 20260525_0006_attempts
-Revises: 20260525_0005
+Revises: 20260525_0007
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260525_0006_attempts"
-down_revision = "20260525_0005"
+down_revision = "20260525_0007"
 branch_labels = None
 depends_on = None
 
@@ -25,8 +25,8 @@ def upgrade() -> None:
         sa.Column("response_text", sa.Text(), nullable=False),
         sa.Column("response_metadata", sa.JSON(), nullable=True),
         sa.Column("confidence_rating", sa.Integer(), nullable=True),
-        sa.Column("reference_accessed", sa.Boolean(), server_default="0", nullable=False),
-        sa.Column("hint_used", sa.Boolean(), server_default="0", nullable=False),
+        sa.Column("reference_accessed", sa.Boolean(), server_default=sa.false(), nullable=False),
+        sa.Column("hint_used", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.Column("support_level", sa.String(length=32), server_default="none", nullable=False),
         sa.Column("elapsed_seconds", sa.Integer(), nullable=True),
         sa.Column("feedback", sa.JSON(), nullable=False),
