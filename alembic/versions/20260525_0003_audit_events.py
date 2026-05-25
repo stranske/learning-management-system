@@ -1,7 +1,7 @@
 """Audit events table for authoring action logging.
 
-Revision ID: 20260525_0002
-Revises: 20260525_0001
+Revision ID: 20260525_0003
+Revises: 20260525_0002
 """
 
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "20260525_0002"
-down_revision = "20260525_0001"
+revision = "20260525_0003"
+down_revision = "20260525_0002"
 branch_labels = None
 depends_on = None
 

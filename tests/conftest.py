@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from lms.audit import models as _audit_models  # noqa: F401  # register Base.metadata
+import lms.audit.models  # noqa: F401  # register Base.metadata
 from lms.db.base import Base
 
 

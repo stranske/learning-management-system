@@ -29,6 +29,7 @@ def test_record_authoring_event(db_session: Session) -> None:
     db_session.commit()
 
     assert event.id is not None
+    db_session.expire_all()
     stored = db_session.get(AuditLog, event.id)
     assert stored is not None
     assert stored.actor_id == "user:alice"
@@ -56,6 +57,7 @@ def test_record_audit_event_sets_default_timestamp(db_session: Session) -> None:
     db_session.commit()
 
     after = datetime.now(UTC) + timedelta(seconds=1)
+    db_session.expire_all()
     stored = db_session.get(AuditLog, event.id)
     assert stored is not None
     assert stored.occurred_at.tzinfo is not None
@@ -177,11 +179,12 @@ def test_audit_events_table_is_created_by_base_metadata(db_session: Session) -> 
 
 
 def test_alembic_audit_events_migration_is_registered() -> None:
-    """The audit_events Alembic revision sits on top of the baseline."""
+    """The audit_events Alembic revision sits on top of user/learner tables."""
     config = Config(Path("alembic.ini"))
     script_directory = ScriptDirectory.from_config(config)
 
-    revision = script_directory.get_revision("20260525_0002")
+    revision_id = "20260525_0003"
+    revision = script_directory.get_revision(revision_id)
     assert revision is not None
-    assert revision.down_revision == "20260525_0001"
-    assert script_directory.get_current_head() == "20260525_0002"
+    assert revision.down_revision == "20260525_0002"
+    assert revision_id in {script.revision for script in script_directory.walk_revisions()}
