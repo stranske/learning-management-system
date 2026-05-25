@@ -193,6 +193,10 @@ def run_check(template_root: Path, consumer_root: Path, manifest_path: Path) -> 
     unavailable_sources = sum(
         1 for d in strict + create_only if d.kind == "missing_template_source"
     )
+    workflow_shadow_diffs = find_untracked_workflow_files(
+        manifest=manifest, consumer_root=consumer_root
+    )
+    strict.extend(workflow_shadow_diffs)
 
     return {
         "template_root": str(template_root),
@@ -204,6 +208,55 @@ def run_check(template_root: Path, consumer_root: Path, manifest_path: Path) -> 
         "strict_diffs": [d.__dict__ for d in strict],
         "create_only_diffs": [d.__dict__ for d in create_only],
     }
+
+
+def _workflow_targets_from_manifest(manifest: dict[str, Any]) -> set[str]:
+    targets: set[str] = set()
+    entries = manifest.get("workflows", [])
+    if not isinstance(entries, list):
+        return targets
+
+    for raw in entries:
+        if not isinstance(raw, dict):
+            continue
+        source = str(raw.get("source", "")).strip()
+        if not source:
+            continue
+        target = _norm_target(raw, source)
+        if target.startswith(".github/workflows/"):
+            targets.add(target)
+    return targets
+
+
+def find_untracked_workflow_files(
+    *, manifest: dict[str, Any], consumer_root: Path
+) -> list[DiffEntry]:
+    expected_targets = _workflow_targets_from_manifest(manifest)
+    workflows_dir = consumer_root / ".github/workflows"
+    if not workflows_dir.exists():
+        return []
+
+    local_workflows: set[str] = set()
+    for ext in ("*.yml", "*.yaml"):
+        for file_path in workflows_dir.rglob(ext):
+            if file_path.is_file():
+                local_workflows.add(str(file_path.relative_to(consumer_root).as_posix()))
+
+    extras = sorted(local_workflows - expected_targets)
+    return [
+        DiffEntry(
+            "workflows",
+            "",
+            extra,
+            "overwrite",
+            "untracked_workflow_file",
+            (
+                "Local workflow file is not listed in the Workflows sync manifest; "
+                "it may shadow or duplicate template-default automation."
+            ),
+        )
+        for extra in extras
+    ]
 
 
 def parse_args() -> argparse.Namespace:
