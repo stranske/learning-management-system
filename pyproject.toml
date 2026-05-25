@@ -3,14 +3,14 @@ requires = ["setuptools>=82.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "my-project"
+name = "lms"
 version = "0.1.0"
-description = "Template Python project with stranske/Workflows CI integration"
+description = "API-first Learning Management System backend"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "your.email@example.com"},
+    {name = "stranske", email = "tim@stranskemo.com"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -20,20 +20,30 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-dependencies = []
+dependencies = [
+    "fastapi>=0.115.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "sqlalchemy>=2.0.30",
+    "alembic>=1.13.0",
+    "uvicorn[standard]>=0.30.0",
+    "pandas>=2.2.0",
+]
 
 [project.optional-dependencies]
 dev = [
     "pytest==9.0.3",
     "pytest-cov==7.1.0",
+    "httpx>=0.27.0",
     "ruff>=0.15.13",
     "mypy>=2.1.0",
     "black==26.3.1",
+    "jupyter>=1.1.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/stranske/Template"
-Repository = "https://github.com/stranske/Template"
+Homepage = "https://github.com/stranske/learning-management-system"
+Repository = "https://github.com/stranske/learning-management-system"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -79,7 +89,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["my_project", "tools"]
+known-first-party = ["lms", "my_project", "tools"]
 
 [tool.mypy]
 python_version = "3.12"
