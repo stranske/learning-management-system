@@ -14,20 +14,20 @@ These are the canonical sections; this index links to them so future architectur
 
 | Topic | Canonical location |
 | --- | --- |
-| Project thesis and Phase 1 / Milestones 0-4 boundary | [docs/product/project-plan.md](../product/project-plan.md) "Initial Product Boundary," "Phase 1 Minimum Core" |
-| API surface (v1 vs Phase 2+) | [docs/product/project-plan.md](../product/project-plan.md) "API Surface Sketch" |
-| Mastery model (FSRS-4.5 placeholder, computed view, EvidenceRecord schema) | [docs/product/project-plan.md](../product/project-plan.md) "Mastery Is An Evidence-Backed Estimate" |
-| Source citation + content-hash drift detection | [docs/product/project-plan.md](../product/project-plan.md) Retrieval And Assessment Engine "Source citation policy" |
-| Prompt provenance + authoring audit log | [docs/product/project-plan.md](../product/project-plan.md) "Prompt provenance" |
-| SchedulerEvidenceAdapter (EvidenceRecord → FSRS rating) | [docs/product/project-plan.md](../product/project-plan.md) Review Scheduler "SchedulerEvidenceAdapter" subsection |
-| Ownership-boundary enforcement (repository pattern + DB CHECK + tests + future RLS) | [docs/product/project-plan.md](../product/project-plan.md) Knowledge Graph "Ownership-boundary enforcement" |
-| Knowledge Graph Bootstrap (v1 importers + LLM proposals + publication gate) | [docs/product/project-plan.md](../product/project-plan.md) "Knowledge Graph Bootstrap (v1)" |
-| Export / import contract (`lms export`, `lms import --dry-run`, `lms import --apply`) | [docs/product/project-plan.md](../product/project-plan.md) Milestone 3 "Export and import contract (v1)" |
-| LLM client wrapper interface (budget preflight + trace classification + redaction + replay) | [docs/product/project-plan.md](../product/project-plan.md) LLM Layer "Operational requirements" + "LLM client wrapper interface (v1)" |
-| Personal-learning sustainability (pause mode, daily cap, stale items) | [docs/product/early-design-decisions.md](../product/early-design-decisions.md) Segment 8 |
-| Privacy + LLM trace classification (local-first redaction) | [docs/product/early-design-decisions.md](../product/early-design-decisions.md) Segment 9 |
-| LLM cost + routing | [docs/product/early-design-decisions.md](../product/early-design-decisions.md) Segment 10 |
-| Minimum Demo Criterion (8-item pre-registered day-30 retention) | [docs/product/project-plan.md](../product/project-plan.md) "Minimum Demo Criterion" |
+| Project thesis and Phase 1 / Milestones 0-4 boundary | [Initial Product Boundary](../product/project-plan.md#initial-product-boundary) and [Phase 1 Minimum Core](../product/project-plan.md#phase-1-minimum-core) |
+| API surface (v1 vs Phase 2+) | [API Surface Sketch](../product/project-plan.md#api-surface-sketch) |
+| Mastery model (FSRS-4.5 placeholder, computed view, EvidenceRecord schema) | [Mastery Is An Evidence-Backed Estimate](../product/project-plan.md#4-mastery-is-an-evidence-backed-estimate) |
+| Source citation + content-hash drift detection | [Retrieval And Assessment Engine](../product/project-plan.md#retrieval-and-assessment-engine) |
+| Prompt provenance + authoring audit log | [Retrieval And Assessment Engine](../product/project-plan.md#retrieval-and-assessment-engine) |
+| SchedulerEvidenceAdapter (EvidenceRecord -> FSRS rating) | [Review Scheduler](../product/project-plan.md#review-scheduler) |
+| Ownership-boundary enforcement (repository pattern + DB CHECK + tests + future RLS) | [Knowledge Graph](../product/project-plan.md#knowledge-graph) |
+| Knowledge Graph Bootstrap (v1 importers + LLM proposals + publication gate) | [Knowledge Graph](../product/project-plan.md#knowledge-graph) |
+| Export / import contract (`lms export`, `lms import --dry-run`, `lms import --apply`) | [Milestone 3: Knowledge Graph, Evidence, And Inspect](../product/project-plan.md#milestone-3-knowledge-graph-evidence-and-inspect) |
+| LLM client wrapper interface (budget preflight + trace classification + redaction + replay) | [LLM Learning Interaction Layer](../product/project-plan.md#llm-learning-interaction-layer) |
+| Personal-learning sustainability (pause mode, daily cap, stale items) | [Segment 8: Personal-Learning Sustainability And Cadence](../product/early-design-decisions.md#segment-8-personal-learning-sustainability-and-cadence) |
+| Privacy + LLM trace classification (local-first redaction) | [Segment 9: Privacy And LLM Trace Classification](../product/early-design-decisions.md#segment-9-privacy-and-llm-trace-classification) |
+| LLM cost + routing | [Segment 10: LLM Cost And Routing](../product/early-design-decisions.md#segment-10-llm-cost-and-routing) |
+| Minimum Demo Criterion (8-item pre-registered day-30 retention) | [Minimum Demo Criterion](../product/project-plan.md#minimum-demo-criterion) |
 
 ## How to Add a Decision Record
 
