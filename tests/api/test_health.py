@@ -25,6 +25,16 @@ def test_openapi_available() -> None:
     assert response.status_code == 200
     schema = response.json()
     assert schema["info"]["title"] == "Learning Management System"
-    assert "/auth/users" in schema["paths"]
     assert "/health" in schema["paths"]
+    assert "/auth/users" not in schema["paths"]
+    assert "/learners" not in schema["paths"]
+
+
+def test_local_identity_openapi_enabled_explicitly() -> None:
+    """Local identity routes are available only when explicitly enabled."""
+    client = TestClient(create_app(enable_local_identity_routes=True))
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    schema = response.json()
+    assert "/auth/users" in schema["paths"]
     assert "/learners" in schema["paths"]

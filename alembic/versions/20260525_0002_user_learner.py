@@ -19,7 +19,7 @@ def upgrade() -> None:
         sa.Column("email", sa.String(length=320), nullable=True),
         sa.Column("username", sa.String(length=120), nullable=False),
         sa.Column("display_name", sa.String(length=200), nullable=False),
-        sa.Column("is_local", sa.Boolean(), nullable=False),
+        sa.Column("is_local", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lms.auth.models import User
@@ -39,9 +40,16 @@ def get_or_create_local_dev_user(session: Session) -> User:
     existing = get_user_by_username(session, LOCAL_DEV_USERNAME)
     if existing is not None:
         return existing
-    return create_local_user(
-        session,
-        username=LOCAL_DEV_USERNAME,
-        display_name="Local Development User",
-        email="local-dev@example.invalid",
-    )
+    try:
+        return create_local_user(
+            session,
+            username=LOCAL_DEV_USERNAME,
+            display_name="Local Development User",
+            email="local-dev@example.invalid",
+        )
+    except IntegrityError:
+        session.rollback()
+        existing = get_user_by_username(session, LOCAL_DEV_USERNAME)
+        if existing is None:
+            raise
+        return existing

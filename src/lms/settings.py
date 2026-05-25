@@ -23,6 +23,13 @@ class Settings(BaseSettings):
         default=False,
         description="Enable SQLAlchemy SQL echo logging for local debugging.",
     )
+    enable_local_identity_routes: bool = Field(
+        default=False,
+        description=(
+            "Expose local-development user and learner creation routes. Keep disabled "
+            "for production deployments."
+        ),
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

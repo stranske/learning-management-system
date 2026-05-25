@@ -32,7 +32,7 @@ def test_create_user_and_learner_endpoints() -> None:
         finally:
             session.close()
 
-    app = create_app()
+    app = create_app(enable_local_identity_routes=True)
     app.dependency_overrides[get_session] = override_session
     client = TestClient(app)
 
