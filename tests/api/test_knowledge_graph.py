@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
