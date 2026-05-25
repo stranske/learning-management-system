@@ -47,8 +47,11 @@ def test_partial_credit_boundaries() -> None:
 
 
 def test_transfer_evidence_is_excluded_from_fsrs_scheduling() -> None:
+    near_result = evidence_to_fsrs_rating(_record(transfer_distance="near"))
     result = evidence_to_fsrs_rating(_record(transfer_distance="far"))
 
+    assert near_result.rating is None
+    assert near_result.excluded_from_scheduling is True
     assert result.rating is None
     assert result.excluded_from_scheduling is True
 

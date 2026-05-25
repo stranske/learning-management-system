@@ -51,7 +51,7 @@ class RatingRule:
     rating: FSRSRating
 
 
-TRANSFER_EXCLUDED_VALUES = {"medium", "far", "novel", "remote"}
+TRANSFER_EXCLUDED_VALUES = {"near", "medium", "far", "novel", "remote"}
 
 
 RULE_TABLE: tuple[RatingRule, ...] = (
