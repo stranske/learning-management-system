@@ -176,3 +176,153 @@ def test_openapi_exposes_knowledge_graph_paths(
     paths = response.json()["paths"]
     assert "/knowledge/nodes" in paths
     assert "/knowledge/edges" in paths
+
+
+def test_get_node_returns_404_for_unknown_id(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """GET /knowledge/nodes/{id} returns 404 when the node does not exist."""
+    client, _session = api_client
+    response = client.get("/knowledge/nodes/does-not-exist", params={"scope": "personal"})
+    assert response.status_code == 404
+
+
+def test_get_node_returns_404_for_wrong_scope(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """GET /knowledge/nodes/{id} returns 404 when the node is in a different scope."""
+    client, _session = api_client
+    node = _post_node(client, title="Institutional only", scope="institutional")
+    response = client.get(f"/knowledge/nodes/{node['id']}", params={"scope": "personal"})
+    assert response.status_code == 404
+
+
+def test_update_node_route_changes_title(api_client: tuple[TestClient, Session]) -> None:
+    """PATCH /knowledge/nodes/{id} updates mutable fields and returns updated data."""
+    client, _session = api_client
+    node = _post_node(client, title="Before", scope="personal")
+
+    response = client.patch(
+        f"/knowledge/nodes/{node['id']}",
+        params={"scope": "personal"},
+        json={"title": "After", "actor_id": "user:alice"},
+    )
+    assert response.status_code == 200
+    assert response.json()["title"] == "After"
+
+
+def test_update_node_route_returns_404_for_missing(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """PATCH /knowledge/nodes/{id} returns 404 when the node does not exist."""
+    client, _session = api_client
+    response = client.patch(
+        "/knowledge/nodes/ghost",
+        params={"scope": "personal"},
+        json={"title": "Noop", "actor_id": "user:alice"},
+    )
+    assert response.status_code == 404
+
+
+def test_delete_node_route_removes_node(api_client: tuple[TestClient, Session]) -> None:
+    """DELETE /knowledge/nodes/{id} removes the node and returns 204."""
+    client, _session = api_client
+    node = _post_node(client, title="Delete me", scope="personal")
+
+    response = client.delete(f"/knowledge/nodes/{node['id']}", params={"scope": "personal"})
+    assert response.status_code == 204
+
+    get_response = client.get(f"/knowledge/nodes/{node['id']}", params={"scope": "personal"})
+    assert get_response.status_code == 404
+
+
+def test_delete_node_route_returns_404_for_missing(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """DELETE /knowledge/nodes/{id} returns 404 when the node does not exist."""
+    client, _session = api_client
+    response = client.delete("/knowledge/nodes/ghost", params={"scope": "personal"})
+    assert response.status_code == 404
+
+
+def test_list_edges_with_filters(api_client: tuple[TestClient, Session]) -> None:
+    """GET /knowledge/edges applies edge_type, status, and node-id filters."""
+    client, _session = api_client
+    parent = _post_node(client, title="Parent", scope="personal")
+    child = _post_node(client, title="Child", scope="personal")
+    response = client.post(
+        "/knowledge/edges",
+        json={
+            "source_node_id": parent["id"],
+            "target_node_id": child["id"],
+            "edge_type": "analogy",
+            "ownership_scope": "personal",
+            "actor_id": "user:alice",
+        },
+    )
+    assert response.status_code == 201
+    edge_id = response.json()["id"]
+
+    by_type = client.get(
+        "/knowledge/edges",
+        params={"scope": "personal", "edge_type": "analogy"},
+    )
+    assert by_type.status_code == 200
+    assert any(e["id"] == edge_id for e in by_type.json())
+
+    by_source = client.get(
+        "/knowledge/edges",
+        params={"scope": "personal", "source_node_id": parent["id"]},
+    )
+    assert by_source.status_code == 200
+    assert any(e["id"] == edge_id for e in by_source.json())
+
+    by_target = client.get(
+        "/knowledge/edges",
+        params={"scope": "personal", "target_node_id": child["id"]},
+    )
+    assert by_target.status_code == 200
+    assert any(e["id"] == edge_id for e in by_target.json())
+
+
+def test_get_edge_returns_404_for_unknown_id(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """GET /knowledge/edges/{id} returns 404 when the edge does not exist."""
+    client, _session = api_client
+    response = client.get("/knowledge/edges/does-not-exist", params={"scope": "personal"})
+    assert response.status_code == 404
+
+
+def test_delete_edge_route_removes_edge(api_client: tuple[TestClient, Session]) -> None:
+    """DELETE /knowledge/edges/{id} removes the edge and returns 204."""
+    client, _session = api_client
+    parent = _post_node(client, title="Parent", scope="personal")
+    child = _post_node(client, title="Child", scope="personal")
+    edge_response = client.post(
+        "/knowledge/edges",
+        json={
+            "source_node_id": parent["id"],
+            "target_node_id": child["id"],
+            "edge_type": "prerequisite",
+            "ownership_scope": "personal",
+            "actor_id": "user:alice",
+        },
+    )
+    assert edge_response.status_code == 201
+    edge_id = edge_response.json()["id"]
+
+    response = client.delete(f"/knowledge/edges/{edge_id}", params={"scope": "personal"})
+    assert response.status_code == 204
+
+    get_response = client.get(f"/knowledge/edges/{edge_id}", params={"scope": "personal"})
+    assert get_response.status_code == 404
+
+
+def test_delete_edge_route_returns_404_for_missing(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """DELETE /knowledge/edges/{id} returns 404 when the edge does not exist."""
+    client, _session = api_client
+    response = client.delete("/knowledge/edges/ghost", params={"scope": "personal"})
+    assert response.status_code == 404
