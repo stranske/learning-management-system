@@ -27,7 +27,7 @@ from lms.auth.models import utc_now
 from lms.db.base import Base
 from lms.db.session import get_session
 from lms.evidence.models import Attempt, EvidenceRecord
-from lms.evidence.repository import create_attempt
+from lms.evidence.repository import create_attempt, create_evidence_record
 from lms.main import create_app
 from lms.scheduling.models import ReviewQueueItem
 from lms.scheduling.repository import (
@@ -36,6 +36,8 @@ from lms.scheduling.repository import (
 )
 from lms.scheduling.service import (
     SUCCESS_INTERVALS_DAYS,
+    _classify_signal,
+    _success_interval_days,
     schedule_from_attempt,
     seed_new_learning_item,
 )
@@ -410,3 +412,97 @@ def test_review_queue_item_table_constraints_block_bad_priority(db_session: Sess
     db_session.add(item)
     with pytest.raises(IntegrityError):
         db_session.flush()
+
+
+def test_success_interval_clamps_negative_prior_successes() -> None:
+    """Negative prior_successes is treated as zero."""
+    assert _success_interval_days(-1) == _success_interval_days(0)
+
+
+def test_success_interval_caps_at_max_ramp() -> None:
+    """Prior successes beyond the ramp length returns the last interval."""
+    beyond = len(SUCCESS_INTERVALS_DAYS) + 5
+    assert _success_interval_days(beyond) == SUCCESS_INTERVALS_DAYS[-1]
+
+
+def test_classify_signal_fail_via_normalized_score_only() -> None:
+    """A low normalized score with no explicit correctness flag returns 'fail'."""
+    signal = _classify_signal(
+        correctness=None,
+        normalized_score=0.2,
+        confidence_rating=5,
+        support_level="none",
+    )
+    assert signal == "fail"
+
+
+def test_classify_signal_low_confidence_via_score_below_threshold() -> None:
+    """A passing score below the success threshold triggers low-confidence-success."""
+    signal = _classify_signal(
+        correctness=None,
+        normalized_score=0.7,
+        confidence_rating=None,
+        support_level="none",
+    )
+    assert signal == "low-confidence-success"
+
+
+def test_classify_signal_fallback_low_confidence_no_score() -> None:
+    """When correctness is unknown and no score, falls back to low-confidence-success."""
+    signal = _classify_signal(
+        correctness=None,
+        normalized_score=None,
+        confidence_rating=None,
+        support_level="none",
+    )
+    assert signal == "low-confidence-success"
+
+
+def test_low_confidence_decision_includes_score_in_reasons(db_session: Session) -> None:
+    """Low score without explicit failure populates normalized_score reason."""
+    attempt, evidence = _make_attempt(
+        db_session,
+        correctness=None,
+        normalized_score=0.7,
+        confidence_rating=None,
+        support_level="none",
+    )
+    item = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert item.decision_log["signal"] == "low-confidence-success"
+    assert "normalized_score=0.70" in item.reason_explanation
+
+
+def test_low_confidence_decision_no_reason_details_uses_fallback(db_session: Session) -> None:
+    """When signal is low-confidence but no specific reason is derivable, a fallback phrase is used."""
+    attempt = create_attempt(
+        db_session,
+        learner_id="learner-fb",
+        prompt_id="prompt-fb",
+        response_text="answer",
+        feedback={"goal": "g", "observed_evidence": "o", "next_action": "n"},
+        confidence_rating=None,
+        support_level="none",
+    )
+    evidence = create_evidence_record(
+        db_session,
+        learner_id="learner-fb",
+        knowledge_node_id="node-fb",
+        attempt_id=attempt.id,
+        correctness=None,
+        normalized_score=None,
+        confidence_rating=None,
+        support_level="none",
+    )
+    item = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert item.decision_log["signal"] == "low-confidence-success"
+    assert "low-confidence signal" in item.reason_explanation
+
+
+def test_schedule_from_attempt_rejects_mismatched_evidence(db_session: Session) -> None:
+    """schedule_from_attempt raises ValueError when evidence belongs to a different attempt."""
+    attempt_a, evidence_a = _make_attempt(db_session, learner_id="la", prompt_id="pa")
+    attempt_b, _ = _make_attempt(
+        db_session, learner_id="la", prompt_id="pb", knowledge_node_id="node-b"
+    )
+    with pytest.raises(ValueError, match="does not belong to attempt"):
+        schedule_from_attempt(db_session, attempt=attempt_b, evidence_record=evidence_a)
