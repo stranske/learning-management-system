@@ -14,6 +14,7 @@ def test_main_starts_uvicorn(monkeypatch: Any) -> None:
         calls.append({"app": app, **kwargs})
 
     monkeypatch.setattr("uvicorn.run", fake_run)
+    monkeypatch.setattr("sys.argv", ["lms"])
 
     lms_main.main()
 

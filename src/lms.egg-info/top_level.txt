@@ -1,2 +1,0 @@
-lms
-my_project

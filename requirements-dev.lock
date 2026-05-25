@@ -63,6 +63,8 @@ decorator==5.3.1
     # via ipython
 defusedxml==0.7.1
     # via nbconvert
+execnet==2.1.2
+    # via pytest-xdist
 executing==2.2.1
     # via stack-data
 fastapi==0.136.3
@@ -290,6 +292,8 @@ pytest==9.0.3
     #   lms (pyproject.toml)
     #   pytest-cov
 pytest-cov==7.1.0
+    # via lms (pyproject.toml)
+pytest-xdist==3.8.0
     # via lms (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via
