@@ -33,7 +33,7 @@ def learner_overview_route(
         session.scalars(
             select(EvidenceRecord)
             .where(EvidenceRecord.learner_id == learner_id)
-            .order_by(EvidenceRecord.recorded_at.desc())
+            .order_by(EvidenceRecord.observed_at.desc())
             .limit(25)
         )
     )
@@ -58,7 +58,7 @@ def learner_overview_route(
                 "knowledge_node_id": record.knowledge_node_id,
                 "evidence_kind": record.evidence_kind,
                 "normalized_score": record.normalized_score,
-                "recorded_at": record.recorded_at,
+                "recorded_at": record.observed_at,
             }
             for record in evidence
         ],

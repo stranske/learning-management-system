@@ -59,7 +59,7 @@ def test_overview_includes_mastery_evidence_prompt_and_source_status() -> None:
             learner_id="learner-1",
             knowledge_node_id="node-1",
             prompt_id="prompt-1",
-            demand_level="recall",
+            demand_level="low",
             knowledge_type="factual",
             normalized_score=0.75,
         )
