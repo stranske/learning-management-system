@@ -105,9 +105,26 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
 
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
 [tool.black]
 line-length = 100
-# Target the minimum supported Python so the formatter never emits syntax that
-# fails Black's AST safety check when the runner is on the older interpreter.
-# Python 3.12-targeted code is still parseable by 3.13.
+# Target only the minimum supported Python (3.12).  Black's AST safety check
+# cannot parse py313 syntax when the runner is on Python 3.12, so listing both
+# versions produces a warning on the 3.12 CI leg.  Code formatted for py312 is
+# valid on py313, so a single entry correctly covers both supported versions.
 target-version = ["py312"]
+
+[[tool.mypy.overrides]]
+# lms.analytics will use pandas, which ships incomplete stubs.  Keep strict
+# everywhere else and loosen only this namespace as needed during M3 work.
+module = ["lms.analytics.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# lms.llm will integrate third-party LLM SDKs whose stubs may lag the library.
+# Re-tighten once SDK stubs stabilise or we add a py.typed marker to our shim.
+module = ["lms.llm.*"]
+ignore_missing_imports = true
