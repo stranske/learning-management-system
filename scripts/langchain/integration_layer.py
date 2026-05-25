@@ -10,7 +10,10 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from scripts.langchain import label_matcher
+try:
+    from scripts.langchain import label_matcher
+except ModuleNotFoundError:
+    import label_matcher
 
 
 @dataclass
@@ -76,6 +79,7 @@ def _build_label_store(labels: Iterable[Any]) -> label_matcher.LabelVectorStore 
         store=object(),
         provider="keyword",
         model="keyword",
+        is_fallback=True,
         labels=label_records,
     )
 
