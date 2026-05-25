@@ -134,3 +134,9 @@ ignore_missing_imports = true
 # Re-tighten once SDK stubs stabilise or we add a py.typed marker to our shim.
 module = ["lms.llm.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# mistune does not ship a py.typed marker; keep the markdown importer typed
+# internally while ignoring the third-party package boundary.
+module = ["mistune"]
+ignore_missing_imports = true
