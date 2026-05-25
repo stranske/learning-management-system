@@ -39,7 +39,7 @@ Tasks
 - [x] Create tests/test_main.py with basic tests
 - [x] Configure pyproject.toml with all tools
 - [x] Verify ruff check passes
-- [ ] Verify mypy check passes
+- [x] Verify mypy check passes
 - [ ] Verify pytest passes with >80% coverage
 
 Acceptance criteria
