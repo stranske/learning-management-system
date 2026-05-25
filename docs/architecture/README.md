@@ -7,6 +7,7 @@ This directory is the navigation index for architecture-relevant content. Substa
 Architecture decisions are recorded under `decision-records/` using the structured shape from `docs/product/early-design-decisions.md` (Context / Options considered / Selected direction / Reasoning / Risks / Follow-up questions / Review date).
 
 - [0001 — Backend stack and product boundary](decision-records/0001-backend-stack-and-boundary.md)
+- [Security assumptions](security-assumptions.md)
 
 ## Where the Authoritative Design Content Lives
 
@@ -21,6 +22,7 @@ These are the canonical sections; this index links to them so future architectur
 | Prompt provenance + authoring audit log | [Retrieval And Assessment Engine](../product/project-plan.md#retrieval-and-assessment-engine) |
 | SchedulerEvidenceAdapter (EvidenceRecord -> FSRS rating) | [Review Scheduler](../product/project-plan.md#review-scheduler) |
 | Ownership-boundary enforcement (repository pattern + DB CHECK + tests + future RLS) | [Knowledge Graph](../product/project-plan.md#knowledge-graph) |
+| Security assumptions (secrets, local-only sources, trace handling, SSO readiness) | [docs/architecture/security-assumptions.md](security-assumptions.md) |
 | Knowledge Graph Bootstrap (v1 importers + LLM proposals + publication gate) | [Knowledge Graph](../product/project-plan.md#knowledge-graph) |
 | Export / import contract (`lms export`, `lms import --dry-run`, `lms import --apply`) | [Milestone 3: Knowledge Graph, Evidence, And Inspect](../product/project-plan.md#milestone-3-knowledge-graph-evidence-and-inspect) |
 | LLM client wrapper interface (budget preflight + trace classification + redaction + replay) | [LLM Learning Interaction Layer](../product/project-plan.md#llm-learning-interaction-layer) |
