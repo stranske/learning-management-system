@@ -130,7 +130,11 @@ def _is_easy_first_attempt(evidence: FSRSEvidence) -> bool:
         and evidence.confidence_rating is not None
         and evidence.confidence_rating >= 5
         and not _uses_support(evidence)
-        and evidence.time_since_last_attempt_seconds is None
+        and _is_first_attempt(evidence)
         and evidence.response_time_seconds is not None
         and evidence.response_time_seconds <= 30
     )
+
+
+def _is_first_attempt(evidence: FSRSEvidence) -> bool:
+    return evidence.time_since_last_attempt_seconds in (None, 0)

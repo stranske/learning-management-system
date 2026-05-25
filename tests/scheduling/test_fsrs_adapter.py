@@ -64,6 +64,14 @@ def test_first_attempt_high_confidence_fast_response_maps_to_easy() -> None:
     assert result.rating == FSRSRating.EASY
 
 
+def test_zero_elapsed_attempt_time_counts_as_first_attempt_for_easy() -> None:
+    result = evidence_to_fsrs_rating(
+        _record(confidence_rating=5, time_since_last_attempt_seconds=0, response_time_seconds=20)
+    )
+
+    assert result.rating == FSRSRating.EASY
+
+
 def test_unsupported_correct_maps_to_good() -> None:
     result = evidence_to_fsrs_rating(
         _record(correctness=True, confidence_rating=4, support_level="none")
