@@ -193,3 +193,55 @@ def test_post_prompts_returns_source_reference_ids_and_provenance(
     assert body["authoring_actor"] == "user:alice"
     assert body["prompt_template_version"] == "retrieval-v1"
     assert body["versions"][0]["version_number"] == 1
+
+
+def test_get_and_list_prompts_include_source_ids_and_versions(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """GET /prompts and GET /prompts/{id} expose provenance and version metadata."""
+    client, session = api_client
+    ids = _seed_prompt_dependencies(session)
+    created = client.post("/prompts", json=_prompt_payload(ids))
+    assert created.status_code == 201, created.text
+    prompt_id = cast(str, created.json()["id"])
+
+    listed = client.get("/prompts")
+    assert listed.status_code == 200, listed.text
+    listed_payload = listed.json()
+    assert len(listed_payload) == 1
+    assert listed_payload[0]["id"] == prompt_id
+    assert listed_payload[0]["source_reference_ids"] == [ids["source_id"]]
+    assert listed_payload[0]["versions"][0]["version_number"] == 1
+
+    fetched = client.get(f"/prompts/{prompt_id}")
+    assert fetched.status_code == 200, fetched.text
+    fetched_payload = fetched.json()
+    assert fetched_payload["id"] == prompt_id
+    assert fetched_payload["source_reference_ids"] == [ids["source_id"]]
+    assert fetched_payload["versions"][0]["body"].startswith("Explain why retrieval practice")
+
+
+def test_version_prompt_appends_version_metadata(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """POST /prompts/{id}/versions appends immutable version metadata."""
+    client, session = api_client
+    ids = _seed_prompt_dependencies(session)
+    created = client.post("/prompts", json=_prompt_payload(ids))
+    assert created.status_code == 201, created.text
+    prompt_id = cast(str, created.json()["id"])
+
+    versioned = client.post(
+        f"/prompts/{prompt_id}/versions",
+        json={
+            "body": "Apply retrieval practice to this week of notes.",
+            "actor_id": "user:alice",
+            "demand_level": "high",
+        },
+    )
+    assert versioned.status_code == 200, versioned.text
+    payload = versioned.json()
+    assert payload["demand_level"] == "high"
+    assert len(payload["versions"]) == 2
+    assert payload["versions"][1]["version_number"] == 2
+    assert payload["versions"][1]["created_by"] == "user:alice"
