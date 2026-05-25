@@ -38,14 +38,14 @@ Tasks
 - [x] Create src/my_project/main.py with sample function
 - [x] Create tests/test_main.py with basic tests
 - [x] Configure pyproject.toml with all tools
-- [ ] Verify ruff check passes
+- [x] Verify ruff check passes
 - [ ] Verify mypy check passes
 - [ ] Verify pytest passes with >80% coverage
 
 Acceptance criteria
 - [ ] Package can be installed with pip install -e .
 - [ ] Running pytest shows all tests passing
-- [ ] Running ruff check shows no issues
+- [x] Running ruff check shows no issues
 - [ ] Running mypy shows no errors
 - [ ] Coverage report shows >80% coverage
 
