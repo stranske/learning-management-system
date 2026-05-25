@@ -5,4 +5,4 @@ APP_NAME = "lms"
 
 __all__ = ["APP_NAME", "__version__", "create_app"]
 
-from lms.main import create_app
+from lms.main import create_app  # noqa: E402
