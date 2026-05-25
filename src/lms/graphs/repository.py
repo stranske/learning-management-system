@@ -115,6 +115,7 @@ def get_knowledge_node_for_prompt_creation(
     node = get_knowledge_node(session, node_id, scope=scope)
     if node is None or node.status != "published":
         return None
+    return node
 
 
 def require_published_prompt_target(
