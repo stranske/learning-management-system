@@ -1,0 +1,36 @@
+- id: how-do-we-learn-ch1
+  sourceType: book
+  citation: "How Do We Learn?, Chapter 1 design notes."
+  url: null
+  sourceDate: null
+  reliabilityNotes: "Internal chapter summary used to seed evidence-informed product design records."
+  copyrightNotes: "Stores paraphrased design notes only; no source text excerpt is included."
+  createdAt: "2026-05-25T00:00:00Z"
+  updatedAt: "2026-05-25T00:00:00Z"
+- id: how-do-we-learn-section-2-3
+  sourceType: book
+  citation: "How Do We Learn?, Section 2.3 retrieval and memory design notes."
+  url: null
+  sourceDate: null
+  reliabilityNotes: "Internal section summary used to seed retrieval-practice and spacing records."
+  copyrightNotes: "Stores paraphrased design notes only; no source text excerpt is included."
+  createdAt: "2026-05-25T00:00:00Z"
+  updatedAt: "2026-05-25T00:00:00Z"
+- id: roediger-karpicke-2006
+  sourceType: journal-article
+  citation: "Roediger, H. L., & Karpicke, J. D. (2006). Test-enhanced learning: Taking memory tests improves long-term retention. Psychological Science, 17(3), 249-255."
+  url: "https://doi.org/10.1111/j.1467-9280.2006.01693.x"
+  sourceDate: "2006-01-01"
+  reliabilityNotes: "Peer-reviewed study referenced by the learning-principles register for retrieval practice."
+  copyrightNotes: "Bibliographic citation and paraphrased claim only."
+  createdAt: "2026-05-25T00:00:00Z"
+  updatedAt: "2026-05-25T00:00:00Z"
+- id: cepeda-et-al-2006
+  sourceType: meta-analysis
+  citation: "Cepeda, N. J., Pashler, H., Vul, E., Wixted, J. T., & Rohrer, D. (2006). Distributed practice in verbal recall tasks: A review and quantitative synthesis. Psychological Bulletin, 132(3), 354-380."
+  url: "https://doi.org/10.1037/0033-2909.132.3.354"
+  sourceDate: "2006-01-01"
+  reliabilityNotes: "Peer-reviewed synthesis referenced by the learning-principles register for spacing."
+  copyrightNotes: "Bibliographic citation and paraphrased claim only."
+  createdAt: "2026-05-25T00:00:00Z"
+  updatedAt: "2026-05-25T00:00:00Z"

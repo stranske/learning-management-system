@@ -18,6 +18,7 @@ License-File: LICENSE
 Requires-Dist: fastapi>=0.115.0
 Requires-Dist: pydantic>=2.9.0
 Requires-Dist: pydantic-settings>=2.5.0
+Requires-Dist: PyYAML>=6.0.0
 Requires-Dist: sqlalchemy>=2.0.30
 Requires-Dist: alembic>=1.13.0
 Requires-Dist: psycopg[binary]>=3.2.0
@@ -31,6 +32,7 @@ Requires-Dist: ruff>=0.15.13; extra == "dev"
 Requires-Dist: mypy>=2.1.0; extra == "dev"
 Requires-Dist: black==26.3.1; extra == "dev"
 Requires-Dist: jupyter>=1.1.0; extra == "dev"
+Requires-Dist: types-PyYAML>=6.0.0; extra == "dev"
 Dynamic: license-file
 
 # Learning Management System

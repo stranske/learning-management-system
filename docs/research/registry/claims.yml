@@ -1,0 +1,35 @@
+- id: claim-completion-not-learning
+  statement: "Lesson completion is activity evidence, not proof of durable learning."
+  principleIds:
+    - principle-evidence-informed-design
+    - principle-causal-evidence
+  sourceIds:
+    - how-do-we-learn-ch1
+  claimStatus: established
+  claimType: measurement-rule
+  scope: "Applies to LMS analytics, module completion, and authoring decisions."
+  reviewCadence: annual
+  lastReviewedAt: "2026-05-25T00:00:00Z"
+- id: claim-rereading-fluency-not-mastery
+  statement: "Rereading can create familiarity without usable recall or transfer."
+  principleIds:
+    - principle-retrieval-as-learning
+  sourceIds:
+    - how-do-we-learn-section-2-3
+    - roediger-karpicke-2006
+  claimStatus: established
+  claimType: risk-warning
+  scope: "Applies to study-loop policy, learner analytics, and practice design."
+  reviewCadence: annual
+  lastReviewedAt: "2026-05-25T00:00:00Z"
+- id: claim-arbitrary-memorization-not-general-memory
+  statement: "Unrelated memorization does not strengthen general memory capacity."
+  principleIds:
+    - principle-retrieval-as-learning
+  sourceIds:
+    - how-do-we-learn-section-2-3
+  claimStatus: deprecated
+  claimType: risk-warning
+  scope: "Applies to personalization and study-strategy recommendations."
+  reviewCadence: annual
+  lastReviewedAt: "2026-05-25T00:00:00Z"
