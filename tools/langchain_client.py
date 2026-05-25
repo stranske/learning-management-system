@@ -146,32 +146,16 @@ def _resolve_slots() -> list[SlotDefinition]:
     return _apply_slot_env_overrides(_load_slot_config())
 
 
-def _is_reasoning_model(model: str) -> bool:
-    """Return True if the model is an OpenAI reasoning model that rejects temperature.
-
-    Supported naming pattern: `o` + digits, with optional suffixes. Examples: `o1`,
-    `o1-preview`, `o1-preview-2024-09-12`, `o3`, `o3-mini`, `o3-pro`, `o4-mini`,
-    `o4-mini-deep-research`. Non-matching examples: `o`, `o-1`, `openai-o1`, `oasis-1`.
-    """
-    name = model.lower().strip()
-    # o-series reasoning models use an `o` prefix followed by digits with optional
-    # hyphen-separated suffixes: o1, o1-preview, o1-preview-2024-09-12, o3, o3-mini,
-    # o3-pro, o4-mini, o4-mini-deep-research.
-    return bool(__import__("re").fullmatch(r"o[0-9]+(?:-[a-z0-9]+)*", name))
-
-
 def _build_openai_client(
     chat_openai: type, *, model: str, token: str, timeout: int, max_retries: int
 ) -> object:
-    kwargs: dict = {
-        "model": model,
-        "api_key": token,
-        "timeout": timeout,
-        "max_retries": max_retries,
-    }
-    if not _is_reasoning_model(model):
-        kwargs["temperature"] = 0.1
-    return chat_openai(**kwargs)
+    return chat_openai(
+        model=model,
+        api_key=token,
+        temperature=0.1,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
 
 
 def _build_anthropic_client(
@@ -189,16 +173,14 @@ def _build_anthropic_client(
 def _build_github_client(
     chat_openai: type, *, model: str, token: str, timeout: int, max_retries: int
 ) -> object:
-    kwargs: dict = {
-        "model": model,
-        "base_url": GITHUB_MODELS_BASE_URL,
-        "api_key": token,
-        "timeout": timeout,
-        "max_retries": max_retries,
-    }
-    if not _is_reasoning_model(model):
-        kwargs["temperature"] = 0.1
-    return chat_openai(**kwargs)
+    return chat_openai(
+        model=model,
+        base_url=GITHUB_MODELS_BASE_URL,
+        api_key=token,
+        temperature=0.1,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
 
 
 def build_chat_client(
@@ -216,10 +198,10 @@ def build_chat_client(
 
     try:
         from langchain_anthropic import ChatAnthropic
+
+        chat_anthropic_cls: type | None = ChatAnthropic
     except ImportError:
         chat_anthropic_cls = None
-    else:
-        chat_anthropic_cls = ChatAnthropic
 
     github_token = os.environ.get("GITHUB_TOKEN")
     openai_token = os.environ.get("OPENAI_API_KEY")
@@ -338,10 +320,10 @@ def build_chat_clients(
 
     try:
         from langchain_anthropic import ChatAnthropic
+
+        chat_anthropic_cls: type | None = ChatAnthropic
     except ImportError:
         chat_anthropic_cls = None
-    else:
-        chat_anthropic_cls = ChatAnthropic
 
     github_token = os.environ.get("GITHUB_TOKEN")
     openai_token = os.environ.get("OPENAI_API_KEY")
