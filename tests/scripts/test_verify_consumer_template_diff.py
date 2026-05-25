@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def _load_module():
@@ -30,8 +30,7 @@ def test_run_check_reports_unavailable_sources(tmp_path):
 version: 1
 workflows:
   - source: .github/workflows/example.yml
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
 

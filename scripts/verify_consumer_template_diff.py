@@ -80,12 +80,16 @@ def check_entry(
 
     if not source_path.exists():
         diffs.append(
-            DiffEntry(section, source, target, sync_mode, "missing_template_source", str(source_path))
+            DiffEntry(
+                section, source, target, sync_mode, "missing_template_source", str(source_path)
+            )
         )
         return diffs
 
     if not target_path.exists():
-        diffs.append(DiffEntry(section, source, target, sync_mode, "missing_in_consumer", str(target_path)))
+        diffs.append(
+            DiffEntry(section, source, target, sync_mode, "missing_in_consumer", str(target_path))
+        )
         return diffs
 
     if is_directory:
@@ -186,7 +190,9 @@ def run_check(template_root: Path, consumer_root: Path, manifest_path: Path) -> 
                 else:
                     strict.append(d)
 
-    unavailable_sources = sum(1 for d in strict + create_only if d.kind == "missing_template_source")
+    unavailable_sources = sum(
+        1 for d in strict + create_only if d.kind == "missing_template_source"
+    )
 
     return {
         "template_root": str(template_root),
