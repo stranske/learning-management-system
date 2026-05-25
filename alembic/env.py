@@ -9,6 +9,7 @@ from sqlalchemy import engine_from_config, pool
 
 import lms.audit.models  # noqa: F401
 import lms.auth.models  # noqa: F401
+import lms.graphs.models  # noqa: F401
 import lms.learners.models  # noqa: F401
 import lms.sources.models  # noqa: F401
 from lms.db.base import Base
