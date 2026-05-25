@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from lms.evidence.models import EvidenceRecord
-from lms.scheduling.fsrs_adapter import FSRSRating, evidence_to_fsrs_rating
+from lms.scheduling.fsrs_adapter import FSRSEvidence, FSRSRating, evidence_to_fsrs_rating
 
 
 def _record(**overrides: object) -> EvidenceRecord:
@@ -56,6 +56,36 @@ def test_transfer_evidence_is_excluded_from_fsrs_scheduling() -> None:
 def test_first_attempt_high_confidence_fast_response_maps_to_easy() -> None:
     result = evidence_to_fsrs_rating(
         _record(confidence_rating=5, time_since_last_attempt_seconds=None, response_time_seconds=20)
+    )
+
+    assert result.rating == FSRSRating.EASY
+
+
+def test_unsupported_correct_maps_to_good() -> None:
+    result = evidence_to_fsrs_rating(_record(correctness=True, confidence_rating=4, support_level="none"))
+
+    assert result.rating == FSRSRating.GOOD
+
+
+def test_low_confidence_correct_maps_to_hard() -> None:
+    result = evidence_to_fsrs_rating(_record(correctness=True, confidence_rating=2))
+
+    assert result.rating == FSRSRating.HARD
+
+
+def test_pure_evidence_input_maps_without_sqlalchemy_model() -> None:
+    result = evidence_to_fsrs_rating(
+        FSRSEvidence(
+            correctness=True,
+            confidence_rating=5,
+            hint_used=False,
+            reference_accessed=False,
+            support_level="none",
+            response_time_seconds=20,
+            time_since_last_attempt_seconds=None,
+            normalized_score=None,
+            transfer_distance=None,
+        )
     )
 
     assert result.rating == FSRSRating.EASY
