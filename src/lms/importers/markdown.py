@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import mistune
 from sqlalchemy.orm import Session
 
 from lms.graphs.repository import create_knowledge_edge, create_knowledge_node
@@ -154,15 +155,9 @@ def _markdown_files(path: Path) -> list[Path]:
 
 
 def _parse_heading_sections(file_path: Path) -> list[MarkdownHeading]:
-    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
-    raw: list[tuple[int, int, str]] = []
-    for index, line in enumerate(lines, start=1):
-        match = _ATX_HEADING_RE.match(line)
-        if match is None:
-            continue
-        level = len(match.group("marks"))
-        if level <= 2:
-            raw.append((level, index, _clean_heading_title(match.group("title"))))
+    text = file_path.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    raw = _extract_h1_h2_headings(text=text, lines=lines)
 
     headings: list[MarkdownHeading] = []
     h1_index: int | None = None
@@ -189,6 +184,67 @@ def _parse_heading_sections(file_path: Path) -> list[MarkdownHeading]:
         if level == 1:
             h1_index = len(headings) - 1
     return headings
+
+
+def _extract_h1_h2_headings(*, text: str, lines: list[str]) -> list[tuple[int, int, str]]:
+    """Parse heading tokens with Mistune and map each H1/H2 token to a source line."""
+    markdown = mistune.create_markdown(renderer="ast")
+    tokens = markdown(text)
+    raw: list[tuple[int, int, str]] = []
+    next_scan_index = 0
+    for token in tokens:
+        if token.get("type") != "heading":
+            continue
+        attrs = token.get("attrs", {})
+        level = int(attrs.get("level", 0))
+        if level > 2 or level < 1:
+            continue
+        title = _extract_heading_text(token).strip()
+        if not title:
+            continue
+        start_line, next_scan_index = _find_heading_line(
+            lines=lines,
+            level=level,
+            title=title,
+            start_index=next_scan_index,
+        )
+        raw.append((level, start_line, title))
+    return raw
+
+
+def _extract_heading_text(token: dict[str, object]) -> str:
+    text = token.get("text")
+    if isinstance(text, str) and text.strip():
+        return _clean_heading_title(text)
+    children = token.get("children")
+    if not isinstance(children, list):
+        return ""
+    parts: list[str] = []
+    for child in children:
+        if isinstance(child, dict):
+            raw = child.get("raw")
+            if isinstance(raw, str):
+                parts.append(raw)
+    return _clean_heading_title("".join(parts))
+
+
+def _find_heading_line(
+    *,
+    lines: list[str],
+    level: int,
+    title: str,
+    start_index: int,
+) -> tuple[int, int]:
+    for line_index in range(start_index, len(lines)):
+        match = _ATX_HEADING_RE.match(lines[line_index])
+        if match is None:
+            continue
+        if len(match.group("marks")) != level:
+            continue
+        if _clean_heading_title(match.group("title")) != title:
+            continue
+        return line_index + 1, line_index + 1
+    raise ValueError(f"could not map parsed heading to source line: {title!r}")
 
 
 def _clean_heading_title(title: str) -> str:
