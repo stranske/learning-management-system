@@ -1,10 +1,12 @@
 # stranske/learning-management-system
 
-## 2026-05-25T08:08:00Z - opener selected issue #9
+## 2026-05-25T08:12:00Z - opener opened PR #43 for issue #9
 
 - Automation: `codex` opener lane.
 - Selected issue: #9, "Add research YAML schemas and validator".
 - Branch: `codex/issue-9-research-yaml-schemas-validator`.
+- PR: #43, https://github.com/stranske/learning-management-system/pull/43.
+- PR routing: non-draft with `agent:codex`, `agents:keepalive`, `autofix`, `priority:high`, `repo-review-approved`, and `milestone:M2`.
 - Related cap hygiene before selection: removed stale `needs-human` from PR #42 and added `agent:retry`; fresh cap-health reported PRs #36, #40, and #42 all draining, raw cap below five.
 - Scoped blocker recorded before selection: issue #8 waits for PR #40 database session/Alembic baseline to land so the auth placeholder does not duplicate migration/session work.
 
@@ -26,4 +28,4 @@
 
 ## Next action
 
-Push branch, open ready-for-review PR with `agent:codex`, `agents:keepalive`, and `autofix`, then hand off to keepalive.
+Wait for Gate and keepalive on PR #43.
