@@ -1,0 +1,195 @@
+# -----------------------------------------------------------------------------
+# Gate Workflow — Consumer Repository Template
+# -----------------------------------------------------------------------------
+# Orchestrates CI enforcement for pull requests. The `summary` job aggregates
+# results and publishes the commit status that keepalive automation relies on.
+#
+# USAGE:
+#   - Standard Python projects: Use this template as-is
+#   - Custom projects: Use as a STARTING POINT, customize the test job(s)
+#
+# IMPORTANT: The `summary` job and `Gate / gate` commit status are REQUIRED
+# for keepalive automation to detect CI results. Do not remove or rename them.
+#
+# SYNC BEHAVIOR:
+#   - This file is NOT auto-synced to repos with custom Gate workflows
+#   - Repos in CUSTOM_GATE_REPOS list in maint-68-sync-consumer-repos.yml
+#     maintain their own Gate and should update manually if needed
+#
+# Copy this file to: .github/workflows/pr-00-gate.yml
+#
+# Required secrets: None (uses GITHUB_TOKEN)
+# Optional secrets: Passed via `secrets: inherit` to reusable workflow
+#
+# Examples of custom Gates based on this template:
+#   - stranske/trip-planner (Flask + requirements.txt)
+#   - stranske/Manager-Database (FastAPI + docker-compose)
+# -----------------------------------------------------------------------------
+
+name: Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  workflow_dispatch:
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number || github.ref_name }}-gate
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: classify changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      is_docs_only: ${{ steps.classify.outputs.is-docs-only || 'false' }}
+      is_python_code: ${{ steps.classify.outputs.is-python-code || 'true' }}
+      is_workflow_change: ${{ steps.classify.outputs.is-workflow-change || 'false' }}
+      is_security_relevant: ${{ steps.classify.outputs.is-security-relevant || 'true' }}
+      classification_rationale: ${{ steps.classify.outputs.classification-rationale || 'path classifier unavailable' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Classify changed paths
+        id: classify
+        uses: ./.github/actions/path-classifier
+        with:
+          force-full: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'verify:full') || github.event_name == 'schedule' }}
+
+  python-ci:
+    name: Python CI
+    needs: detect
+    if: >-
+      ${{
+        needs.detect.outputs.is_docs_only != 'true' &&
+        needs.detect.outputs.is_python_code == 'true'
+      }}
+    uses: stranske/Workflows/.github/workflows/reusable-10-ci-python.yml@main
+    with:
+      python-versions: '["3.12", "3.13"]'
+      coverage-min: "80"
+      format_check: false  # Using ruff for formatting
+      working-directory: "."
+      artifact-prefix: "gate-"
+      # Enable soft coverage gate for trend tracking and hotspot reporting
+      enable-soft-gate: true
+    secrets: inherit
+
+  summary:
+    name: gate-summary
+    needs: [detect, python-ci]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    outputs:
+      state: ${{ steps.summarize.outputs.state }}
+      description: ${{ steps.summarize.outputs.description }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Summarize results
+        id: summarize
+        env:
+          DETECT_RESULT: ${{ needs.detect.result || 'skipped' }}
+          PYTHON_RESULT: ${{ needs.python-ci.result || 'skipped' }}
+        run: |
+          set -euo pipefail
+
+          python_result="${PYTHON_RESULT:-skipped}"
+          state="success"
+          description="All checks passed"
+
+          case "$python_result" in
+            success)
+              state="success"
+              description="Python CI passed"
+              ;;
+            failure)
+              state="failure"
+              description="Python CI failed"
+              ;;
+            cancelled)
+              state="error"
+              description="Python CI was cancelled"
+              ;;
+            skipped)
+              state="success"
+              description="Python CI skipped (no relevant changes)"
+              ;;
+            *)
+              state="pending"
+              description="Python CI status unknown"
+              ;;
+          esac
+
+          detect_result="${DETECT_RESULT:-skipped}"
+          if [[ "${detect_result}" != "success" ]]; then
+            if [[ "${detect_result}" == "failure" ]]; then
+              state="failure"
+              description="Path classification failed"
+            elif [[ "${detect_result}" == "cancelled" ]]; then
+              state="error"
+              description="Path classification was cancelled"
+            else
+              state="pending"
+              description="Path classification status unknown"
+            fi
+          fi
+
+          echo "state=${state}" >> "$GITHUB_OUTPUT"
+          echo "description=${description}" >> "$GITHUB_OUTPUT"
+          echo "[Gate] State: ${state}, Description: ${description}"
+
+      - name: Report Gate commit status
+        if: ${{ always() }}
+        uses: actions/github-script@v9.0.0
+        env:
+          STATE: ${{ steps.summarize.outputs.state || 'pending' }}
+          DESCRIPTION: ${{ steps.summarize.outputs.description || 'Gate status pending' }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const sha = context.payload.pull_request?.head?.sha ?? context.sha;
+            const rawState = process.env.STATE || 'pending';
+            const allowed = new Set(['error', 'failure', 'pending', 'success']);
+            const state = allowed.has(rawState) ? rawState : 'pending';
+            const rawDescription = process.env.DESCRIPTION || 'Gate status update';
+            const description = rawDescription.length > 140 ? `${rawDescription.slice(0, 137)}...` : rawDescription;
+            const targetUrl = process.env.TARGET_URL;
+
+            try {
+              await github.rest.repos.createCommitStatus({
+                owner,
+                repo,
+                sha,
+                state,
+                context: 'Gate / gate',
+                description,
+                target_url: targetUrl,
+              });
+              console.log(`Created commit status: ${state} - ${description}`);
+            } catch (error) {
+              const hitRateLimit = error?.status === 403 && /rate limit/i.test(error?.message || '');
+              if (hitRateLimit) {
+                core.warning('Rate limit prevented Gate from updating the commit status.');
+              } else {
+                throw error;
+              }
+            }
+
+      - name: Enforce Gate success
+        if: ${{ steps.summarize.outputs.state == 'failure' }}
+        run: |
+          echo "Gate reported failure: ${{ steps.summarize.outputs.description }}" >&2
+          exit 1
