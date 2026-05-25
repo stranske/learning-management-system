@@ -17,7 +17,7 @@ REDACTED = "[REDACTED]"
 _EMAIL_RE = re.compile(r"\b[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"\b(?:\+?\d{1,2}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
 _SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
-_CREDIT_CARD_RE = re.compile(r"\b(?:\d[ -]?){13,16}\d\b")
+_CREDIT_CARD_RE = re.compile(r"\b(?:\d[ -]?){12,18}\d\b")
 
 
 @dataclass
@@ -85,9 +85,9 @@ def signal_loss_ratio(original: str, redacted: str) -> float:
     """Backwards-compatible helper estimating redaction signal loss.
 
     Prefer :attr:`RedactionResult.signal_loss_ratio`, which knows the exact
-    character count of redacted spans. This fallback walks the original text
-    looking for ``[REDACTED]`` markers in the redacted text and approximates
-    signal loss as ``redacted_marker_count / max(original_length, 1)``.
+    character count of redacted spans. This fallback walks the redacted text
+    looking for ``[REDACTED]`` markers and approximates signal loss as
+    ``marker_count * len("[REDACTED]") / len(original)``.
     """
     if not original:
         return 0.0

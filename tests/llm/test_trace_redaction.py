@@ -9,7 +9,7 @@ from lms.llm.client import LLMClient
 from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig
 from lms.llm.models import LLMSession
 from lms.llm.providers import FakeProvider
-from lms.llm.redaction import REDACTED, redact_pii
+from lms.llm.redaction import REDACTED, redact_pii, signal_loss_ratio
 
 
 def _client_with_responder(
@@ -50,6 +50,15 @@ def test_redact_pii_replaces_emails_phones_and_ssn() -> None:
     assert "123-45-6789" not in result.text
     assert {"email", "phone", "ssn"}.issubset(set(result.redacted_kinds))
     assert result.redacted_count >= 3
+
+
+def test_redact_pii_replaces_13_digit_credit_card_shape() -> None:
+    sample = "Test card 4111111111111 should not leave the trace."
+
+    result = redact_pii(sample)
+
+    assert "4111111111111" not in result.text
+    assert "credit_card" in result.redacted_kinds
 
 
 def test_redactor_runs_before_external_export() -> None:
@@ -122,3 +131,34 @@ def test_replay_does_not_consume_production_budget() -> None:
     assert response.session.is_replay is True
     assert client.budget.spent_micro_usd() == 0
     assert exports == []  # replay never exports
+
+
+def test_replay_redacts_response_summary_without_exporting() -> None:
+    from lms.llm.client import GoldSetEntry
+
+    client, exports = _client_with_responder(
+        lambda _model, _prompt: "Replay answer for private@example.org",
+    )
+    entry = GoldSetEntry(
+        entry_id="gold-2",
+        mode="study-coach",
+        prompt="replay the gold set",
+        trace_class="formative",
+    )
+
+    response = client.replay(entry)
+
+    assert response.text == "Replay answer for private@example.org"
+    assert response.redaction is not None
+    assert response.session.redaction_applied is True
+    assert response.session.redacted_span_count == 1
+    assert response.session.response_summary == f"Replay answer for {REDACTED}"
+    assert response.session.external_export_allowed is False
+    assert exports == []
+
+
+def test_signal_loss_ratio_fallback_uses_redacted_marker_length() -> None:
+    original = "secret@example.org plus useful context"
+    redacted = f"{REDACTED} plus useful context"
+
+    assert signal_loss_ratio(original, redacted) == len(REDACTED) / len(original)

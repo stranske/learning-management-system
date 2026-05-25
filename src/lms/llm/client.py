@@ -201,6 +201,7 @@ class LLMClient:
             max_tokens=None,
             timeout_seconds=self.config.default_timeout_seconds,
         )
+        redaction = self.redactor(provider_response.text)
 
         session = LLMSession(
             mode=mode,
@@ -210,8 +211,10 @@ class LLMClient:
             input_tokens=provider_response.input_tokens,
             output_tokens=provider_response.output_tokens,
             cost_micro_usd=provider_response.cost_micro_usd,
+            redaction_applied=redaction.applied,
+            redacted_span_count=redaction.redacted_count,
             external_export_allowed=False,
-            response_summary=_summarize(provider_response.text),
+            response_summary=_summarize(redaction.text),
             is_replay=True,
         )
 
@@ -219,7 +222,7 @@ class LLMClient:
             text=provider_response.text,
             session=session,
             provider_response=provider_response,
-            redaction=None,
+            redaction=redaction,
         )
 
     @staticmethod
@@ -248,8 +251,8 @@ class LLMClient:
         """
         input_tokens = max(1, len(prompt.split()))
         output_tokens = max_tokens if max_tokens is not None else max(64, input_tokens)
-        input_rate = getattr(provider, "input_token_cost_micro_usd", 1)
-        output_rate = getattr(provider, "output_token_cost_micro_usd", 4)
+        input_rate = getattr(provider, "input_token_cost_micro_usd", 1_000)
+        output_rate = getattr(provider, "output_token_cost_micro_usd", 4_000)
         return input_tokens * input_rate + output_tokens * output_rate
 
 

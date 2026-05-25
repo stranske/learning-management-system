@@ -69,9 +69,9 @@ class FakeProvider:
     ) -> ProviderResponse:
         text = self.responder(model, prompt)
         input_tokens = max(1, len(prompt.split()))
-        output_tokens = max(1, len(text.split()))
         if max_tokens is not None:
-            output_tokens = min(output_tokens, max_tokens)
+            text = " ".join(text.split()[:max_tokens])
+        output_tokens = max(1, len(text.split()))
         cost_micro_usd = (
             input_tokens * self.input_token_cost_micro_usd
             + output_tokens * self.output_token_cost_micro_usd

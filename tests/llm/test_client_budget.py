@@ -8,7 +8,7 @@ from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
 from lms.llm.config import LLMConfig
 from lms.llm.exceptions import BudgetExceeded
-from lms.llm.providers import FakeProvider
+from lms.llm.providers import FakeProvider, ProviderResponse
 
 
 def _client(*, global_cap_micro_usd: int, mode_caps: dict[str, int] | None = None) -> LLMClient:
@@ -71,6 +71,53 @@ def test_per_mode_cap_blocks_even_when_global_cap_has_room() -> None:
         client.complete(
             mode="study-coach",
             prompt="walk me through the proof",
+            trace_class="formative",
+        )
+
+    assert client.budget.spent_micro_usd() == 0
+
+
+class _UnpricedProvider:
+    name = "unpriced"
+
+    def complete(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        max_tokens: int | None,
+        timeout_seconds: float | None,
+    ) -> ProviderResponse:
+        return ProviderResponse(
+            text="ok",
+            model=model,
+            provider=self.name,
+            input_tokens=max(1, len(prompt.split())),
+            output_tokens=1,
+            cost_micro_usd=1,
+            raw_metadata={"timeout_seconds": timeout_seconds},
+        )
+
+
+def test_unpriced_provider_uses_fail_closed_preflight_estimate() -> None:
+    provider = _UnpricedProvider()
+    config = LLMConfig(
+        mode_models={
+            "study-coach": "unpriced-model",
+            "practice": "unpriced-model",
+            "transfer": "unpriced-model",
+            "authoring-assist": "unpriced-model",
+        },
+        global_daily_cap_micro_usd=10_000,
+        default_provider="unpriced",
+    )
+    budget = DailyBudgetTracker(mode_caps_micro_usd={}, global_cap_micro_usd=10_000)
+    client = LLMClient(config=config, providers={"unpriced": provider}, budget=budget)
+
+    with pytest.raises(BudgetExceeded):
+        client.complete(
+            mode="study-coach",
+            prompt="short prompt",
             trace_class="formative",
         )
 

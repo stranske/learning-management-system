@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from lms.llm.budgets import DailyBudgetTracker
@@ -11,7 +13,7 @@ from lms.llm.exceptions import SourceConstraintViolation, StructuredOutputValida
 from lms.llm.providers import FakeProvider
 
 
-def _client(responder=None) -> LLMClient:
+def _client(responder: Callable[[str, str], str] | None = None) -> LLMClient:
     provider = FakeProvider(
         responder=responder or (lambda _model, prompt: f"echo:{prompt}"),
     )
@@ -104,3 +106,17 @@ def test_response_summary_truncated_for_long_text() -> None:
     assert response.session.response_summary is not None
     assert response.session.response_summary.endswith("...")
     assert len(response.session.response_summary) == 403  # 400 chars + "..."
+
+
+def test_fake_provider_truncates_text_when_max_tokens_is_set() -> None:
+    client = _client(responder=lambda _m, _p: "one two three four")
+
+    response = client.complete(
+        mode="practice",
+        prompt="short",
+        trace_class="ephemeral",
+        max_tokens=2,
+    )
+
+    assert response.text == "one two"
+    assert response.provider_response.output_tokens == 2
