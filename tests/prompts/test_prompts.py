@@ -119,7 +119,7 @@ def test_prompt_requires_source_reference(
     response = client.post("/prompts", json=payload)
 
     assert response.status_code == 422
-    assert "source reference" in response.text
+    assert response.json()["detail"][0]["loc"] == ["body", "source_reference_ids"]
 
 
 def test_llm_generated_prompt_starts_draft(
@@ -176,6 +176,8 @@ def test_publish_prompt_records_reviewing_actor_and_approval_timestamp(
         .one()
     )
     assert audit.actor_id == "reviewer:bob"
+    assert audit.after_summary is not None
+    assert audit.after_summary["approval_timestamp"].startswith(body["approval_timestamp"])
 
 
 def test_post_prompts_returns_source_reference_ids_and_provenance(
@@ -245,3 +247,28 @@ def test_version_prompt_appends_version_metadata(
     assert len(payload["versions"]) == 2
     assert payload["versions"][1]["version_number"] == 2
     assert payload["versions"][1]["created_by"] == "user:alice"
+
+
+def test_version_prompt_rejects_direct_published_status(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """Prompt version updates cannot bypass the dedicated publish flow."""
+    client, session = api_client
+    ids = _seed_prompt_dependencies(session)
+    created = client.post("/prompts", json=_prompt_payload(ids))
+    assert created.status_code == 201, created.text
+    prompt_id = cast(str, created.json()["id"])
+
+    from lms.prompts.repository import get_prompt, version_prompt
+
+    prompt = get_prompt(session, prompt_id)
+    assert prompt is not None
+
+    with pytest.raises(ValueError, match="use publish_prompt"):
+        version_prompt(
+            session,
+            prompt,
+            body="Try to publish through a version update.",
+            actor_id="user:alice",
+            status="published",
+        )

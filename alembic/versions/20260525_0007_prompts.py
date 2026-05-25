@@ -152,7 +152,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "prompt_id",
             "version_number",
-            name=op.f("uq_prompt_versions_prompt_id"),
+            name=op.f("uq_prompt_versions_prompt_id_version_number"),
         ),
     )
     op.create_index(op.f("ix_prompt_versions_prompt_id"), "prompt_versions", ["prompt_id"])

@@ -32,7 +32,7 @@ class PromptCreate(BaseModel):
     demand_level: DemandLevel
     expected_answer_form: ExpectedAnswerForm
     body: str = Field(min_length=1)
-    source_reference_ids: list[str]
+    source_reference_ids: list[str] = Field(min_length=1)
     authoring_method: AuthoringMethod
     authoring_actor: str = Field(min_length=1, max_length=255)
     llm_model: str | None = Field(default=None, max_length=120)

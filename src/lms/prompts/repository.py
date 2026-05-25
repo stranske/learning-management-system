@@ -6,8 +6,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, selectinload
 
 from lms.audit.repository import record_audit_event
 from lms.graphs.models import KNOWLEDGE_TYPES
@@ -50,12 +50,12 @@ def create_prompt(
     _require_choice(expected_answer_form, ANSWER_FORMS, "expected answer form")
     _require_choice(authoring_method, AUTHORING_METHODS, "authoring method")
 
+    goal = _get_goal(session, learning_goal_id)
     target_node = require_published_prompt_target(
         session,
         node_id=target_node_id,
-        scope=_goal_scope(session, learning_goal_id),
+        scope=goal.ownership_scope,
     )
-    goal = _get_goal(session, learning_goal_id)
     if goal.ownership_scope != target_node.ownership_scope:
         raise ValueError("prompt target node must match the learning goal scope")
     if target_node.id not in {node.id for node in goal.target_nodes}:
@@ -100,7 +100,11 @@ def create_prompt(
 
 def get_prompt(session: Session, prompt_id: str) -> Prompt | None:
     """Return a prompt by stable id."""
-    return session.get(Prompt, prompt_id)
+    return session.scalar(
+        select(Prompt)
+        .options(selectinload(Prompt.source_references), selectinload(Prompt.versions))
+        .where(Prompt.id == prompt_id)
+    )
 
 
 def list_prompts(
@@ -111,7 +115,10 @@ def list_prompts(
     limit: int = 100,
 ) -> Sequence[Prompt]:
     """List prompts with optional publication or goal filters."""
-    statement = select(Prompt)
+    statement = select(Prompt).options(
+        selectinload(Prompt.source_references),
+        selectinload(Prompt.versions),
+    )
     if status is not None:
         _require_choice(status, PROMPT_STATUSES, "prompt status")
         statement = statement.where(Prompt.status == status)
@@ -133,7 +140,14 @@ def version_prompt(
     """Update prompt metadata and append a new immutable wording version."""
     before = _prompt_summary(prompt)
     _apply_prompt_changes(prompt, changes)
-    next_version = len(prompt.versions) + 1
+    next_version = (
+        session.scalar(
+            select(func.max(PromptVersion.version_number)).where(
+                PromptVersion.prompt_id == prompt.id
+            )
+        )
+        or 0
+    ) + 1
     prompt.versions.append(
         PromptVersion(version_number=next_version, body=body, created_by=actor_id)
     )
@@ -184,10 +198,6 @@ def publish_prompt(
     return prompt
 
 
-def _goal_scope(session: Session, learning_goal_id: str) -> str:
-    return _get_goal(session, learning_goal_id).ownership_scope
-
-
 def _get_goal(session: Session, learning_goal_id: str) -> LearningGoal:
     goal = session.get(LearningGoal, learning_goal_id)
     if goal is None:
@@ -227,6 +237,8 @@ def _apply_prompt_changes(prompt: Prompt, changes: dict[str, Any]) -> None:
             _require_choice(value, ANSWER_FORMS, "expected answer form")
         elif field == "status":
             _require_choice(value, PROMPT_STATUSES, "prompt status")
+            if value == "published":
+                raise ValueError("use publish_prompt to publish reviewed prompts")
         setattr(prompt, field, value)
 
 
@@ -248,6 +260,9 @@ def _prompt_summary(prompt: Prompt) -> dict[str, Any]:
         "authoring_method": prompt.authoring_method,
         "authoring_actor": prompt.authoring_actor,
         "reviewing_actor": prompt.reviewing_actor,
+        "approval_timestamp": (
+            prompt.approval_timestamp.isoformat() if prompt.approval_timestamp is not None else None
+        ),
         "llm_model": prompt.llm_model,
         "prompt_template_version": prompt.prompt_template_version,
         "source_reference_ids": [reference.id for reference in prompt.source_references],
