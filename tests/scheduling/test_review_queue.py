@@ -506,3 +506,47 @@ def test_schedule_from_attempt_rejects_mismatched_evidence(db_session: Session) 
     )
     with pytest.raises(ValueError, match="does not belong to attempt"):
         schedule_from_attempt(db_session, attempt=attempt_b, evidence_record=evidence_a)
+
+
+def test_schedule_from_attempt_rejects_none_evidence_record(db_session: Session) -> None:
+    """schedule_from_attempt raises ValueError when evidence_record is None."""
+    attempt, _ = _make_attempt(db_session, learner_id="learner-none", prompt_id="prompt-none")
+    with pytest.raises(ValueError, match="requires an evidence_record"):
+        schedule_from_attempt(db_session, attempt=attempt, evidence_record=None)
+
+
+def test_list_review_queue_returns_all_statuses_when_status_is_none(
+    db_session: Session,
+) -> None:
+    """list_review_queue_for_learner with status=None returns items of any status."""
+    attempt_a, evidence_a = _make_attempt(
+        db_session,
+        learner_id="learner-ns",
+        knowledge_node_id="node-ns-a",
+        prompt_id="prompt-ns-a",
+        correctness=False,
+        normalized_score=0.0,
+    )
+    attempt_b, evidence_b = _make_attempt(
+        db_session,
+        learner_id="learner-ns",
+        knowledge_node_id="node-ns-b",
+        prompt_id="prompt-ns-b",
+        correctness=True,
+        normalized_score=0.95,
+        confidence_rating=5,
+    )
+    item_a = schedule_from_attempt(db_session, attempt=attempt_a, evidence_record=evidence_a)
+    item_b = schedule_from_attempt(db_session, attempt=attempt_b, evidence_record=evidence_b)
+    item_a.status = "completed"
+    db_session.flush()
+
+    all_items = list_review_queue_for_learner(db_session, learner_id="learner-ns", status=None)
+    pending_only = list_review_queue_for_learner(
+        db_session, learner_id="learner-ns", status="pending"
+    )
+
+    assert len(all_items) == 2
+    assert {i.id for i in all_items} == {item_a.id, item_b.id}
+    assert len(pending_only) == 1
+    assert pending_only[0].id == item_b.id
