@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from lms.evidence.api import create_attempt_route
-from lms.evidence.repository import create_attempt, get_attempt
+from lms.evidence.repository import create_attempt, get_attempt, list_evidence_records
 from lms.evidence.schemas import AttemptCreate, AttemptRead
 
 
@@ -99,3 +99,75 @@ def test_post_attempt_route_returns_stable_linked_attempt_id(db_session: Session
     assert loaded is not None
     assert loaded.learner_id == payload.learner_id
     assert loaded.prompt_id == payload.prompt_id
+
+
+def test_post_attempt_with_scoring_creates_evidence_record(db_session: Session) -> None:
+    """Posting attempt scoring metadata creates a linked evidence record."""
+    payload = _attempt_payload()
+    payload["evidence"] = {
+        "knowledge_node_id": "node-1",
+        "correctness": True,
+        "raw_score": 2.0,
+        "normalized_score": 1.0,
+        "max_score": 2.0,
+    }
+
+    attempt_payload = AttemptCreate.model_validate(payload)
+    created = create_attempt_route(attempt_payload, db_session)
+
+    records = list_evidence_records(
+        db_session,
+        learner_id=attempt_payload.learner_id,
+        knowledge_node_id="node-1",
+    )
+    assert len(records) == 1
+    assert records[0].attempt_id == created.id
+    assert records[0].correctness is True
+    assert records[0].normalized_score == 1.0
+
+
+def test_post_attempt_scoring_none_fields_fall_back_to_attempt_context(
+    db_session: Session,
+) -> None:
+    """None values in dumped evidence payloads use attempt-level fallbacks."""
+    payload = _attempt_payload()
+    payload["evidence"] = {
+        "knowledge_node_id": "node-1",
+        "correctness": True,
+        "response_time_seconds": None,
+        "attempt_context": None,
+    }
+
+    attempt_payload = AttemptCreate.model_validate(payload)
+    create_attempt_route(attempt_payload, db_session)
+
+    records = list_evidence_records(
+        db_session,
+        learner_id=attempt_payload.learner_id,
+        knowledge_node_id="node-1",
+    )
+    assert len(records) == 1
+    assert records[0].response_time_seconds == attempt_payload.elapsed_seconds
+    assert records[0].attempt_context == attempt_payload.response_metadata
+
+
+def test_post_attempt_with_evidence_without_scoring_does_not_create_record(
+    db_session: Session,
+) -> None:
+    """Evidence record is not created unless correctness or score fields are present."""
+    payload = _attempt_payload()
+    payload["evidence"] = {
+        "knowledge_node_id": "node-1",
+        "prompt_version_id": "prompt-version-1",
+        "knowledge_type": "procedural",
+    }
+
+    attempt_payload = AttemptCreate.model_validate(payload)
+    create_attempt_route(attempt_payload, db_session)
+
+    records = list_evidence_records(
+        db_session,
+        learner_id=attempt_payload.learner_id,
+        knowledge_node_id="node-1",
+    )
+    assert records == []
