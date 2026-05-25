@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+import os
+from pathlib import Path
+from tempfile import mkstemp
 from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from lms.audit.models import AuditLog
 from lms.db.base import Base
@@ -23,10 +25,12 @@ from lms.sources.repository import create_source_reference
 @pytest.fixture
 def api_client() -> Generator[tuple[TestClient, Session], None, None]:
     """Provide a FastAPI test client backed by a shared in-memory SQLite engine."""
+    db_fd, db_path = mkstemp(suffix=".sqlite3")
+    os.close(db_fd)
+    database_url = f"sqlite+pysqlite:///{Path(db_path).as_posix()}"
     engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
+        database_url,
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
         future=True,
     )
     Base.metadata.create_all(engine)
@@ -47,14 +51,16 @@ def api_client() -> Generator[tuple[TestClient, Session], None, None]:
 
     app = create_app()
     app.dependency_overrides[get_session] = override_get_session
+    client = TestClient(app)
     try:
-        with TestClient(app) as client:
-            yield client, setup_session
+        yield client, setup_session
     finally:
+        client.close()
         setup_session.close()
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
         engine.dispose()
+        Path(db_path).unlink(missing_ok=True)
 
 
 def _seed_prompt_dependencies(session: Session) -> dict[str, str]:
