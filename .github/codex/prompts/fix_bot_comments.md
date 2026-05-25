@@ -2,6 +2,10 @@
 
 Review bots have left suggestions on this PR. Your task is to address each one.
 
+## LMS Overlay (Repo-Specific)
+
+For bot suggestions that affect LMS behavior, align edits with `.github/codex/prompts/lms_project_context.md` and keep evidence and mastery invariants intact.
+
 ## Instructions
 
 1. **Read each bot comment** in the sections below

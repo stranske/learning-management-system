@@ -6,11 +6,11 @@
 
 Before changing code in this repository, the operating agent should treat the following as preconditions on the task:
 
-1. **Read order:** the synced `.github/codex/AGENT_INSTRUCTIONS.md` (security boundaries), then `.github/codex/PROJECT_CONTEXT.md` (LMS domain layer), then `docs/product/early-design-decisions.md` Segments 1 and 7, then the issue body, then the touched code.
+1. **Read order:** `.github/codex/AGENT_INSTRUCTIONS.md` (synced security boundaries plus marked LMS append), then `.github/codex/PROJECT_CONTEXT.md` (LMS domain layer), then `docs/product/early-design-decisions.md` Segments 1 and 7, then the issue body, then the touched code.
 2. **Learner loop integrity:** never bypass the chain `Prompt -> Attempt -> EvidenceRecord -> MasteryEstimate -> ReviewQueueItem`. If a change would let LLM output skip evidence or short-circuit mastery computation, stop and add `needs-human`.
 3. **Source citations are load-bearing:** any LLM-touching code path that produces learner-visible output must carry a `SourceReference` linkage. Missing or stub citations are a correctness defect, not a stylistic detail.
 4. **Formative-only LLM:** LLM responses inform; `MasteryEstimate` decides. Code review surfaces that mix the two should be split or rejected.
-5. **Ownership sanity:** if a change would edit a file the consumer-sync manifest owns (`.github/workflows/agents-*.yml`, non-`lms_*.md` synced prompt defaults, synced `AGENT_INSTRUCTIONS.md`, synced scripts/docs), stop and route the change to `stranske/Workflows` instead. LMS-specific lane content belongs in this file or in `PROJECT_CONTEXT.md`, never inside a synced file.
+5. **Ownership sanity:** if a change would edit a file the consumer-sync manifest owns (`.github/workflows/agents-*.yml`, non-`lms_*.md` synced prompt defaults, synced scripts/docs, or the synced base body of `AGENT_INSTRUCTIONS.md`), stop and route the change to `stranske/Workflows` instead. LMS-specific lane content belongs in this file, in `PROJECT_CONTEXT.md`, or in the marked `LMS-DOMAIN-APPEND START` / `END` block required by issue #2.
 
 ## Lane-specific notes
 
@@ -23,7 +23,7 @@ Before changing code in this repository, the operating agent should treat the fo
 
 ## When to stop and ask
 
-- The fix requires editing `AGENT_INSTRUCTIONS.md`, any synced file in `.github/codex/prompts/`, or any file declared in the `stranske/Workflows` sync manifest.
+- The fix requires editing the synced base body of `AGENT_INSTRUCTIONS.md`, any synced file in `.github/codex/prompts/`, or any file declared in the `stranske/Workflows` sync manifest.
 - The fix asks the LLM to act as a final authority on whether the learner mastered a concept.
 - The fix would silently update or fabricate a `SourceReference` snapshot instead of surfacing drift.
 - The fix would create Phase-2+ entities (`CapabilityTarget`, `CapabilityEstimate`, `GapAnalysis`, `MaintenancePlan`) for an M0-M4 issue.
