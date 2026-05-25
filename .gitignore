@@ -14,3 +14,6 @@ docs/handoff/logs/
 __pycache__/
 scripts/__pycache__/
 scripts/**/__pycache__/
+
+# Per-PR closer/opener state log; regenerated each round and not project documentation.
+workloop-state.md
