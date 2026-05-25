@@ -89,6 +89,35 @@ def test_dry_run_does_not_write_records(db_session: Session, tmp_path: Path) -> 
     assert db_session.query(AuditLog).count() == 0
 
 
+def test_import_records_audit_events_for_sources_nodes_and_edges(
+    db_session: Session, tmp_path: Path
+) -> None:
+    note = _write_note(tmp_path)
+
+    import_markdown_notes(
+        db_session,
+        note,
+        source_visibility="local-only",
+        actor_id="user:alice",
+    )
+    db_session.commit()
+
+    audits = db_session.query(AuditLog).all()
+    assert len(audits) == 8
+    assert {row.action for row in audits} == {"create"}
+    assert {row.actor_id for row in audits} == {"user:alice"}
+    assert {row.source_subsystem for row in audits} == {"markdown-importer"}
+
+    type_counts: dict[str, int] = {}
+    for row in audits:
+        type_counts[row.entity_type] = type_counts.get(row.entity_type, 0) + 1
+    assert type_counts == {
+        "SourceReference": 3,
+        "KnowledgeNode": 3,
+        "KnowledgeEdge": 2,
+    }
+
+
 def test_cli_dry_run_reports_planned_nodes(monkeypatch: Any, tmp_path: Path, capsys: Any) -> None:
     note = _write_note(tmp_path)
     monkeypatch.setattr(
