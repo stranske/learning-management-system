@@ -30,3 +30,4 @@ tests/test_database_baseline.py
 tests/test_dependency_version_alignment.py
 tests/test_main.py
 tests/test_makefile_targets.py
+tests/test_pyproject_config.py
