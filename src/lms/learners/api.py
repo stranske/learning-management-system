@@ -68,6 +68,8 @@ def create_learning_goal_route(
     _current_user: CurrentUserDep,
 ) -> LearningGoal:
     """Create a learner goal linked to published knowledge nodes."""
+    if get_learner(session, learner_id=learner_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
     try:
         goal = create_learning_goal(
             session,

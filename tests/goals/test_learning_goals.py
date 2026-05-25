@@ -95,7 +95,7 @@ def test_create_learning_goal_rejects_cross_scope_target_node(db_session: Sessio
         status="published",
     )
 
-    with pytest.raises(ValueError, match="must match the goal ownership scope"):
+    with pytest.raises(ValueError, match="not found in this scope"):
         create_learning_goal(
             db_session,
             learner_id=learner.id,

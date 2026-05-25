@@ -125,4 +125,5 @@ class LearningGoal(Base):
     target_nodes: Mapped[list[KnowledgeNode]] = relationship(
         "KnowledgeNode",
         secondary=learning_goal_nodes,
+        order_by="KnowledgeNode.id",
     )

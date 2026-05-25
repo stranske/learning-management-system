@@ -5,8 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lms.graphs.models import KNOWLEDGE_TYPES, KnowledgeNode
-from lms.graphs.repository import _require_scope
+from lms.graphs.models import KNOWLEDGE_TYPES, OWNERSHIP_SCOPES, KnowledgeNode
 from lms.learners.models import GOAL_STATUSES, Learner, LearningGoal
 
 
@@ -137,7 +136,7 @@ def list_learning_goals_for_learner(
     """Return learning goals for one learner, optionally filtered."""
     statement = select(LearningGoal).where(LearningGoal.learner_id == learner_id)
     if ownership_scope is not None:
-        _require_scope(ownership_scope)
+        _require_ownership_scope(ownership_scope)
         statement = statement.where(LearningGoal.ownership_scope == ownership_scope)
     if status is not None:
         if status not in GOAL_STATUSES:
@@ -157,17 +156,19 @@ def _load_goal_target_nodes(
         raise ValueError("learning goal requires at least one target node")
 
     nodes = list(
-        session.scalars(select(KnowledgeNode).where(KnowledgeNode.id.in_(target_node_ids)))
+        session.scalars(
+            select(KnowledgeNode).where(
+                KnowledgeNode.id.in_(target_node_ids),
+                KnowledgeNode.ownership_scope == ownership_scope,
+            )
+        )
     )
     found_by_id = {node.id: node for node in nodes}
     missing = [node_id for node_id in target_node_ids if node_id not in found_by_id]
     if missing:
-        raise ValueError(f"target knowledge nodes not found: {', '.join(missing)}")
+        raise ValueError(f"target knowledge nodes not found in this scope: {', '.join(missing)}")
 
     ordered_nodes = [found_by_id[node_id] for node_id in target_node_ids]
-    wrong_scope = [node.id for node in ordered_nodes if node.ownership_scope != ownership_scope]
-    if wrong_scope:
-        raise ValueError("target knowledge nodes must match the goal ownership scope")
     draft_nodes = [node.id for node in ordered_nodes if node.status != "published"]
     if draft_nodes:
         raise ValueError("learning goals can only target published knowledge nodes")
@@ -184,6 +185,11 @@ def _require_learning_goal_choices(
         raise ValueError(
             f"unknown knowledge type {knowledge_type!r}; expected one of {KNOWLEDGE_TYPES}"
         )
-    _require_scope(ownership_scope)
+    _require_ownership_scope(ownership_scope)
     if status not in GOAL_STATUSES:
         raise ValueError(f"unknown goal status {status!r}; expected one of {GOAL_STATUSES}")
+
+
+def _require_ownership_scope(scope: str) -> None:
+    if scope not in OWNERSHIP_SCOPES:
+        raise ValueError(f"unknown ownership scope {scope!r}; expected one of {OWNERSHIP_SCOPES}")
