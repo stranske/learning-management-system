@@ -96,3 +96,30 @@ You should assume you're running in `agent-standard` unless explicitly told othe
 ---
 
 *These instructions are enforced by the repository's prompt injection guard system. Violations will be logged and blocked.*
+
+---
+
+<!-- LMS-DOMAIN-APPEND: repo-local addition for stranske/learning-management-system.
+     Not part of the synced base. If a consumer-sync pass overwrites this file,
+     reapply this section from .github/codex/PROJECT_CONTEXT.md.
+     Full domain context: .github/codex/PROJECT_CONTEXT.md -->
+
+## LMS-Domain Context
+
+This section is the learning-management-system–specific overlay. Read `.github/codex/PROJECT_CONTEXT.md` for the full entity list, phase scope, and ownership table.
+
+### Learner Loop Integrity
+
+Never bypass the chain `Prompt → Attempt → EvidenceRecord → MasteryEstimate → ReviewQueueItem`. If a change would let LLM output skip an evidence step or short-circuit mastery computation, add the `needs-human` label and document the issue rather than proceeding.
+
+### Source Citations Are Load-Bearing
+
+Any LLM-touching code path that produces learner-visible output must carry a `SourceReference` linkage. A missing citation is a correctness defect, not a style issue. A `SourceReference` whose snapshot has drifted from the live upstream is a tracked event to surface — do not silently update it.
+
+### Formative-Only LLM Policy
+
+LLM responses inform; `MasteryEstimate` decides. Code surfaces that mix the two should be split or rejected. LLM output that influences learner-visible content goes through `LLMSession` for logging, replay, and the gold-set eval harness.
+
+### Ownership Scope
+
+Before editing any file in `.github/workflows/agents-*.yml`, any synced `.github/codex/` file, or any synced script, check the ownership table in `.github/codex/PROJECT_CONTEXT.md`. If the file is owned by `stranske/Workflows`, stop and route the fix upstream rather than making a local change.
