@@ -72,8 +72,36 @@ def test_unsupported_correct_maps_to_good() -> None:
     assert result.rating == FSRSRating.GOOD
 
 
+def test_medium_confidence_unsupported_correct_maps_to_good() -> None:
+    result = evidence_to_fsrs_rating(
+        _record(
+            correctness=True,
+            confidence_rating=3,
+            hint_used=False,
+            reference_accessed=False,
+            support_level="none",
+        )
+    )
+
+    assert result.rating == FSRSRating.GOOD
+
+
 def test_low_confidence_correct_maps_to_hard() -> None:
     result = evidence_to_fsrs_rating(_record(correctness=True, confidence_rating=2))
+
+    assert result.rating == FSRSRating.HARD
+
+
+def test_partial_credit_threshold_applies_before_easy_rule() -> None:
+    result = evidence_to_fsrs_rating(
+        _record(
+            correctness=True,
+            confidence_rating=5,
+            time_since_last_attempt_seconds=None,
+            response_time_seconds=20,
+            normalized_score=0.84,
+        )
+    )
 
     assert result.rating == FSRSRating.HARD
 
