@@ -1,0 +1,2 @@
+[console_scripts]
+lms = lms.__main__:main
