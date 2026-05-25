@@ -105,10 +105,9 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
 
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
-
 [tool.black]
 line-length = 100
+# Target the minimum supported Python so the formatter never emits syntax that
+# fails Black's AST safety check when the runner is on the older interpreter.
+# Python 3.12-targeted code is still parseable by 3.13.
 target-version = ["py312"]
