@@ -12,6 +12,18 @@ from sqlalchemy.orm import Session
 from lms.evidence.models import Attempt, EvidenceRecord
 
 
+def _has_scoring_signal(evidence: dict[str, Any]) -> bool:
+    """Return whether evidence includes correctness or scoring fields."""
+    scoring_keys = (
+        "correctness",
+        "raw_score",
+        "normalized_score",
+        "max_score",
+        "partial_credit_dimensions",
+    )
+    return any(evidence.get(key) is not None for key in scoring_keys)
+
+
 def create_attempt(
     session: Session,
     *,
@@ -44,7 +56,7 @@ def create_attempt(
     )
     session.add(attempt)
     session.flush()
-    if evidence is not None:
+    if evidence is not None and _has_scoring_signal(evidence):
         create_evidence_record(
             session,
             learner_id=learner_id,

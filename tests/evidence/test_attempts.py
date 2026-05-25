@@ -124,3 +124,25 @@ def test_post_attempt_with_scoring_creates_evidence_record(db_session: Session) 
     assert records[0].attempt_id == created.id
     assert records[0].correctness is True
     assert records[0].normalized_score == 1.0
+
+
+def test_post_attempt_with_evidence_without_scoring_does_not_create_record(
+    db_session: Session,
+) -> None:
+    """Evidence record is not created unless correctness or score fields are present."""
+    payload = _attempt_payload()
+    payload["evidence"] = {
+        "knowledge_node_id": "node-1",
+        "prompt_version_id": "prompt-version-1",
+        "knowledge_type": "procedural",
+    }
+
+    attempt_payload = AttemptCreate.model_validate(payload)
+    create_attempt_route(attempt_payload, db_session)
+
+    records = list_evidence_records(
+        db_session,
+        learner_id=attempt_payload.learner_id,
+        knowledge_node_id="node-1",
+    )
+    assert records == []
