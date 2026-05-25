@@ -154,7 +154,7 @@ def main() -> None:
     if args.command == "import-graph":
         try:
             with session_scope() as session:
-                import_summary = import_csv_graph(
+                csv_summary = import_csv_graph(
                     session,
                     args.path,
                     dry_run=args.dry_run,
@@ -164,10 +164,10 @@ def main() -> None:
             raise SystemExit(f"CSV graph import failed: {exc}") from exc
         print(
             "CSV graph import "
-            f"{'dry run' if import_summary.dry_run else 'complete'}: "
-            f"nodes={import_summary.nodes} "
-            f"edges={import_summary.edges} "
-            f"source_references={import_summary.source_references}"
+            f"{'dry run' if csv_summary.dry_run else 'complete'}: "
+            f"nodes={csv_summary.nodes} "
+            f"edges={csv_summary.edges} "
+            f"source_references={csv_summary.source_references}"
         )
         return
 
