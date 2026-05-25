@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib import import_module
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
@@ -13,10 +15,17 @@ from lms.evidence.models import EvidenceRecord
 from lms.mastery.service import mastery_estimates_for_learner
 from lms.sources.models import SourceReference
 
-try:  # Prompt support is present after the prompt-provenance opener branch lands.
-    from lms.prompts.models import Prompt
-except ImportError:  # pragma: no cover
-    Prompt = None  # type: ignore[assignment,misc]
+
+def _load_prompt_model() -> Any | None:
+    """Load prompt model only when the local prompts module exists."""
+    prompts_models = Path(__file__).resolve().parents[1] / "prompts" / "models.py"
+    if not prompts_models.exists():
+        return None
+    module = import_module("lms.prompts.models")
+    return getattr(module, "Prompt", None)
+
+
+Prompt = _load_prompt_model()
 
 router = APIRouter(prefix="/inspect", tags=["inspect"])
 SessionDep = Annotated[Session, Depends(get_session)]
