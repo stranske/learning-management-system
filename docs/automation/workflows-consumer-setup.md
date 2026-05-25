@@ -20,6 +20,15 @@ This issue (`#2 Install Workflows consumer scaffolding`) is a verification + LMS
 
 The following surfaces were verified present and current as of the M0-002 pass. "Current" means the file matches the `stranske/Workflows/templates/consumer-repo/` version unless explicitly noted as a deviation.
 
+### Verification evidence
+
+The M0-002 pass was verified against the synced template surface and repository settings rather than inferred from documentation text alone:
+
+- Template-required files were checked against `stranske/Workflows/templates/consumer-repo/`; `config/coverage-baseline.json` was the only missing required file and was restored during the pass.
+- `gh variable list --repo stranske/learning-management-system` showed `USE_CONSOLIDATED_WORKFLOWS=true` at 2026-05-25T04:14:13Z.
+- The AGENT_ISSUE_FORMAT acceptance path is evidenced by the successful creation of issues #1-#31 in this repository using that body shape.
+- The synced `.github/codex/AGENT_INSTRUCTIONS.md` file remains template-owned and unmodified locally; LMS-specific guidance lives in repo-local adjacent files.
+
 ### `.github/workflows/`
 
 Synced thin caller workflows (owned upstream in `stranske/Workflows`; fix there, not here):
@@ -140,7 +149,6 @@ Never paste secret values into PR bodies, issue bodies, prompt files, or instruc
 
 | File                                | Deviation | Why | Conflict risk on next sync |
 |-------------------------------------|-----------|-----|----------------------------|
-| `.github/codex/AGENT_INSTRUCTIONS.md` | LMS-domain append section added after the base synced content. | Acceptance criterion for issue #2 requires this file to contain LMS-domain context. The append adds the four key LMS policies (learner-loop integrity, source citations, formative-only LLM, ownership scope) and a pointer to `PROJECT_CONTEXT.md`. The HTML comment marker `<!-- LMS-DOMAIN-APPEND -->` identifies the append boundary so a sync pass can detect drift. | Low. A consumer-sync overwrite replaces the base content but should not drop lines after the marker unless the upstream template grows past the original footer line. Re-apply this section from `PROJECT_CONTEXT.md` if a sync pass drops it. |
 | `.github/codex/PROJECT_CONTEXT.md`  | New file, not on the sync manifest. | Holds LMS-specific long-form domain context for lane prompts to reference. Lives next to the synced `AGENT_INSTRUCTIONS.md` so an agent that reads the base instructions discovers the LMS-domain layer in the same directory. | None. |
 | `.github/codex/prompts/lms_project_context.md` | New file, not on the sync manifest. | LMS-aware lane prompt that complements the synced defaults. | None. |
 | `.github/workflows/agents-70-orchestrator.yml` | Present in repo, not in current template. | Older orchestrator retained pending migration to `agents-80-pr-event-hub.yml` consolidated routing. | None. The sync run will not remove unmanaged files. |
