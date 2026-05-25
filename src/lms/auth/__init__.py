@@ -1,1 +1,5 @@
-"""User and learner auth placeholders. See issue M1-008."""
+"""Authentication package."""
+
+from lms.auth.models import User
+
+__all__ = ["User"]

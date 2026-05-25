@@ -7,6 +7,8 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+import lms.auth.models  # noqa: F401
+import lms.learners.models  # noqa: F401
 from lms.db.base import Base
 from lms.settings import get_settings
 

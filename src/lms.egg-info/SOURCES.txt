@@ -15,6 +15,11 @@ src/lms/analytics/__init__.py
 src/lms/api/__init__.py
 src/lms/api/health.py
 src/lms/auth/__init__.py
+src/lms/auth/api.py
+src/lms/auth/dependencies.py
+src/lms/auth/models.py
+src/lms/auth/repository.py
+src/lms/auth/schemas.py
 src/lms/curriculum/__init__.py
 src/lms/db/__init__.py
 src/lms/db/base.py
@@ -22,6 +27,11 @@ src/lms/db/session.py
 src/lms/evidence/__init__.py
 src/lms/feedback/__init__.py
 src/lms/graphs/__init__.py
+src/lms/learners/__init__.py
+src/lms/learners/api.py
+src/lms/learners/models.py
+src/lms/learners/repository.py
+src/lms/learners/schemas.py
 src/lms/llm/__init__.py
 src/lms/mastery/__init__.py
 src/lms/research_registry/__init__.py
