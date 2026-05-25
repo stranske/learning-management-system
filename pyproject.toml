@@ -102,6 +102,7 @@ known-first-party = ["lms", "my_project", "tools"]
 [tool.mypy]
 python_version = "3.12"
 files = ["src", "tests", "scripts"]
+mypy_path = ["src"]
 explicit_package_bases = true
 strict = true
 warn_return_any = true
