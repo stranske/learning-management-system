@@ -2,6 +2,17 @@
 
 Your objective is to satisfy the **Acceptance Criteria** by completing each **Task** within the defined **Scope**.
 
+## LMS Overlay (Repo-Specific)
+
+Before making non-trivial LMS changes, read `.github/codex/prompts/lms_project_context.md` and align implementation to the learner loop and evidence-traceability rules.
+
+While executing tasks, preserve these invariants:
+- Learner-visible explanations must stay traceable to `SourceReference`.
+- LLM output is formative support, not mastery determination.
+- `MasteryEstimate` must be derived from `EvidenceRecord` data.
+- Prompt/attempt/evidence/mastery/review queue links must remain intact.
+- Keep scope within M0-M4 unless the task explicitly authorizes M5+ entities.
+
 **This round you MUST:**
 1. Implement actual code or test changes that advance at least one incomplete task toward acceptance.
 2. Commit meaningful source code (.py, .yml, .js, etc.)—not just status/docs updates.

@@ -2,6 +2,10 @@
 
 The CI pipeline is failing. Your **only objective** is to fix the failing checks so they pass.
 
+## LMS Overlay (Repo-Specific)
+
+If the failing checks touch LMS product behavior, consult `.github/codex/prompts/lms_project_context.md` and preserve learner-loop invariants while applying the minimal CI fix.
+
 ## Rules
 
 **DO NOT:**
