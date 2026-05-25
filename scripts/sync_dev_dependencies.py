@@ -7,12 +7,9 @@ to use the pinned versions from the central autofix-versions.env file.
 It handles both exact pins (==) and minimum version pins (>=) in pyproject.toml,
 converting them to exact pins for reproducibility.
 
-If no dev dependencies section exists, it can create one with --create-if-missing.
-
 Usage:
-    python sync_dev_dependencies.py --check           # Verify versions match
-    python sync_dev_dependencies.py --apply           # Update pyproject.toml
-    python sync_dev_dependencies.py --apply --create-if-missing  # Create dev deps if missing
+    python sync_dev_dependencies.py --check    # Verify versions match
+    python sync_dev_dependencies.py --apply    # Update pyproject.toml
     python sync_dev_dependencies.py --apply  # Syncs requirements.lock automatically if it exists
 """
 
@@ -30,6 +27,8 @@ LOCKFILE_FILE = Path("requirements.lock")
 
 # Map env file keys to package names
 # Format: ENV_KEY -> (package_name, optional_alternative_names)
+# NOTE: Only include dev tools here. Runtime dependencies (hypothesis, pyyaml,
+# pydantic, jsonschema) should NOT be synced - they're managed by Dependabot.
 TOOL_MAPPING: dict[str, tuple[str, ...]] = {
     "RUFF_VERSION": ("ruff",),
     "BLACK_VERSION": ("black",),
@@ -40,17 +39,7 @@ TOOL_MAPPING: dict[str, tuple[str, ...]] = {
     "PYTEST_XDIST_VERSION": ("pytest-xdist",),
     "COVERAGE_VERSION": ("coverage",),
     "DOCFORMATTER_VERSION": ("docformatter",),
-    "HYPOTHESIS_VERSION": ("hypothesis",),
 }
-
-# Core dev tools to include when creating a new dev section
-# (subset of TOOL_MAPPING - only the most essential ones)
-CORE_DEV_TOOLS = [
-    "RUFF_VERSION",
-    "MYPY_VERSION",
-    "PYTEST_VERSION",
-    "PYTEST_COV_VERSION",
-]
 
 LOCKFILE_PATTERN = re.compile(
     r"^(?P<lead>\s*)(?P<name>[A-Za-z0-9_.-]+)==(?P<version>[^\s#]+)(?P<trail>\s*(?:#.*)?)$"
@@ -100,111 +89,60 @@ def find_dev_dependencies_section(content: str) -> tuple[int, int, str] | None:
     return None
 
 
-def find_optional_dependencies_section(content: str) -> int | None:
-    """Find the [project.optional-dependencies] section header.
-
-    Returns the index after the section header, or None if not found.
-    """
-    pattern = re.compile(r"^\[project\.optional-dependencies\]\s*$", re.MULTILINE)
-    match = pattern.search(content)
-    if match:
-        return match.end()
-    return None
-
-
-def find_project_section_end(content: str) -> int | None:
-    """Find a good place to insert [project.optional-dependencies].
-
-    Returns the index after the [project] section ends (before next section).
-    """
-    # Find [project] section
-    project_match = re.search(r"^\[project\]\s*$", content, re.MULTILINE)
-    if not project_match:
-        return None
-
-    # Find the next section header after [project]
-    next_section = re.search(r"^\[", content[project_match.end() :], re.MULTILINE)
-    if next_section:
-        return project_match.end() + next_section.start()
-
-    # No next section, return end of content
-    return len(content)
-
-
-def create_dev_dependencies_section(pins: dict[str, str], use_exact_pins: bool = True) -> str:
-    """Create a new dev dependencies section with core tools."""
-    op = "==" if use_exact_pins else ">="
-    deps = []
-
-    for env_key in CORE_DEV_TOOLS:
-        if env_key in pins:
-            pkg_name = TOOL_MAPPING[env_key][0]
-            version = pins[env_key]
-            deps.append(f'    "{pkg_name}{op}{version}",')
-
-    if not deps:
-        return ""
-
-    return "dev = [\n" + "\n".join(deps) + "\n]"
-
-
 def extract_dependencies(section: str) -> list[tuple[str, str, str]]:
     """Extract dependencies from a dev section.
 
     Returns list of (package_name, operator, version) tuples.
     """
     deps = []
-    # Match patterns like "package>=1.0.0" or "package==1.0.0" or just "package"
-    # Be precise: package name followed by optional version specifier
-    pattern = re.compile(r'"([a-zA-Z0-9_-]+)(?:(>=|==|~=|>|<|<=|!=)([^"\[\]]+))?(?:\[.*?\])?"')
+    # Match patterns like "package>=1.0.0", "package==1.0.0", "package", or "package[extra]==1.0.0"
+    # Per PEP 508, extras come BEFORE version specifier: package[extra]>=1.0.0
+    pattern = re.compile(
+        r'"([a-zA-Z0-9_-]+)'  # package name
+        r"(?:\[[^\]]+\])?"  # optional extras, e.g. [standard]
+        r"(?:(>=|==|~=|>|<|<=|!=)"  # optional operator
+        r'([^"\[\]]+))?"'  # optional version
+    )
 
     for match in pattern.finditer(section):
         package = match.group(1)
         operator = match.group(2) or ""
-        version = match.group(3) or ""
+        version = (match.group(3) or "").strip()
         deps.append((package, operator, version))
 
     return deps
 
 
-def update_dependency_in_section(
-    section: str, package: str, new_version: str, use_exact_pin: bool = True
+def update_dependency_version(
+    content: str, package: str, new_version: str, use_exact_pin: bool = True
 ) -> tuple[str, bool]:
-    """Update a single dependency version within a section.
+    """Update a single dependency version in the content.
 
-    IMPORTANT: This only updates exact package name matches, not partial matches.
-    For example, "pytest" will NOT match "pytest-cov" or "pytest-xdist".
-
-    Returns (new_section, was_changed).
+    Returns (new_content, was_changed).
     """
-    # Pattern to match EXACT package name with any version specifier
-    # The key is using word boundaries and ensuring we match the exact package
-    # Pattern: "package" or "package>=version" or "package[extras]>=version"
-    # We need to be careful not to match "pytest" when looking at "pytest-cov"
-
-    # Match: "package" + optional version spec, NOT followed by more pkg name chars
-    # The negative lookahead (?!-) ensures we don't match "pytest" in "pytest-cov"
+    # Pattern to match the package with any version specifier
+    # Per PEP 508: extras come BEFORE version specifier (package[extra]>=1.0.0)
     pattern = re.compile(
-        rf'"({re.escape(package)})(?![-\w])(>=|==|~=|>|<|<=|!=)?([^"\[\]]*)?(\[.*?\])?"',
+        rf'"({re.escape(package)})(\[[^\]]+\])?(?![-\w])(>=|==|~=|>|<|<=|!=)?([^"\[\]]*)?"',
         re.IGNORECASE,
     )
 
     def replacer(m: re.Match) -> str:
         pkg_name = m.group(1)
-        extras = m.group(4) or ""
+        extras = m.group(2) or ""
         op = "==" if use_exact_pin else ">="
-        return f'"{pkg_name}{op}{new_version}{extras}"'
+        # PEP 508: extras come BEFORE version specifier
+        return f'"{pkg_name}{extras}{op}{new_version}"'
 
-    new_section, count = pattern.subn(replacer, section)
-    return new_section, count > 0
+    new_content, count = pattern.subn(replacer, content)
+    return new_content, count > 0
 
 
-def sync_pyproject(
+def sync_versions(
     pyproject_path: Path,
     pins: dict[str, str],
     apply: bool = False,
     use_exact_pins: bool = True,
-    create_if_missing: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Sync versions from pin file to pyproject.toml.
 
@@ -222,50 +160,13 @@ def sync_pyproject(
 
     # Find dev section
     section_info = find_dev_dependencies_section(content)
-
     if not section_info:
-        if not create_if_missing:
-            return [], ["No dev dependencies section found in pyproject.toml"]
+        return [], ["No dev dependencies section found in pyproject.toml"]
 
-        # Create new dev dependencies section
-        new_section = create_dev_dependencies_section(pins, use_exact_pins)
-        if not new_section:
-            return [], ["Could not create dev dependencies section - no pins available"]
-
-        # Find where to insert
-        opt_deps_pos = find_optional_dependencies_section(content)
-        if opt_deps_pos is not None:
-            # Add after [project.optional-dependencies] header
-            content = content[:opt_deps_pos] + "\n" + new_section + "\n" + content[opt_deps_pos:]
-        else:
-            # Need to add [project.optional-dependencies] section
-            insert_pos = find_project_section_end(content)
-            if insert_pos is None:
-                return [], ["Could not find [project] section to add optional-dependencies"]
-
-            section_to_add = "\n[project.optional-dependencies]\n" + new_section + "\n"
-            content = content[:insert_pos] + section_to_add + content[insert_pos:]
-
-        op = "==" if use_exact_pins else ">="
-        for env_key in CORE_DEV_TOOLS:
-            if env_key in pins:
-                pkg_name = TOOL_MAPPING[env_key][0]
-                changes.append(f"{pkg_name}: (new) -> {op}{pins[env_key]}")
-
-        if apply:
-            pyproject_path.write_text(content, encoding="utf-8")
-
-        return changes, errors
-
-    # Extract the section boundaries and content
-    section_start, section_end, section = section_info
-
-    # Extract current dependencies from the section
+    # Extract current dependencies
+    _, _, section = section_info
     current_deps = extract_dependencies(section)
     current_packages = {pkg.lower(): (pkg, op, ver) for pkg, op, ver in current_deps}
-
-    # Work on a copy of just the section
-    new_section = section
 
     # Check each pinned tool
     for env_key, package_names in TOOL_MAPPING.items():
@@ -282,8 +183,8 @@ def sync_pyproject(
 
                 # Check if version differs
                 if current_ver != target_version:
-                    new_section, changed = update_dependency_in_section(
-                        new_section, actual_pkg, target_version, use_exact_pins
+                    content, changed = update_dependency_version(
+                        content, actual_pkg, target_version, use_exact_pins
                     )
                     if changed:
                         op = "==" if use_exact_pins else ">="
@@ -291,10 +192,6 @@ def sync_pyproject(
                             f"{actual_pkg}: {current_op}{current_ver} -> {op}{target_version}"
                         )
                 break
-
-    # Replace the section in the full content
-    if new_section != section:
-        content = content[:section_start] + new_section + content[section_end:]
 
     # Apply changes if requested
     if apply and content != original_content:
@@ -316,7 +213,6 @@ def _build_lockfile_targets(pins: dict[str, str]) -> dict[str, str]:
 def sync_lockfile(
     lockfile_path: Path, pins: dict[str, str], apply: bool = False
 ) -> tuple[list[str], list[str]]:
-    """Sync versions from pin file to requirements.lock."""
     if not lockfile_path.exists():
         return [], []
 
@@ -371,81 +267,68 @@ def main(argv: list[str] | None = None) -> int:
         help="Apply version updates to pyproject.toml",
     )
     parser.add_argument(
-        "--create-if-missing",
-        action="store_true",
-        help="Create dev dependencies section if it doesn't exist",
-    )
-    parser.add_argument(
-        "--use-minimum-pins",
-        action="store_true",
-        help="Use >= instead of == for version pins",
-    )
-    parser.add_argument(
         "--lockfile",
         action="store_true",
         help="Force lockfile sync even if requirements.lock doesn't exist (no-op)",
     )
     parser.add_argument(
+        "--lockfile-path",
+        type=Path,
+        default=LOCKFILE_FILE,
+        help="Path to lockfile (default: requirements.lock)",
+    )
+    parser.add_argument(
         "--pin-file",
         type=Path,
         default=PIN_FILE,
-        help="Path to the version pins file",
+        help=f"Path to pin file (default: {PIN_FILE})",
     )
     parser.add_argument(
         "--pyproject",
         type=Path,
         default=PYPROJECT_FILE,
-        help="Path to pyproject.toml",
+        help=f"Path to pyproject.toml (default: {PYPROJECT_FILE})",
     )
 
     args = parser.parse_args(argv)
 
-    if args.check and args.apply:
-        parser.error("--check and --apply are mutually exclusive")
-
     if not args.check and not args.apply:
-        args.check = True  # Default to check mode
-
-    use_exact_pins = not args.use_minimum_pins
+        parser.error("Must specify either --check or --apply")
 
     pins = parse_env_file(args.pin_file)
     if not pins:
         print("Error: No pins found in env file", file=sys.stderr)
-        return 2
+        return 1
 
-    changes, errors = sync_pyproject(
+    changes, errors = sync_versions(
         args.pyproject,
         pins,
         apply=args.apply,
-        use_exact_pins=use_exact_pins,
-        create_if_missing=args.create_if_missing,
     )
 
-    lockfile_enabled = args.lockfile or LOCKFILE_FILE.exists()
+    lockfile_path = args.lockfile_path
+    lockfile_enabled = args.lockfile or lockfile_path.exists()
     if lockfile_enabled:
-        lock_changes, lock_errors = sync_lockfile(LOCKFILE_FILE, pins, apply=args.apply)
+        lock_changes, lock_errors = sync_lockfile(lockfile_path, pins, apply=args.apply)
         changes.extend(lock_changes)
         errors.extend(lock_errors)
 
     if errors:
-        for err in errors:
-            print(f"Error: {err}", file=sys.stderr)
-        return 2
+        for error in errors:
+            print(f"Error: {error}", file=sys.stderr)
+        return 1
 
     if changes:
-        print(f"{'Applied' if args.apply else 'Found'} {len(changes)} version updates:")
+        action = "Updated" if args.apply else "Would update"
+        print(f"{action} the following dependencies:")
         for change in changes:
-            print(f"  - {change}")
-
+            print(f"  {change}")
         if args.check:
-            print("\nRun with --apply to update dependency files")
             return 1
-        else:
-            print("\n✓ Dependency files updated")
-            return 0
     else:
-        print("✓ All dev dependency versions are in sync")
-        return 0
+        print("All dev dependencies are in sync")
+
+    return 0
 
 
 if __name__ == "__main__":

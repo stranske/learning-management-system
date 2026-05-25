@@ -6,37 +6,27 @@ Run with:
     python scripts/langchain/pr_verifier.py --context-file verifier-context.md --json
 """
 
-# ruff: noqa: I001
-
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import logging
 import os
 import re
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
+
 from scripts import api_client
 from scripts.langchain.structured_output import (
     build_repair_callback,
     parse_structured_output,
 )
-from scripts.langchain.verifier_config import (
-    EVAL_PAIR_BUDGET_TOKENS,
-    EVAL_SCHEMA_REPAIR_BUDGET_TOKENS,
-    SchemaRepairPolicy,
-)
 
 LOGGER = logging.getLogger(__name__)
-SCHEMA_REPAIR_POLICY = SchemaRepairPolicy()
-TOKEN_CHARS = 4
 
 PR_EVALUATION_PROMPT = """
 You are reviewing a **merged** pull request to evaluate whether the code
@@ -171,15 +161,6 @@ Apply the following adjustments:
 - At chain depth {depth}, focus strictly on whether THIS iteration resolves
   its targeted concerns.  Avoid raising new concerns that were not part of
   the original feedback.
-- Treat the original source issue/PR scope as baseline context that may
-  already be satisfied by earlier merged work. Do NOT re-grade the full
-  original issue checklist unless this iteration explicitly reopens it.
-- If acceptance criteria require out-of-band GitHub metadata actions
-  (for example: comments/labels/body updates on already merged PRs/issues),
-  do not treat missing evidence in THIS diff as a hard completeness failure.
-  Call these out as "external evidence required" and keep verdict focused on
-  whether code/disposition artifacts in this iteration address the targeted
-  verifier concerns.
 """.strip()
 
 # File path patterns considered infrastructure/platform rather than application
@@ -239,8 +220,6 @@ class EvaluationResult(BaseModel):
     raw_content: str | None = None
     error: str | None = None
     change_type: Literal["infrastructure", "application", "mixed"] | None = None
-    langsmith_trace_id: str | None = None
-    langsmith_trace_url: str | None = None
 
 
 class EvaluationPayload(BaseModel):
@@ -333,7 +312,7 @@ class ComparisonRunner:
 
     def run_single(self, client: object, provider: str, model: str) -> EvaluationResult:
         try:
-            response, trace_id, trace_url = _invoke_llm(
+            response = _invoke_llm(
                 client,
                 self.prompt,
                 operation="evaluate_pr_compare",
@@ -347,8 +326,6 @@ class ComparisonRunner:
         content = getattr(response, "content", None) or str(response)
         result = _parse_llm_response(content, provider, client=client)
         result.model = model
-        result.langsmith_trace_id = trace_id
-        result.langsmith_trace_url = trace_url
         return result
 
 
@@ -418,11 +395,8 @@ def _get_chain_depth() -> int:
 def _prepare_prompt(context: str, diff: str | None) -> str:
     diff_block = diff.strip() if diff and diff.strip() else "(diff unavailable)"
     context_block = context.strip() if context and context.strip() else "(context unavailable)"
-    block_budget = max(1, EVAL_PAIR_BUDGET_TOKENS // 2)
-    diff_block = _cap_prompt_text(diff_block, block_budget)
-    context_block = _cap_prompt_text(context_block, block_budget)
 
-    change_type = _classify_change_type(_bounded_diff_for_classification(diff))
+    change_type = _classify_change_type(diff)
 
     if change_type == "infrastructure":
         if PROMPT_PATH.is_file():
@@ -449,38 +423,6 @@ def _prepare_prompt(context: str, diff: str | None) -> str:
     return prompt.format(context=context_block, diff=diff_block)
 
 
-def _cap_prompt_text(text: str, token_budget: int) -> str:
-    max_chars = max(1, token_budget) * TOKEN_CHARS
-    if len(text) <= max_chars:
-        return text
-    marker = "\n[truncated: verifier prompt budget exceeded]"
-    if max_chars <= len(marker):
-        return marker[:max_chars]
-    return (text[: max_chars - len(marker)].rstrip() + marker)[:max_chars]
-
-
-def _bounded_diff_for_classification(diff: str | None) -> str:
-    if not diff:
-        return ""
-    max_chars = max(1, EVAL_PAIR_BUDGET_TOKENS // 4) * TOKEN_CHARS
-    max_lines = 1000
-    scanned_chars = 0
-    scan_text = diff[:max_chars]
-    lines = []
-    for index, line in enumerate(io.StringIO(scan_text)):
-        if index >= max_lines or scanned_chars >= max_chars:
-            break
-        scanned_chars += len(line)
-        line = line.rstrip("\n\r")
-        if line.startswith(("diff --git ", "+++ ", "--- ")):
-            lines.append(line)
-        if len(lines) >= 500:
-            break
-    if lines:
-        return "\n".join(lines)
-    return diff[:max_chars]
-
-
 def _extract_pr_metadata(context: str) -> tuple[int | None, str | None]:
     if not context:
         return None, None
@@ -496,6 +438,30 @@ def _extract_pr_metadata(context: str) -> tuple[int | None, str | None]:
     return None, None
 
 
+def _resolve_run_id() -> str:
+    return os.environ.get("GITHUB_RUN_ID") or os.environ.get("RUN_ID") or "unknown"
+
+
+def _resolve_repo() -> str:
+    return os.environ.get("GITHUB_REPOSITORY") or "unknown"
+
+
+def _resolve_issue_or_pr_number(
+    *, pr_number: int | None = None, issue_number: int | None = None
+) -> str:
+    if pr_number is not None:
+        return str(pr_number)
+    env_pr = os.environ.get("PR_NUMBER")
+    if env_pr and env_pr.isdigit():
+        return env_pr
+    if issue_number is not None:
+        return str(issue_number)
+    env_issue = os.environ.get("ISSUE_NUMBER")
+    if env_issue and env_issue.isdigit():
+        return env_issue
+    return "unknown"
+
+
 def _build_llm_config(
     *,
     operation: str,
@@ -505,38 +471,16 @@ def _build_llm_config(
 ) -> dict[str, object]:
     if pr_number is None and context:
         pr_number, _ = _extract_pr_metadata(context)
-
-    try:
-        from tools.llm_provider import build_langsmith_metadata
-
-        return build_langsmith_metadata(
-            operation=operation,
-            pr_number=pr_number,
-            issue_number=issue_number,
-        )
-    except ImportError:
-        pass
-
-    # Inline fallback when tools.llm_provider is unavailable
-    repo = os.environ.get("GITHUB_REPOSITORY", "unknown")
-    run_id = os.environ.get("GITHUB_RUN_ID") or os.environ.get("RUN_ID") or "unknown"
-    if pr_number is not None:
-        issue_or_pr = str(pr_number)
-    elif issue_number is not None:
-        issue_or_pr = str(issue_number)
-    else:
-        env_pr = os.environ.get("PR_NUMBER", "")
-        env_issue = os.environ.get("ISSUE_NUMBER", "")
-        issue_or_pr = (
-            env_pr if env_pr.isdigit() else env_issue if env_issue.isdigit() else "unknown"
-        )
+    repo = _resolve_repo()
+    run_id = _resolve_run_id()
+    issue_or_pr = _resolve_issue_or_pr_number(pr_number=pr_number, issue_number=issue_number)
     metadata = {
         "repo": repo,
         "run_id": run_id,
         "issue_or_pr_number": issue_or_pr,
         "operation": operation,
         "pr_number": str(pr_number) if pr_number is not None else None,
-        "issue_number": (str(issue_number) if issue_number is not None else None),
+        "issue_number": str(issue_number) if issue_number is not None else None,
     }
     tags = [
         "workflows-agents",
@@ -556,12 +500,7 @@ def _invoke_llm(
     context: str | None = None,
     pr_number: int | None = None,
     issue_number: int | None = None,
-) -> tuple[object, str | None, str | None]:
-    """Invoke LLM and extract trace information.
-
-    Returns:
-        Tuple of (response, trace_id, trace_url)
-    """
+) -> object:
     config = _build_llm_config(
         operation=operation,
         context=context,
@@ -569,30 +508,13 @@ def _invoke_llm(
         issue_number=issue_number,
     )
     try:
-        response = client.invoke(prompt, config=config)
+        return client.invoke(prompt, config=config)
     except TypeError as exc:
         LOGGER.warning(
             "LLM invoke failed with config/metadata; using config/metadata fallback. Error: %s",
             exc,
         )
-        response = client.invoke(prompt)
-
-    # Extract trace ID from response if available
-    trace_id = None
-    trace_url = None
-    try:
-        from tools.llm_provider import derive_langsmith_trace_url, extract_trace_id
-
-        trace_id = extract_trace_id(response)
-        if trace_id:
-            trace_url = derive_langsmith_trace_url(trace_id)
-            LOGGER.info("LangSmith trace: %s", trace_url)
-    except ImportError:
-        LOGGER.debug("tools.llm_provider not available for trace extraction")
-    except Exception as exc:
-        LOGGER.debug("Failed to extract trace ID: %s", exc)
-
-    return response, trace_id, trace_url
+        return client.invoke(prompt)
 
 
 def _format_scores(scores: EvaluationScores | None) -> list[str]:
@@ -707,25 +629,17 @@ def _fallback_evaluation(
 def _parse_llm_response(
     content: str, provider: str, *, client: object | None = None
 ) -> EvaluationResult:
-    repair = _build_verifier_repair_callback(client) if client is not None else None
     parsed = parse_structured_output(
         content,
         EvaluationPayload,
-        repair=repair,
-        max_repair_attempts=SCHEMA_REPAIR_POLICY.max_attempts,
+        repair=(build_repair_callback(client) if client is not None else None),
+        max_repair_attempts=1,
     )
     if parsed.payload is None:
-        decision = SCHEMA_REPAIR_POLICY.terminal_decision(
-            repair_attempts_used=parsed.repair_attempts_used,
-            error_stage=parsed.error_stage,
-            has_payload=False,
-        )
         if parsed.error_stage == "repair_validation":
             error = f"Failed to parse JSON response after repair: {parsed.error_detail}"
         else:
             error = f"Failed to parse JSON response: {parsed.error_detail}"
-        if decision == "escalate":
-            error = f"Schema repair policy escalated verifier output: {error}"
         return EvaluationResult(
             verdict="CONCERNS",
             scores=None,
@@ -748,19 +662,6 @@ def _parse_llm_response(
         used_llm=True,
         raw_content=parsed.raw_content or content,
     )
-
-
-def _build_verifier_repair_callback(client: object) -> Callable[[str, str, str], str | None]:
-    repair = build_repair_callback(client)
-
-    def _repair(schema_json: str, validation_errors: str, raw_response: str) -> str | None:
-        return repair(
-            schema_json,
-            validation_errors,
-            _cap_prompt_text(raw_response, EVAL_SCHEMA_REPAIR_BUDGET_TOKENS),
-        )
-
-    return _repair
 
 
 def _is_auth_error(exc: Exception) -> bool:
@@ -796,11 +697,10 @@ def evaluate_pr(
 
     client, provider_name = resolved
     prompt = _prepare_prompt(context, diff)
-    change_type = _classify_change_type(_bounded_diff_for_classification(diff))
+    change_type = _classify_change_type(diff)
     pr_number, _ = _extract_pr_metadata(context)
-    trace_id, trace_url = None, None
     try:
-        response, trace_id, trace_url = _invoke_llm(
+        response = _invoke_llm(
             client,
             prompt,
             operation="evaluate_pr",
@@ -815,7 +715,7 @@ def evaluate_pr(
             if fallback_resolved is not None:
                 fallback_client, fallback_provider_name = fallback_resolved
                 try:
-                    response, trace_id, trace_url = _invoke_llm(
+                    response = _invoke_llm(
                         fallback_client,
                         prompt,
                         operation="evaluate_pr_fallback",
@@ -839,13 +739,9 @@ def evaluate_pr(
                             error=f"Primary provider ({provider_name}) failed, used fallback",
                             raw_content=result.raw_content,
                             change_type=change_type,
-                            langsmith_trace_id=trace_id,
-                            langsmith_trace_url=trace_url,
                         )
                     else:
                         result.change_type = change_type
-                        result.langsmith_trace_id = trace_id
-                        result.langsmith_trace_url = trace_url
                     return result
                 except Exception as fallback_exc:
                     result = _fallback_evaluation(
@@ -861,15 +757,13 @@ def evaluate_pr(
     content = getattr(response, "content", None) or str(response)
     result = _parse_llm_response(content, provider_name, client=client)
     result.change_type = change_type
-    result.langsmith_trace_id = trace_id
-    result.langsmith_trace_url = trace_url
     return result
 
 
 def evaluate_pr_multiple(
     context: str, diff: str | None = None, model1: str | None = None, model2: str | None = None
 ) -> list[EvaluationResult]:
-    change_type = _classify_change_type(_bounded_diff_for_classification(diff))
+    change_type = _classify_change_type(diff)
     runner = ComparisonRunner.from_environment(context, diff, model1, model2)
     if not runner.clients:
         result = _fallback_evaluation("LLM client unavailable (missing credentials or dependency).")
@@ -1064,18 +958,6 @@ def format_comparison_report(results: list[EvaluationResult]) -> str:
         lines.append(f"- {labels[index]}: {'; '.join(insights)}")
     lines.append("")
 
-    # Add LangSmith trace links if available
-    trace_urls = [
-        (labels[i], result.langsmith_trace_url)
-        for i, result in enumerate(results)
-        if result.langsmith_trace_url
-    ]
-    if trace_urls:
-        lines.append("### 🔍 LangSmith Traces")
-        for label, url in trace_urls:
-            lines.append(f"- [{label}]({url})")
-        lines.append("")
-
     return "\n".join(lines).strip() + "\n"
 
 
@@ -1143,9 +1025,7 @@ def main() -> None:
         return
 
     result = evaluate_pr(context, diff=diff, model=args.model, provider=args.provider)
-    issue_labels = args.issue_label or [
-        "agent:codex"
-    ]  # callers should pass --issue-label to match PR agent
+    issue_labels = args.issue_label or ["agent:codex"]
     run_url = None
     if (
         os.environ.get("GITHUB_RUN_ID")

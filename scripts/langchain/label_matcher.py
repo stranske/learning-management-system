@@ -5,17 +5,13 @@ Semantic label matching helpers for issue intake.
 
 from __future__ import annotations
 
-import logging
 import os
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-try:
-    from scripts.langchain import semantic_matcher
-except ModuleNotFoundError:
-    import semantic_matcher
+from scripts.langchain import semantic_matcher
 
 
 @dataclass(frozen=True)
@@ -30,7 +26,6 @@ class LabelVectorStore:
     provider: str
     model: str
     labels: list[LabelRecord]
-    is_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -144,14 +139,8 @@ _BUG_KEYWORDS = {
     "crash",
     "crashes",
     "crashed",
-    "panic",
-    "panics",
     "error",
     "errors",
-    "exception",
-    "exceptions",
-    "traceback",
-    "stacktrace",
     "failure",
     "failures",
     "broken",
@@ -187,8 +176,6 @@ _DOCS_KEYWORDS = {
     "tutorial",
     "tutorials",
 }
-
-logger = logging.getLogger(__name__)
 
 
 def _normalize_label(name: str) -> str:
@@ -273,7 +260,6 @@ def build_label_vector_store(
 
     resolved = client_info or semantic_matcher.get_embedding_client(model=model)
     if resolved is None:
-        logger.info("No embedding provider available for label matching.")
         return None
 
     try:
@@ -284,17 +270,10 @@ def build_label_vector_store(
     texts = [_label_text(label) for label in label_records]
     metadatas = [{"name": label.name, "description": label.description} for label in label_records]
     store = FAISS.from_texts(texts, resolved.client, metadatas=metadatas)
-    logger.info(
-        "Label matcher embedding provider=%s model=%s is_fallback=%s",
-        resolved.provider,
-        resolved.model,
-        resolved.is_fallback,
-    )
     return LabelVectorStore(
         store=store,
         provider=resolved.provider,
         model=resolved.model,
-        is_fallback=resolved.is_fallback,
         labels=label_records,
     )
 
@@ -473,11 +452,7 @@ def find_similar_labels(
                 matches.append(match)
                 seen.add(normalized)
 
-    def sort_key(match: LabelMatch) -> tuple[int, float]:
-        priority = 1 if match.score_type == "keyword" else 0
-        return (priority, match.score)
-
-    matches.sort(key=sort_key, reverse=True)
+    matches.sort(key=lambda match: match.score, reverse=True)
     return matches
 
 
