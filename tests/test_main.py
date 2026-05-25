@@ -1,5 +1,7 @@
 """Tests for my_project module."""
 
+import pytest
+
 from my_project import __version__, add, greet
 
 
@@ -31,3 +33,16 @@ def test_add_negative() -> None:
     """Add should handle negative numbers."""
     assert add(-5, -3) == -8
     assert add(-10, 5) == -5
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (2, 7),
+        (-4, 9),
+        (0, -3),
+    ],
+)
+def test_add_commutative(left: int, right: int) -> None:
+    """Add should be commutative across representative integer inputs."""
+    assert add(left, right) == add(right, left)
