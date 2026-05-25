@@ -34,7 +34,7 @@ class AttemptCreate(BaseModel):
     llm_session_id: str | None = Field(default=None, max_length=36)
 
     @model_validator(mode="after")
-    def reference_support_matches_access(self) -> "AttemptCreate":
+    def reference_support_matches_access(self) -> AttemptCreate:
         """Keep reference-use fields coherent for downstream evidence adapters."""
         if self.support_level == "reference" and not self.reference_accessed:
             self.reference_accessed = True
