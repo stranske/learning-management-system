@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from lms.api.health import router as health_router
+from lms.auth.api import router as auth_router
+from lms.learners.api import router as learners_router
 
 
 def create_app() -> FastAPI:
@@ -20,7 +22,9 @@ def create_app() -> FastAPI:
         description="API-first backend for evidence-informed personal learning.",
         version="0.1.0",
     )
+    app.include_router(auth_router)
     app.include_router(health_router)
+    app.include_router(learners_router)
     return app
 
 

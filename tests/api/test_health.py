@@ -25,4 +25,6 @@ def test_openapi_available() -> None:
     assert response.status_code == 200
     schema = response.json()
     assert schema["info"]["title"] == "Learning Management System"
+    assert "/auth/users" in schema["paths"]
     assert "/health" in schema["paths"]
+    assert "/learners" in schema["paths"]
