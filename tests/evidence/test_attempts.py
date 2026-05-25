@@ -6,8 +6,9 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from lms.evidence.api import create_attempt_route
 from lms.evidence.repository import create_attempt, get_attempt
-from lms.evidence.schemas import AttemptCreate
+from lms.evidence.schemas import AttemptCreate, AttemptRead
 
 
 def _attempt_payload() -> dict[str, object]:
@@ -78,3 +79,20 @@ def test_get_attempt_returns_recorded_feedback(db_session: Session) -> None:
 
     assert loaded is not None
     assert loaded.feedback["next_action"] == "Practice two one-step equations."
+
+
+def test_post_attempt_route_returns_stable_linked_attempt_id(db_session: Session) -> None:
+    """POST route handler returns id linked to learner and prompt ids."""
+    payload = AttemptCreate.model_validate(_attempt_payload())
+
+    created = create_attempt_route(payload, db_session)
+
+    assert isinstance(created, AttemptRead)
+    assert created.id
+    assert created.learner_id == payload.learner_id
+    assert created.prompt_id == payload.prompt_id
+
+    loaded = get_attempt(db_session, created.id)
+    assert loaded is not None
+    assert loaded.learner_id == payload.learner_id
+    assert loaded.prompt_id == payload.prompt_id
