@@ -36,7 +36,11 @@ Required local/private configuration:
 | `LLM_DAILY_BUDGET_USD` | Budget kill-switch threshold | Non-secret value allowed | `LLM_DAILY_BUDGET_USD` |
 | `LLM_MODEL_STUDY_COACH` | Study-coach model route | Non-secret value allowed | `LLM_MODEL_STUDY_COACH` |
 | `LLM_MODEL_PRACTICE` | Practice model route | Non-secret value allowed | `LLM_MODEL_PRACTICE` |
-| `LMS_SESSION_SECRET` | Local auth/session signing | Local `.env` only | `LMS_SESSION_SECRET` |
+| `LANGSMITH_TRACING` | LangSmith trace export toggle | Non-secret value allowed; keep `false` locally until trace classification is configured | `LANGSMITH_TRACING` |
+| `LANGSMITH_PROJECT` | LangSmith project name | Non-secret value allowed | `LANGSMITH_PROJECT` |
+| `LANGSMITH_ENDPOINT` | LangSmith API endpoint | Non-secret value allowed | `LANGSMITH_ENDPOINT` |
+| `LMS_AUTH_MODE` | Local prototype auth posture (`local` for v1, SSO-ready later) | Non-secret value allowed | `LMS_AUTH_MODE` |
+| `LMS_SESSION_SECRET` | Local auth/session signing | Local `.env` only; leave blank in `.env.example` so missing config is loud | `LMS_SESSION_SECRET` |
 
 GitHub Actions should read secrets from repository or environment secrets. They should not echo provider keys, database URLs, session secrets, or trace payloads into logs.
 
