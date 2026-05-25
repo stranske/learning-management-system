@@ -14,11 +14,14 @@ LOCAL_DEV_USERNAME = "local-dev"
 def create_local_user(
     session: Session,
     *,
-    username: str,
+    username: str | None,
     display_name: str,
     email: str | None = None,
 ) -> User:
     """Create a local-development user."""
+    if not username and not email:
+        msg = "Either username or email is required."
+        raise ValueError(msg)
     user = User(username=username, display_name=display_name, email=email, is_local=True)
     session.add(user)
     session.flush()

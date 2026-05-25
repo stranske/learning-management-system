@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, String, func, true
+from sqlalchemy import Boolean, CheckConstraint, DateTime, String, func, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lms.db.base import Base
@@ -29,10 +29,16 @@ class User(Base):
     """Local-development user identity with SSO-ready stable identifiers."""
 
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "(email IS NOT NULL) OR (username IS NOT NULL)",
+            name="ck_users_email_or_username",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     email: Mapped[str | None] = mapped_column(String(320), unique=True, index=True)
-    username: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    username: Mapped[str | None] = mapped_column(String(120), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(200))
     is_local: Mapped[bool] = mapped_column(
         Boolean,

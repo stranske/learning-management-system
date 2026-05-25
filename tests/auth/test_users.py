@@ -41,6 +41,33 @@ def test_development_auth_dependency_returns_local_user(db_session: Session) -> 
     assert user.is_local is True
 
 
+def test_create_local_user_allows_email_without_username(db_session: Session) -> None:
+    """User creation supports email-only identity for future SSO migration paths."""
+    user = create_local_user(
+        db_session,
+        username=None,
+        display_name="Email Only",
+        email="email-only@example.test",
+    )
+    db_session.commit()
+
+    assert user.id
+    assert user.username is None
+    assert user.email == "email-only@example.test"
+    assert user.is_local is True
+
+
+def test_create_local_user_requires_email_or_username(db_session: Session) -> None:
+    """User creation rejects records without either login identifier."""
+    with pytest.raises(ValueError, match="Either username or email is required."):
+        create_local_user(
+            db_session,
+            username=None,
+            display_name="Invalid User",
+            email=None,
+        )
+
+
 def test_local_dev_user_race_requeries_existing_user(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
