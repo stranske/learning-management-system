@@ -56,8 +56,56 @@ def test_direct_explanation_allowed_for_orientation() -> None:
     assert decision.next_action.startswith("Give a concise explanation")
 
 
+def test_hint_overuse_fades_support() -> None:
+    decision = decide_interaction_policy(
+        InteractionContext(
+            mode="study-coach",
+            learner_id="learner-1",
+            prompt_id="prompt-1",
+            user_message="Can I have another hint?",
+            hint_count=2,
+        )
+    )
+
+    assert decision.response_style == "hint-fade"
+    assert decision.direct_answer_allowed is False
+    assert decision.learning_risk == "support-dependence"
+
+
+def test_high_confidence_wrong_attempt_triggers_calibration_nudge() -> None:
+    decision = decide_interaction_policy(
+        InteractionContext(
+            mode="practice",
+            learner_id="learner-1",
+            prompt_id="prompt-1",
+            user_message="I'm pretty sure this is right.",
+            confidence_rating=5,
+            recent_attempt_correct=False,
+        )
+    )
+
+    assert decision.response_style == "calibration-nudge"
+    assert decision.direct_answer_allowed is False
+    assert decision.learning_risk == "miscalibrated-confidence"
+
+
+def test_assessment_restriction_disables_hints_and_direct_answers() -> None:
+    decision = decide_interaction_policy(
+        InteractionContext(
+            mode="practice",
+            learner_id="learner-1",
+            prompt_id="prompt-1",
+            user_message="Please explain the approach.",
+            assessment_restricted=True,
+        )
+    )
+
+    assert decision.direct_answer_allowed is False
+    assert decision.disabled_supports == ("hints", "direct-feedback")
+
+
 @contextmanager
-def _client() -> Generator[tuple[TestClient, Session], None, None]:
+def _client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -76,19 +124,18 @@ def _client() -> Generator[tuple[TestClient, Session], None, None]:
 
     app = create_app()
     app.dependency_overrides[get_session] = override_get_session
-    assertion_session = session_factory()
+    client = TestClient(app)
     try:
-        with TestClient(app) as client:
-            yield client, assertion_session
+        yield client, session_factory
     finally:
-        assertion_session.close()
+        client.close()
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
         engine.dispose()
 
 
 def test_post_llm_sessions_runs_fake_provider_study_coach_turn() -> None:
-    with _client() as (client, session):
+    with _client() as (client, session_factory):
         response = client.post(
             "/llm/sessions",
             json={
@@ -103,7 +150,8 @@ def test_post_llm_sessions_runs_fake_provider_study_coach_turn() -> None:
         assert response.status_code == 200
         body = response.json()
         assert body["policy_decision"]["response_style"] == "retrieval-nudge"
-        stored = session.get(LLMSession, body["session_id"])
+        with session_factory() as session:
+            stored = session.get(LLMSession, body["session_id"])
         assert stored is not None
         assert stored.mode == "study-coach"
 
