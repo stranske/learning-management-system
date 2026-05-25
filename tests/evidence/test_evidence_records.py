@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, cast
 
+import pytest
 from sqlalchemy.orm import Session
 
 from lms.evidence.api import list_evidence_records_route
 from lms.evidence.repository import create_attempt, create_evidence_record, list_evidence_records
-from lms.evidence.schemas import AttemptCreate, EvidenceRecordRead
+from lms.evidence.schemas import AttemptCreate, AttemptEvidenceCreate, EvidenceRecordRead
 
 
 def _attempt_payload() -> dict[str, object]:
@@ -124,3 +125,56 @@ def test_observed_and_inferred_evidence_are_distinct(db_session: Session) -> Non
 
     assert {record.id for record in records} == {observed.id, inferred.id}
     assert {record.evidence_kind for record in records} == {"observed", "inferred"}
+
+
+def test_binary_and_partial_credit_records_roundtrip(db_session: Session) -> None:
+    """Binary and partial-credit evidence rows can coexist and roundtrip."""
+    binary = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        evidence_kind="observed",
+        correctness=True,
+        raw_score=1.0,
+        normalized_score=1.0,
+        max_score=1.0,
+        scorer_metadata={"scoring_method": "binary"},
+    )
+    partial_credit = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        evidence_kind="observed",
+        correctness=False,
+        raw_score=3.0,
+        normalized_score=0.75,
+        max_score=4.0,
+        partial_credit_dimensions={"setup": 1.0, "calculation": 0.5, "units": 0.5},
+        scorer_metadata={"scoring_method": "partial-credit"},
+    )
+    db_session.commit()
+
+    records = list_evidence_records(db_session, learner_id="learner-1", knowledge_node_id="node-1")
+    by_id = {record.id: record for record in records}
+
+    assert by_id[binary.id].partial_credit_dimensions is None
+    assert by_id[binary.id].normalized_score == 1.0
+    partial = cast(dict[str, Any], by_id[partial_credit.id].partial_credit_dimensions)
+    assert partial["calculation"] == 0.5
+    assert by_id[partial_credit.id].normalized_score == 0.75
+
+
+def test_attempt_evidence_validation_rejects_invalid_scores() -> None:
+    """Schema validation rejects invalid binary/partial-credit score shapes."""
+    with pytest.raises(ValueError):
+        AttemptEvidenceCreate(
+            knowledge_node_id="node-1",
+            normalized_score=1.25,
+        )
+
+    with pytest.raises(ValueError):
+        AttemptEvidenceCreate(
+            knowledge_node_id="node-1",
+            raw_score=-0.5,
+            partial_credit_dimensions={"criterion_a": 0.5},
+        )
