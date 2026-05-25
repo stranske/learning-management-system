@@ -83,7 +83,8 @@ def _is_good_unsupported_correct(record: EvidenceRecord) -> bool:
     return (
         record.correctness is True
         and not _has_support(record)
-        and (record.confidence_rating is None or record.confidence_rating >= MEDIUM_CONFIDENCE_MIN)
+        and record.confidence_rating is not None
+        and record.confidence_rating >= MEDIUM_CONFIDENCE_MIN
     )
 
 

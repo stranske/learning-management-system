@@ -182,6 +182,22 @@ def test_medium_confidence_unsupported_correct_maps_to_good(db_session: Session)
     assert rating.rule_id == "unsupported-correct"
 
 
+def test_unsupported_correct_without_confidence_does_not_map_to_good(db_session: Session) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=True,
+        support_level="none",
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.label == "again"
+    assert rating.value == 1
+    assert rating.rule_id == "insufficient-signal"
+
+
 def test_fast_high_confidence_first_attempt_maps_to_easy(db_session: Session) -> None:
     record = create_evidence_record(
         db_session,
