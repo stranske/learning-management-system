@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -21,14 +21,12 @@ def _load_module() -> ModuleType:
     return module
 
 
-def test_verify_variable_passes_when_name_and_value_match(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_verify_variable_passes_when_name_and_value_match(monkeypatch: pytest.MonkeyPatch) -> None:
     mod = _load_module()
 
-    def _fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def _fake_run(*_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
-            args=[],
+            args=cast(list[str], []),
             returncode=0,
             stdout='[{"name":"USE_CONSOLIDATED_WORKFLOWS","value":"true"}]',
             stderr="",
@@ -41,9 +39,9 @@ def test_verify_variable_passes_when_name_and_value_match(
 def test_verify_variable_fails_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     mod = _load_module()
 
-    def _fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def _fake_run(*_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
-            args=[],
+            args=cast(list[str], []),
             returncode=0,
             stdout='[{"name":"OTHER","value":"true"}]',
             stderr="",
@@ -60,7 +58,7 @@ def test_verify_variable_fails_when_value_differs(monkeypatch: pytest.MonkeyPatc
 
     def _fake_run(*_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
-            args=[],
+            args=cast(list[str], []),
             returncode=0,
             stdout='[{"name":"USE_CONSOLIDATED_WORKFLOWS","value":"false"}]',
             stderr="",

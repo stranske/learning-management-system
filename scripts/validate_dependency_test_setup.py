@@ -155,7 +155,7 @@ def check_test_expectations() -> tuple[bool, list[str]]:
     return len(issues) == 0, issues
 
 
-def main():
+def main() -> int:
     print("=" * 60)
     print("Dependency Test Setup Validation")
     print("=" * 60)

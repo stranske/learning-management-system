@@ -118,6 +118,21 @@ def get_knowledge_node_for_prompt_creation(
     return node
 
 
+def require_published_prompt_target(
+    session: Session,
+    *,
+    node_id: str,
+    scope: str,
+) -> KnowledgeNode:
+    """Return a node only when it is safe for prompt targeting."""
+    node = get_knowledge_node(session, node_id, scope=scope)
+    if node is None:
+        raise ValueError("prompt target knowledge node was not found in this scope")
+    if node.status != "published":
+        raise ValueError("prompts can only target published knowledge nodes")
+    return node
+
+
 def list_knowledge_nodes(
     session: Session,
     *,

@@ -251,11 +251,13 @@ def test_list_edges_with_filters(api_client: tuple[TestClient, Session]) -> None
     client, _session = api_client
     parent = _post_node(client, title="Parent", scope="personal")
     child = _post_node(client, title="Child", scope="personal")
+    parent_id = cast(str, parent["id"])
+    child_id = cast(str, child["id"])
     response = client.post(
         "/knowledge/edges",
         json={
-            "source_node_id": parent["id"],
-            "target_node_id": child["id"],
+            "source_node_id": parent_id,
+            "target_node_id": child_id,
             "edge_type": "analogy",
             "ownership_scope": "personal",
             "actor_id": "user:alice",
@@ -273,14 +275,14 @@ def test_list_edges_with_filters(api_client: tuple[TestClient, Session]) -> None
 
     by_source = client.get(
         "/knowledge/edges",
-        params={"scope": "personal", "source_node_id": parent["id"]},
+        params={"scope": "personal", "source_node_id": parent_id},
     )
     assert by_source.status_code == 200
     assert any(e["id"] == edge_id for e in by_source.json())
 
     by_target = client.get(
         "/knowledge/edges",
-        params={"scope": "personal", "target_node_id": child["id"]},
+        params={"scope": "personal", "target_node_id": child_id},
     )
     assert by_target.status_code == 200
     assert any(e["id"] == edge_id for e in by_target.json())

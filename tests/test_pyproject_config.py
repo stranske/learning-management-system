@@ -62,6 +62,19 @@ def test_mypy_strict_enabled() -> None:
     assert mypy.get("strict") is True, "mypy strict must be true"
 
 
+def test_mypy_has_explicit_package_bases() -> None:
+    mypy = _load()["tool"]["mypy"]
+    assert mypy.get("explicit_package_bases") is True, "mypy explicit_package_bases must be true"
+
+
+def test_mypy_files_scope_includes_repo_targets() -> None:
+    mypy = _load()["tool"]["mypy"]
+    files = mypy.get("files", [])
+    assert "src" in files, "mypy files must include 'src'"
+    assert "tests" in files, "mypy files must include 'tests'"
+    assert "scripts" in files, "mypy files must include 'scripts'"
+
+
 def test_pytest_section_present() -> None:
     data = _load()
     assert "pytest" in data.get("tool", {}), "Missing [tool.pytest]"

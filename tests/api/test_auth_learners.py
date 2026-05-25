@@ -60,6 +60,97 @@ def test_create_user_and_learner_endpoints() -> None:
         learner_payload = learner_response.json()
         assert learner_payload["user_id"] == user_payload["id"]
         assert learner_payload["display_name"] == "Maria"
+
+        node_response = client.post(
+            "/knowledge/nodes",
+            json={
+                "title": "Concept mapping",
+                "knowledge_type": "conceptual",
+                "ownership_scope": "personal",
+                "status": "published",
+                "actor_id": user_payload["id"],
+            },
+        )
+        assert node_response.status_code == 201
+        node_payload = node_response.json()
+
+        goal_response = client.post(
+            f"/learners/{learner_payload['id']}/learning-goals",
+            json={
+                "title": "Use concept mapping",
+                "knowledge_type": "conceptual",
+                "target_node_ids": [node_payload["id"]],
+                "ownership_scope": "personal",
+            },
+        )
+        assert goal_response.status_code == 201
+        goal_payload = goal_response.json()
+        assert goal_payload["target_nodes"][0]["id"] == node_payload["id"]
+
+        list_response = client.get(f"/learners/{learner_payload['id']}/learning-goals")
+        assert list_response.status_code == 200
+        assert [goal["title"] for goal in list_response.json()] == ["Use concept mapping"]
+
+        missing_learner_response = client.post(
+            "/learners/missing-learning-profile/learning-goals",
+            json={
+                "title": "Should not become validation",
+                "knowledge_type": "conceptual",
+                "target_node_ids": [node_payload["id"]],
+                "ownership_scope": "personal",
+            },
+        )
+        assert missing_learner_response.status_code == 404
+
+        second_node_response = client.post(
+            "/knowledge/nodes",
+            json={
+                "title": "Retrieval planning",
+                "knowledge_type": "procedural",
+                "ownership_scope": "personal",
+                "status": "published",
+                "actor_id": user_payload["id"],
+            },
+        )
+        assert second_node_response.status_code == 201
+        second_node_payload = second_node_response.json()
+
+        patch_response = client.patch(
+            f"/learners/{learner_payload['id']}/learning-goals/{goal_payload['id']}",
+            json={
+                "title": "Use retrieval planning",
+                "knowledge_type": "procedural",
+                "target_node_ids": [second_node_payload["id"]],
+                "status": "paused",
+            },
+        )
+        assert patch_response.status_code == 200
+        patched_payload = patch_response.json()
+        assert patched_payload["title"] == "Use retrieval planning"
+        assert patched_payload["knowledge_type"] == "procedural"
+        assert patched_payload["status"] == "paused"
+        assert [node["id"] for node in patched_payload["target_nodes"]] == [
+            second_node_payload["id"]
+        ]
+        assert patched_payload["updated_at"] != goal_payload["updated_at"]
+
+        draft_node_response = client.post(
+            "/knowledge/nodes",
+            json={
+                "title": "Draft target",
+                "knowledge_type": "procedural",
+                "ownership_scope": "personal",
+                "status": "draft",
+                "actor_id": user_payload["id"],
+            },
+        )
+        assert draft_node_response.status_code == 201
+
+        draft_patch_response = client.patch(
+            f"/learners/{learner_payload['id']}/learning-goals/{goal_payload['id']}",
+            json={"target_node_ids": [draft_node_response.json()["id"]]},
+        )
+        assert draft_patch_response.status_code == 422
     finally:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
