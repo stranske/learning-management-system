@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, DateTime, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lms.auth.models import new_uuid, utc_now
 from lms.db.base import Base
+
+if TYPE_CHECKING:
+    from lms.prompts.models import Prompt
 
 SOURCE_TYPES: tuple[str, ...] = (
     "markdown-file",
@@ -67,4 +71,9 @@ class SourceReference(Base):
         server_default=func.now(),
         nullable=False,
         index=True,
+    )
+    prompts: Mapped[list[Prompt]] = relationship(
+        "Prompt",
+        secondary="prompt_source_references",
+        back_populates="source_references",
     )

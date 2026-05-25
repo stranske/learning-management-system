@@ -119,6 +119,11 @@ def upgrade() -> None:
             name=op.f("pk_prompt_source_references"),
         ),
     )
+    op.create_index(
+        op.f("ix_prompt_source_references_source_reference_id"),
+        "prompt_source_references",
+        ["source_reference_id"],
+    )
 
     op.create_table(
         "prompt_versions",
@@ -144,6 +149,11 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_prompt_versions")),
+        sa.UniqueConstraint(
+            "prompt_id",
+            "version_number",
+            name=op.f("uq_prompt_versions_prompt_id"),
+        ),
     )
     op.create_index(op.f("ix_prompt_versions_prompt_id"), "prompt_versions", ["prompt_id"])
 
@@ -152,6 +162,10 @@ def downgrade() -> None:
     """Drop prompt provenance tables."""
     op.drop_index(op.f("ix_prompt_versions_prompt_id"), table_name="prompt_versions")
     op.drop_table("prompt_versions")
+    op.drop_index(
+        op.f("ix_prompt_source_references_source_reference_id"),
+        table_name="prompt_source_references",
+    )
     op.drop_table("prompt_source_references")
     op.drop_index(op.f("ix_prompts_authoring_method"), table_name="prompts")
     op.drop_index(op.f("ix_prompts_status"), table_name="prompts")

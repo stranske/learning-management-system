@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -146,6 +147,7 @@ class Prompt(Base):
         "SourceReference",
         secondary=prompt_source_references,
         order_by="SourceReference.id",
+        back_populates="prompts",
     )
     versions: Mapped[list[PromptVersion]] = relationship(
         "PromptVersion",
@@ -159,7 +161,10 @@ class PromptVersion(Base):
     """Immutable prompt wording revision."""
 
     __tablename__ = "prompt_versions"
-    __table_args__ = (CheckConstraint("version_number >= 1", name="version_number_positive"),)
+    __table_args__ = (
+        CheckConstraint("version_number >= 1", name="version_number_positive"),
+        UniqueConstraint("prompt_id", "version_number", name="prompt_version_number_unique"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     prompt_id: Mapped[str] = mapped_column(
