@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from lms.auth.models import utc_now
@@ -22,7 +22,6 @@ from lms.scheduling.repository import create_review_queue_item
 
 SUCCESS_INTERVALS_DAYS: tuple[int, ...] = (1, 3, 7, 14, 28)
 LOW_CONFIDENCE_INTERVAL_DAYS = 1
-REMEDIATION_DELAY_MINUTES_LOW_CONFIDENCE = 60
 SUCCESS_SCORE_THRESHOLD = 0.85
 FAILURE_SCORE_THRESHOLD = 0.5
 LOW_CONFIDENCE_RATING_CEILING = 2
@@ -43,13 +42,17 @@ def _count_prior_successful_reviews(
     session: Session, *, learner_id: str, knowledge_node_id: str
 ) -> int:
     """Count past completed due-review/new-learning items for this learner+node."""
-    statement = select(ReviewQueueItem).where(
-        ReviewQueueItem.learner_id == learner_id,
-        ReviewQueueItem.knowledge_node_id == knowledge_node_id,
-        ReviewQueueItem.status == "completed",
-        ReviewQueueItem.reason_code.in_(("due-review", "new-learning")),
+    statement = (
+        select(func.count())
+        .select_from(ReviewQueueItem)
+        .where(
+            ReviewQueueItem.learner_id == learner_id,
+            ReviewQueueItem.knowledge_node_id == knowledge_node_id,
+            ReviewQueueItem.status == "completed",
+            ReviewQueueItem.reason_code.in_(("due-review", "new-learning")),
+        )
     )
-    return len(list(session.scalars(statement)))
+    return int(session.scalar(statement) or 0)
 
 
 def _success_interval_days(prior_successes: int) -> int:
@@ -177,7 +180,7 @@ def schedule_from_attempt(
     Returns a single new queue item. The decision log captures the inputs and
     the rule that fired so the Inspect surface can render the explanation.
     """
-    if evidence_record is not None and evidence_record.attempt_id not in (None, attempt.id):
+    if evidence_record is not None and evidence_record.attempt_id != attempt.id:
         raise ValueError("evidence_record does not belong to attempt")
     if evidence_record is None:
         raise ValueError("schedule_from_attempt requires an evidence_record for v1")

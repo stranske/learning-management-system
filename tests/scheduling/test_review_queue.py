@@ -550,3 +550,21 @@ def test_list_review_queue_returns_all_statuses_when_status_is_none(
     assert {i.id for i in all_items} == {item_a.id, item_b.id}
     assert len(pending_only) == 1
     assert pending_only[0].id == item_b.id
+
+
+def test_schedule_from_attempt_rejects_unlinked_evidence(db_session: Session) -> None:
+    """schedule_from_attempt requires evidence to be linked to the attempt."""
+    attempt, _ = _make_attempt(db_session, learner_id="learner-linked", prompt_id="prompt-linked")
+    evidence = create_evidence_record(
+        db_session,
+        learner_id=attempt.learner_id,
+        knowledge_node_id="node-unlinked",
+        attempt_id=None,
+        correctness=True,
+        normalized_score=0.95,
+        confidence_rating=5,
+        support_level="none",
+    )
+
+    with pytest.raises(ValueError, match="does not belong to attempt"):
+        schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
