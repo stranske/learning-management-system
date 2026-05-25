@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy.orm import Session
-
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from lms.evidence.models import Attempt, EvidenceRecord
 

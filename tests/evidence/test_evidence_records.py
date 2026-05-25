@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -57,7 +58,7 @@ def api_client() -> Generator[tuple[TestClient, Session], None, None]:
         engine.dispose()
 
 
-def _scoring_payload() -> dict[str, object]:
+def _scoring_payload() -> dict[str, Any]:
     return {
         "knowledge_node_id": "node-1",
         "demand_level": "understand",

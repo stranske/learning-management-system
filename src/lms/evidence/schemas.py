@@ -35,7 +35,7 @@ class AttemptCreate(BaseModel):
     elapsed_seconds: int | None = Field(default=None, ge=0)
     feedback: StructuredFeedback
     llm_session_id: str | None = Field(default=None, max_length=36)
-    scoring: "EvidenceRecordCreate | None" = None
+    scoring: EvidenceRecordCreate | None = None
 
     @model_validator(mode="after")
     def reference_support_matches_access(self) -> AttemptCreate:
@@ -100,7 +100,7 @@ class EvidenceRecordCreate(BaseModel):
     answer_artifact_ref: str | None = Field(default=None, max_length=1024)
 
     @model_validator(mode="after")
-    def raw_score_does_not_exceed_max(self) -> "EvidenceRecordCreate":
+    def raw_score_does_not_exceed_max(self) -> EvidenceRecordCreate:
         """Validate partial-credit score bounds."""
         if (
             self.raw_score is not None
