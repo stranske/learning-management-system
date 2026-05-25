@@ -48,9 +48,7 @@ x
         mod.validate_issue_body(body)
 
 
-def test_run_dry_run_prints_command(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_run_dry_run_prints_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     mod = _load_module()
 
     body_file = tmp_path / "body.md"
