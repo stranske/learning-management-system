@@ -58,11 +58,11 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --cov=my_project --cov-report=term-missing --cov-report=xml"
+addopts = "-v --cov=lms --cov=my_project --cov-report=term-missing --cov-report=xml"
 pythonpath = ["src"]
 
 [tool.coverage.run]
-source = ["my_project"]
+source = ["lms", "my_project"]
 branch = true
 
 [tool.coverage.report]

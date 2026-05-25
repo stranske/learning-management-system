@@ -85,6 +85,12 @@ def test_pytest_testpaths_declared() -> None:
     assert "tests" in opts.get("testpaths", []), "pytest testpaths must include 'tests'"
 
 
+def test_pytest_addopts_covers_lms_package() -> None:
+    opts = _load()["tool"]["pytest"]["ini_options"]
+    addopts = opts.get("addopts", "")
+    assert "--cov=lms" in addopts, "pytest addopts must collect coverage for lms package"
+
+
 def test_coverage_fail_under_at_least_80() -> None:
     report = _load()["tool"]["coverage"]["report"]
     fail_under = report.get("fail_under", 0)
