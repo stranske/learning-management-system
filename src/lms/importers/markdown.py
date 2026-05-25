@@ -209,7 +209,10 @@ def _extract_h1_h2_headings(*, text: str, lines: list[str]) -> list[tuple[int, i
         if token.get("type") != "heading":
             continue
         attrs = token.get("attrs", {})
-        level = int(attrs.get("level", 0))
+        raw_level = attrs.get("level") if isinstance(attrs, dict) else None
+        if raw_level is None:
+            raw_level = token.get("level")
+        level = int(raw_level or 0)
         if level > 2 or level < 1:
             continue
         title = _extract_heading_text(token).strip()
@@ -238,6 +241,10 @@ def _extract_heading_text(token: dict[str, object]) -> str:
             raw = child.get("raw")
             if isinstance(raw, str):
                 parts.append(raw)
+                continue
+            text = child.get("text")
+            if isinstance(text, str):
+                parts.append(text)
     return _clean_heading_title("".join(parts))
 
 
