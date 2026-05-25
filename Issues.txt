@@ -46,7 +46,7 @@ Acceptance criteria
 - [ ] Package can be installed with pip install -e .
 - [ ] Running pytest shows all tests passing
 - [x] Running ruff check shows no issues
-- [ ] Running mypy shows no errors
+- [x] Running mypy shows no errors
 - [x] Coverage report shows >80% coverage
 
 Implementation notes
