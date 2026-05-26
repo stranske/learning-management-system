@@ -24,11 +24,11 @@ dependencies = [
     "fastapi>=0.115.0",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.14.1",
-    "PyYAML>=6.0.0",
+    "PyYAML>=6.0.3",
     "sqlalchemy>=2.0.50",
-    "alembic>=1.13.0",
+    "alembic>=1.18.4",
     "psycopg[binary]>=3.3.4",
-    "uvicorn[standard]>=0.30.0",
+    "uvicorn[standard]>=0.48.0",
     "pandas>=3.0.3",
     "mistune>=3.0.0",
 ]
@@ -46,7 +46,7 @@ dev = [
     "mypy>=2.1.0",
     "black==26.3.1",
     "jupyter>=1.1.1",
-    "types-PyYAML>=6.0.0",
+    "types-PyYAML>=6.0.12.20260518",
 ]
 
 [project.urls]
