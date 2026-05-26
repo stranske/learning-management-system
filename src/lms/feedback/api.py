@@ -13,6 +13,7 @@ from lms.feedback.repository import (
     archive_rubric,
     create_feedback_action,
     create_feedback_record,
+    create_misconception_pattern,
     create_rubric,
     create_rubric_criterion,
     get_feedback_action,
@@ -22,6 +23,7 @@ from lms.feedback.repository import (
     get_rubric_score,
     list_feedback_actions,
     list_feedback_records,
+    list_misconception_patterns,
     list_rubric_criteria,
     list_rubric_scores,
     list_rubrics,
@@ -33,6 +35,8 @@ from lms.feedback.schemas import (
     FeedbackActionRead,
     FeedbackRecordCreate,
     FeedbackRecordRead,
+    MisconceptionPatternCreate,
+    MisconceptionPatternRead,
     OwnershipScope,
     RubricCreate,
     RubricCriterionCreate,
@@ -166,6 +170,47 @@ def get_feedback_action_route(feedback_action_id: str, session: SessionDep) -> F
             status_code=status.HTTP_404_NOT_FOUND, detail="Feedback action not found."
         )
     return FeedbackActionRead.model_validate(action)
+
+
+@router.post(
+    "/feedback/misconceptions",
+    response_model=MisconceptionPatternRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_misconception_pattern_route(
+    payload: MisconceptionPatternCreate,
+    session: SessionDep,
+) -> MisconceptionPatternRead:
+    """Create a deterministic misconception pattern."""
+    try:
+        pattern = create_misconception_pattern(session, **payload.model_dump())
+        session.commit()
+        session.refresh(pattern)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return MisconceptionPatternRead.model_validate(pattern)
+
+
+@router.get("/feedback/misconceptions", response_model=list[MisconceptionPatternRead])
+def list_misconception_patterns_route(
+    session: SessionDep,
+    ownership_scope: Annotated[OwnershipScope | None, Query()] = None,
+    target_knowledge_node_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    signature_text: Annotated[str | None, Query(min_length=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[MisconceptionPatternRead]:
+    """Return misconception patterns with optional deterministic signature matching."""
+    patterns = list_misconception_patterns(
+        session,
+        ownership_scope=ownership_scope,
+        target_knowledge_node_id=target_knowledge_node_id,
+        signature_text=signature_text,
+        limit=limit,
+    )
+    return [MisconceptionPatternRead.model_validate(pattern) for pattern in patterns]
 
 
 @router.post(

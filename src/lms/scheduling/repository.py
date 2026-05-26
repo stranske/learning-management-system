@@ -10,7 +10,15 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from lms.scheduling.models import ReviewPolicy, ReviewQueueItem, ReviewSchedule, SchedulerDecision
+from lms.feedback.models import MisconceptionPattern
+from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeNode
+from lms.scheduling.models import (
+    RemediationTrigger,
+    ReviewPolicy,
+    ReviewQueueItem,
+    ReviewSchedule,
+    SchedulerDecision,
+)
 
 
 def create_review_queue_item(
@@ -267,3 +275,60 @@ def list_scheduler_decisions(
         SchedulerDecision.id,
     ).limit(limit)
     return list(session.scalars(statement))
+
+
+def create_remediation_trigger(
+    session: Session,
+    *,
+    knowledge_node_id: str,
+    trigger_type: str,
+    trigger_rules: dict[str, Any],
+    ownership_scope: str,
+    pattern_id: str | None = None,
+    is_active: bool = True,
+) -> RemediationTrigger:
+    """Persist one active remediation trigger rule."""
+    if ownership_scope not in OWNERSHIP_SCOPES:
+        raise ValueError(f"unknown ownership scope {ownership_scope!r}; expected one of {OWNERSHIP_SCOPES}")
+    node = session.get(KnowledgeNode, knowledge_node_id)
+    if node is None:
+        raise ValueError("referenced knowledge node was not found")
+    if node.ownership_scope != ownership_scope:
+        raise ValueError("remediation trigger knowledge node must match ownership scope")
+    if pattern_id is not None:
+        pattern = session.get(MisconceptionPattern, pattern_id)
+        if pattern is None:
+            raise ValueError("referenced misconception pattern was not found")
+        if pattern.ownership_scope != ownership_scope:
+            raise ValueError("remediation trigger pattern must match ownership scope")
+    trigger = RemediationTrigger(
+        pattern_id=pattern_id,
+        knowledge_node_id=knowledge_node_id,
+        trigger_type=trigger_type,
+        trigger_rules=trigger_rules,
+        ownership_scope=ownership_scope,
+        is_active=is_active,
+    )
+    session.add(trigger)
+    session.flush()
+    return trigger
+
+
+def list_remediation_triggers(
+    session: Session,
+    *,
+    knowledge_node_id: str | None = None,
+    trigger_type: str | None = None,
+    active_only: bool = True,
+    limit: int = 100,
+) -> Sequence[RemediationTrigger]:
+    """List remediation triggers for deterministic matching."""
+    statement = select(RemediationTrigger)
+    if knowledge_node_id is not None:
+        statement = statement.where(RemediationTrigger.knowledge_node_id == knowledge_node_id)
+    if trigger_type is not None:
+        statement = statement.where(RemediationTrigger.trigger_type == trigger_type)
+    if active_only:
+        statement = statement.where(RemediationTrigger.is_active.is_(True))
+    statement = statement.order_by(RemediationTrigger.created_at.desc(), RemediationTrigger.id)
+    return list(session.scalars(statement.limit(limit)))

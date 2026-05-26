@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
 from lms.scheduling.repository import (
     count_review_queue_for_learner,
+    create_remediation_trigger,
+    list_remediation_triggers,
     list_review_policies,
     list_review_queue_for_learner,
     list_review_schedules,
@@ -18,6 +20,8 @@ from lms.scheduling.repository import (
 from lms.scheduling.schemas import (
     QueueStatus,
     ReasonCode,
+    RemediationTriggerCreate,
+    RemediationTriggerRead,
     ReviewPolicyRead,
     ReviewQueueItemRead,
     ReviewQueueResponse,
@@ -92,6 +96,47 @@ def list_review_queue_route(
         ),
         items=items,
     )
+
+
+@router.post(
+    "/remediation-triggers",
+    response_model=RemediationTriggerRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_remediation_trigger_route(
+    payload: RemediationTriggerCreate,
+    session: SessionDep,
+) -> RemediationTriggerRead:
+    """Create a deterministic remediation trigger."""
+    try:
+        trigger = create_remediation_trigger(session, **payload.model_dump())
+        session.commit()
+        session.refresh(trigger)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return RemediationTriggerRead.model_validate(trigger)
+
+
+@router.get("/remediation-triggers", response_model=list[RemediationTriggerRead])
+def list_remediation_triggers_route(
+    session: SessionDep,
+    knowledge_node_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    trigger_type: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
+    active_only: bool = True,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[RemediationTriggerRead]:
+    """Return remediation triggers with common filters."""
+    triggers = list_remediation_triggers(
+        session,
+        knowledge_node_id=knowledge_node_id,
+        trigger_type=trigger_type,
+        active_only=active_only,
+        limit=limit,
+    )
+    return [RemediationTriggerRead.model_validate(trigger) for trigger in triggers]
 
 
 @router.get("/review-policies", response_model=list[ReviewPolicyRead])

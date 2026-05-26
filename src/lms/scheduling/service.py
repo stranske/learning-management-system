@@ -23,10 +23,12 @@ from lms.graphs.models import KnowledgeNode
 from lms.scheduling.fsrs_adapter import FSRSRating, evidence_to_fsrs_rating
 from lms.scheduling.models import ReviewQueueItem
 from lms.scheduling.repository import (
+    create_remediation_trigger,
     create_review_queue_item,
     create_review_schedule,
     create_scheduler_decision,
     get_or_create_review_policy,
+    list_remediation_triggers,
 )
 
 DEFAULT_DAILY_CAP = 25
@@ -78,6 +80,159 @@ class ReviewQueueOverview:
     backlog_total: int
     daily_cap: int
     backlog_note: str
+
+
+def apply_remediation_triggers(
+    session: Session,
+    *,
+    attempt: Attempt,
+    evidence_record: EvidenceRecord,
+    now: datetime | None = None,
+) -> list[ReviewQueueItem]:
+    """Apply active remediation triggers that match an attempt/evidence signal."""
+    decision_now = now or utc_now()
+    matched_items: list[ReviewQueueItem] = []
+    triggers = list_remediation_triggers(
+        session,
+        knowledge_node_id=evidence_record.knowledge_node_id,
+    )
+    for trigger in triggers:
+        if not _trigger_matches(trigger.trigger_type, trigger.trigger_rules, attempt, evidence_record):
+            continue
+        policy = get_or_create_review_policy(
+            session,
+            reason_code="remediation",
+            policy_version=SCHEDULER_POLICY_VERSION,
+            name="M5 deterministic remediation trigger",
+            settings={
+                "trigger_id": trigger.id,
+                "trigger_type": trigger.trigger_type,
+                "trigger_rules": trigger.trigger_rules,
+            },
+            ownership_scope=trigger.ownership_scope,
+        )
+        rationale = _trigger_rationale(trigger.trigger_type, trigger.trigger_rules)
+        item = create_review_queue_item(
+            session,
+            learner_id=attempt.learner_id,
+            knowledge_node_id=evidence_record.knowledge_node_id,
+            reason_code="remediation",
+            reason_explanation=rationale,
+            due_at=decision_now,
+            decision_log={
+                "rule": trigger.trigger_type,
+                "signal": "remediation-trigger",
+                "inputs": {
+                    "attempt_id": attempt.id,
+                    "evidence_record_id": evidence_record.id,
+                    "trigger_id": trigger.id,
+                    "pattern_id": trigger.pattern_id,
+                },
+            },
+            priority=float(trigger.trigger_rules.get("priority", 0.9)),
+            source_attempt_id=attempt.id,
+            source_evidence_record_id=evidence_record.id,
+        )
+        schedule = create_review_schedule(
+            session,
+            learner_id=attempt.learner_id,
+            knowledge_node_id=evidence_record.knowledge_node_id,
+            reason_code="remediation",
+            due_at=decision_now,
+            policy_version=SCHEDULER_POLICY_VERSION,
+            review_policy_id=policy.id,
+            review_queue_item_id=item.id,
+            knowledge_type=evidence_record.knowledge_type,
+            ownership_scope=trigger.ownership_scope,
+            source_evidence_record_id=evidence_record.id,
+        )
+        create_scheduler_decision(
+            session,
+            learner_id=attempt.learner_id,
+            knowledge_node_id=evidence_record.knowledge_node_id,
+            reason_code="remediation",
+            decision_rationale=rationale,
+            policy_version=SCHEDULER_POLICY_VERSION,
+            decision_log={
+                "rule": trigger.trigger_type,
+                "trigger_id": trigger.id,
+                "trigger_rules": trigger.trigger_rules,
+            },
+            review_policy_id=policy.id,
+            review_schedule_id=schedule.id,
+            review_queue_item_id=item.id,
+            source_evidence_record_id=evidence_record.id,
+            knowledge_type=evidence_record.knowledge_type,
+            ownership_scope=trigger.ownership_scope,
+            support_level=evidence_record.support_level,
+        )
+        matched_items.append(item)
+    session.flush()
+    return matched_items
+
+
+def create_failed_prerequisite_trigger(
+    session: Session,
+    *,
+    knowledge_node_id: str,
+    ownership_scope: str,
+    pattern_id: str | None = None,
+    prerequisite_node_id: str | None = None,
+    priority: float = 0.9,
+) -> Any:
+    """Create the common M5 failed-prerequisite trigger shape."""
+    rules: dict[str, Any] = {"priority": priority}
+    if prerequisite_node_id is not None:
+        rules["prerequisite_node_id"] = prerequisite_node_id
+    return create_remediation_trigger(
+        session,
+        knowledge_node_id=knowledge_node_id,
+        trigger_type="failed-prerequisite",
+        trigger_rules=rules,
+        ownership_scope=ownership_scope,
+        pattern_id=pattern_id,
+    )
+
+
+def _trigger_matches(
+    trigger_type: str,
+    trigger_rules: dict[str, Any],
+    attempt: Attempt,
+    evidence_record: EvidenceRecord,
+) -> bool:
+    if trigger_type == "failed-prerequisite":
+        return evidence_record.correctness is False
+    if trigger_type == "repeated-incorrect-attempts":
+        minimum = int(trigger_rules.get("min_attempts", 2))
+        metadata = attempt.response_metadata or {}
+        return int(metadata.get("incorrect_attempt_count", 0)) >= minimum
+    if trigger_type == "high-confidence-error":
+        minimum_confidence = int(trigger_rules.get("min_confidence", 4))
+        confidence = evidence_record.confidence_rating or attempt.confidence_rating or 0
+        return evidence_record.correctness is False and confidence >= minimum_confidence
+    if trigger_type == "hint-dependence":
+        return (
+            evidence_record.hint_used
+            or attempt.hint_used
+            or evidence_record.support_level in {"hint", "reference", "worked-example", "coach"}
+        )
+    if trigger_type == "manual-author-flag":
+        return bool((attempt.response_metadata or {}).get("manual_author_flag"))
+    return False
+
+
+def _trigger_rationale(trigger_type: str, trigger_rules: dict[str, Any]) -> str:
+    if trigger_type == "failed-prerequisite":
+        prerequisite = trigger_rules.get("prerequisite_node_id")
+        suffix = f" for prerequisite {prerequisite}" if prerequisite else ""
+        return f"Schedule remediation after a failed prerequisite signal{suffix}."
+    if trigger_type == "repeated-incorrect-attempts":
+        return "Schedule remediation after repeated incorrect attempts."
+    if trigger_type == "high-confidence-error":
+        return "Schedule remediation for a high-confidence error."
+    if trigger_type == "hint-dependence":
+        return "Schedule remediation because the learner depended on support."
+    return "Schedule remediation from an author-flagged trigger."
 
 
 def _count_prior_successful_reviews(
