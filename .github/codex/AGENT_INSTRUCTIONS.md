@@ -95,30 +95,4 @@ You should assume you're running in `agent-standard` unless explicitly told othe
 
 ---
 
-LMS-DOMAIN-APPEND START
-## LMS Domain Context
-
-This repository implements a learning-management system centered on this loop:
-
-```text
-goal -> prompt -> learner attempt -> evidence -> formative feedback -> mastery update -> next scheduled action
-```
-
-Before making a non-trivial application change, read `.github/codex/PROJECT_CONTEXT.md` and the relevant files under `docs/product/`. Preserve these domain invariants:
-
-- Learner-visible research or explanation output must be traceable to `SourceReference` records.
-- LLM output is formative: it may draft, hint, explain, or structure prompts, but it must not decide mastery.
-- `MasteryEstimate` must be computed from `EvidenceRecord` data, not from free-form LLM judgement.
-- Attempts, feedback, and review scheduling must keep the evidence trail intact across `Prompt`, `Attempt`, `EvidenceRecord`, `MasteryEstimate`, and `ReviewQueueItem`.
-- Phase 1 work is limited to the M0-M4 learning loop foundation. Capability-gap entities such as `CapabilityTarget`, `CapabilityEstimate`, `GapAnalysis`, and `MaintenancePlan` are M5+ unless a later issue explicitly changes scope.
-
-Path ownership for LMS-specific context:
-
-- `.github/codex/PROJECT_CONTEXT.md` is the long-form repo-local domain reference.
-- `.github/codex/prompts/lms_project_context.md` is the repo-local lane-prompt addendum.
-- This marked LMS append is repo-local context layered below the synced base instructions. If consumer sync refreshes the base body, preserve or reapply the content between the `LMS-DOMAIN-APPEND START` and `LMS-DOMAIN-APPEND END` sentinel lines.
-LMS-DOMAIN-APPEND END
-
----
-
 *These instructions are enforced by the repository's prompt injection guard system. Violations will be logged and blocked.*

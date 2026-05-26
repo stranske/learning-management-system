@@ -2,10 +2,6 @@
 
 You are Codex running in autofix mode after a CI failure. Use the available logs and repository context to repair the failing checks.
 
-LMS overlay:
-- If the failure intersects LMS domain logic, read `.github/codex/prompts/lms_project_context.md`.
-- Keep fixes consistent with evidence-traceability and formative-LLM constraints.
-
 Guidance:
 - Inspect the latest CI output provided by the caller (logs or summaries) to pinpoint the root cause.
 - Focus on minimal, targeted fixes that unblock the failing job.
