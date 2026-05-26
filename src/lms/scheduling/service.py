@@ -122,7 +122,7 @@ def freeze_due_items_for_pause(
     pause_until: datetime,
     now: datetime | None = None,
 ) -> int:
-    """Freeze currently due pending items until the pause window ends."""
+    """Freeze pending items due within the pause window until the window ends."""
     decision_now = now or utc_now()
     if pause_until <= decision_now:
         return 0
@@ -243,22 +243,8 @@ def get_review_queue_overview(
     settings: SchedulerSettings | None = None,
     now: datetime | None = None,
 ) -> ReviewQueueOverview:
-    """Apply sustainable-use rules and return a capped pending queue view."""
-    decision_now = now or utc_now()
+    """Return a capped pending queue view without mutating persisted queue state."""
     scheduler_settings = settings or SchedulerSettings()
-    mark_stale_queue_items(
-        session,
-        learner_id=learner_id,
-        stale_after_days=scheduler_settings.stale_after_days,
-        now=decision_now,
-    )
-    if scheduler_settings.pause_until is not None:
-        freeze_due_items_for_pause(
-            session,
-            learner_id=learner_id,
-            pause_until=scheduler_settings.pause_until,
-            now=decision_now,
-        )
 
     backlog_total = int(
         session.scalar(

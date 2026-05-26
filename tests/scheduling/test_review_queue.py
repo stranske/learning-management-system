@@ -31,6 +31,7 @@ from lms.evidence.repository import create_attempt, create_evidence_record
 from lms.main import create_app
 from lms.scheduling.models import ReviewQueueItem
 from lms.scheduling.repository import (
+    count_review_queue_for_learner,
     create_review_queue_item,
     list_review_queue_for_learner,
 )
@@ -368,6 +369,18 @@ def test_review_queue_endpoint_returns_items_with_reasons() -> None:
             normalized_score=0.0,
         )
         schedule_from_attempt(session, attempt=attempt, evidence_record=evidence)
+        for index in range(3):
+            create_review_queue_item(
+                session,
+                learner_id="learner-api",
+                knowledge_node_id=f"completed-node-{index}",
+                reason_code="due-review",
+                reason_explanation="completed review",
+                due_at=utc_now() + timedelta(minutes=index),
+                decision_log={"rule": "test-completed"},
+                priority=0.5,
+                status="completed",
+            )
         session.commit()
     finally:
         session.close()
@@ -399,9 +412,25 @@ def test_review_queue_endpoint_returns_items_with_reasons() -> None:
         assert entry["knowledge_node_id"] == "node-api"
         assert entry["status"] == "pending"
 
+        entry_id = entry["id"]
+        with session_factory() as verify_session:
+            stored_entry = verify_session.get(ReviewQueueItem, entry_id)
+            assert stored_entry is not None
+            assert stored_entry.decision_log.get("events") is None
+
         empty = client.get("/learners/no-such-learner/review-queue")
         assert empty.status_code == 200
         assert empty.json()["items"] == []
+
+        completed = client.get(
+            "/learners/learner-api/review-queue",
+            params={"status": "completed", "limit": 2},
+        )
+        assert completed.status_code == 200
+        completed_payload = completed.json()
+        assert completed_payload["backlog_total"] == 3
+        assert completed_payload["returned_count"] == 2
+        assert len(completed_payload["items"]) == 2
     finally:
         client.close()
         Base.metadata.drop_all(engine)
@@ -588,6 +617,30 @@ def test_daily_cap_limits_returned_queue_items(db_session: Session) -> None:
     assert [item.id for item in overview.items] == [created[0].id, created[1].id]
     assert "informational" in overview.backlog_note
     assert "obligation score" in overview.backlog_note
+
+
+def test_filtered_review_queue_backlog_total_counts_beyond_limit(
+    db_session: Session,
+) -> None:
+    """Filtered queue responses count all matching rows, not only the page returned."""
+    fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
+    for index in range(3):
+        seed_new_learning_item(
+            db_session,
+            learner_id="learner-completed",
+            knowledge_node_id=f"node-{index}",
+            now=fixed_now + timedelta(minutes=index),
+        ).status = "completed"
+    db_session.commit()
+
+    assert (
+        count_review_queue_for_learner(
+            db_session,
+            learner_id="learner-completed",
+            status="completed",
+        )
+        == 3
+    )
 
 
 def test_pause_freezes_due_times_and_resume_ramps_items(db_session: Session) -> None:

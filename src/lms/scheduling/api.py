@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
-from lms.scheduling.repository import list_review_queue_for_learner
+from lms.scheduling.repository import count_review_queue_for_learner, list_review_queue_for_learner
 from lms.scheduling.schemas import QueueStatus, ReviewQueueItemRead, ReviewQueueResponse
-from lms.scheduling.service import SchedulerSettings, get_review_queue_overview
+from lms.scheduling.service import DEFAULT_DAILY_CAP, SchedulerSettings, get_review_queue_overview
 
 router = APIRouter(prefix="/learners", tags=["scheduling"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -35,7 +35,7 @@ def list_review_queue_route(
             le=100,
             description="Maximum pending items to return for today's review load.",
         ),
-    ] = 25,
+    ] = DEFAULT_DAILY_CAP,
 ) -> ReviewQueueResponse:
     """Return review queue items with reason codes, explanations, and backlog context."""
     if status == "pending":
@@ -61,13 +61,18 @@ def list_review_queue_route(
         limit=limit,
     )
     items = [ReviewQueueItemRead.model_validate(item) for item in items_raw]
+    backlog_total = count_review_queue_for_learner(
+        session,
+        learner_id=learner_id,
+        status=status,
+    )
     return ReviewQueueResponse(
         learner_id=learner_id,
         daily_cap=min(daily_cap, limit),
-        backlog_total=len(items),
+        backlog_total=backlog_total,
         returned_count=len(items),
         backlog_note=(
-            f"{len(items)} item(s) for this filter; backlog totals are informational, "
+            f"{backlog_total} item(s) for this filter; backlog totals are informational, "
             "not an obligation score."
         ),
         items=items,
