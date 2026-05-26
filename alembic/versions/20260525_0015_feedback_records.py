@@ -41,7 +41,10 @@ def upgrade() -> None:
         sa.Column("prompt_id", sa.String(length=36), nullable=True),
         sa.Column("evidence_record_id", sa.String(length=36), nullable=True),
         sa.Column(
-            "feedback_level", sa.String(length=32), server_default="coaching", nullable=False
+            "feedback_level",
+            sa.String(length=32),
+            server_default=sa.text("'coaching'"),
+            nullable=False,
         ),
         sa.Column("goal", sa.Text(), nullable=False),
         sa.Column("observed_evidence", sa.Text(), nullable=False),
@@ -80,7 +83,12 @@ def upgrade() -> None:
         sa.Column("attempt_id", sa.String(length=36), nullable=True),
         sa.Column("prompt_id", sa.String(length=36), nullable=True),
         sa.Column("action_type", sa.String(length=64), nullable=False),
-        sa.Column("status", sa.String(length=32), server_default="open", nullable=False),
+        sa.Column(
+            "status",
+            sa.String(length=32),
+            server_default=sa.text("'open'"),
+            nullable=False,
+        ),
         sa.Column("title", sa.Text(), nullable=False),
         sa.Column("instructions", sa.Text(), nullable=True),
         sa.Column("due_at", sa.DateTime(timezone=True), nullable=True),

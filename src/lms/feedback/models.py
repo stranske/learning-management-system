@@ -10,7 +10,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lms.auth.models import new_uuid, utc_now
 from lms.db.base import Base
-from lms.evidence.models import _sql_values
+
+
+def _sql_values(values: tuple[str, ...]) -> str:
+    """Return SQL string literals for a check constraint."""
+    return ", ".join(f"'{value}'" for value in values)
+
 
 FEEDBACK_LEVELS: tuple[str, ...] = ("affirmation", "coaching", "remediation", "review")
 FEEDBACK_ACTION_TYPES: tuple[str, ...] = (

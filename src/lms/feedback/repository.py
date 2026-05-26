@@ -98,6 +98,8 @@ def promote_attempt_feedback(
         source_feedback.get("observed_evidence") or attempt.response_text or next_action
     )
     feedback_level = "remediation" if source_feedback.get("gap") else "coaching"
+    diagnosis_value = source_feedback.get("diagnosis")
+    diagnosis = str(diagnosis_value) if diagnosis_value else None
     record = create_feedback_record(
         session,
         learner_id=attempt.learner_id,
@@ -107,7 +109,7 @@ def promote_attempt_feedback(
         feedback_level=feedback_level,
         goal=goal,
         observed_evidence=observed_evidence,
-        diagnosis=observed_evidence,
+        diagnosis=diagnosis,
         gap=source_feedback.get("gap"),
         source_feedback=source_feedback,
     )

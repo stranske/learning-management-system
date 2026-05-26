@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
+from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.repository import (
     create_feedback_action,
     create_feedback_record,
@@ -30,7 +31,21 @@ SessionDep = Annotated[Session, Depends(get_session)]
 @router.post("/feedback", response_model=FeedbackRecordRead, status_code=status.HTTP_201_CREATED)
 def create_feedback_route(payload: FeedbackRecordCreate, session: SessionDep) -> FeedbackRecordRead:
     """Create a durable feedback record."""
-    record = create_feedback_record(session, **payload.model_dump())
+    data = payload.model_dump()
+    if data.get("attempt_id") is not None and session.get(Attempt, data["attempt_id"]) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Referenced attempt not found.",
+        )
+    if (
+        data.get("evidence_record_id") is not None
+        and session.get(EvidenceRecord, data["evidence_record_id"]) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Referenced evidence record not found.",
+        )
+    record = create_feedback_record(session, **data)
     session.commit()
     session.refresh(record)
     return FeedbackRecordRead.model_validate(record)
@@ -75,7 +90,19 @@ def create_feedback_action_route(
     payload: FeedbackActionCreate, session: SessionDep
 ) -> FeedbackActionRead:
     """Create a feedback next action."""
-    action = create_feedback_action(session, **payload.model_dump())
+    data = payload.model_dump()
+    parent_record = None
+    if data.get("feedback_record_id") is not None:
+        parent_record = get_feedback_record(session, data["feedback_record_id"])
+        if parent_record is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Referenced feedback record not found.",
+            )
+    action = create_feedback_action(session, **data)
+    if parent_record is not None:
+        parent_record.next_action_ids = [*(parent_record.next_action_ids or []), action.id]
+        session.flush()
     session.commit()
     session.refresh(action)
     return FeedbackActionRead.model_validate(action)
@@ -107,9 +134,7 @@ def list_feedback_actions_route(
 
 
 @router.get("/feedback-actions/{feedback_action_id}", response_model=FeedbackActionRead)
-def get_feedback_action_route(
-    feedback_action_id: str, session: SessionDep
-) -> FeedbackActionRead:
+def get_feedback_action_route(feedback_action_id: str, session: SessionDep) -> FeedbackActionRead:
     """Return one feedback action."""
     action = get_feedback_action(session, feedback_action_id)
     if action is None:
