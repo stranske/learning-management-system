@@ -87,3 +87,4 @@ def test_post_llm_sessions_sets_unverified_flag_when_sources_missing() -> None:
     assert response.status_code == 200
     body = response.json()
     assert "unverified" in body["flags"]
+    assert body["policy_decision"]["source_constraints"] == ["source:required-1"]

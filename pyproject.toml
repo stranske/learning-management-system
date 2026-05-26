@@ -58,11 +58,11 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --cov=lms --cov=my_project --cov-report=term-missing --cov-report=xml"
+addopts = "-v --cov=lms --cov-report=term-missing --cov-report=xml"
 pythonpath = ["src"]
 
 [tool.coverage.run]
-source = ["lms", "my_project"]
+source = ["lms"]
 branch = true
 
 [tool.coverage.report]
@@ -97,7 +97,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["lms", "my_project", "tools"]
+known-first-party = ["lms", "tools"]
 
 [tool.mypy]
 python_version = "3.12"

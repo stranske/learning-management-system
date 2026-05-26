@@ -72,7 +72,11 @@ def _default_client() -> LLMClient:
             else (
                 "Try a retrieval attempt first, then compare it with the linked source."
                 if "retrieval-nudge" in prompt
-                else "Here is a concise explanation tied to the requested learning goal."
+                else (
+                    "Make a brief recall attempt first; hints and direct feedback are disabled."
+                    if "assessment-nudge" in prompt
+                    else "Here is a concise explanation tied to the requested learning goal."
+                )
             )
         )
     )
@@ -261,6 +265,7 @@ def create_llm_session_route(payload: LLMSessionCreate, session: SessionDep) -> 
             "response_style": decision.response_style,
             "direct_answer_allowed": decision.direct_answer_allowed,
             "disabled_supports": list(decision.disabled_supports),
+            "source_constraints": list(decision.source_constraints),
         },
         flags=list(flags),
     )

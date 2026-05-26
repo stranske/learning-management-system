@@ -216,3 +216,24 @@ def test_assessment_restricted_default_turn_blocks_direct_answer() -> None:
     assert decision.direct_answer_allowed is False
     assert decision.response_style == "assessment-nudge"
     assert "direct answer" in decision.next_action
+
+
+def test_post_llm_sessions_respects_assessment_restricted_mode() -> None:
+    with _client() as (client, _session_factory):
+        response = client.post(
+            "/llm/sessions",
+            json={
+                "learner_id": "learner-1",
+                "mode": "study-coach",
+                "prompt_id": "prompt-1",
+                "user_message": "Can you explain the answer?",
+                "assessment_restricted": True,
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["policy_decision"]["response_style"] == "assessment-nudge"
+        assert body["policy_decision"]["direct_answer_allowed"] is False
+        assert body["policy_decision"]["disabled_supports"] == ["hints", "direct-feedback"]
+        assert "direct feedback are disabled" in body["response_text"]
