@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lms.scheduling.models import ReviewPolicy, ReviewQueueItem, ReviewSchedule, SchedulerDecision
@@ -90,7 +91,13 @@ def get_or_create_review_policy(
     knowledge_type: str | None = None,
     ownership_scope: str | None = None,
 ) -> ReviewPolicy:
-    """Return an active policy row matching the version/scope or create it."""
+    """Return an active policy row matching the version/scope or create it.
+
+    The (reason_code, policy_version, knowledge_type, ownership_scope) tuple is
+    protected by a partial unique index on active rows, so concurrent callers
+    that miss the initial SELECT will race on insert; the loser catches the
+    resulting ``IntegrityError`` inside a SAVEPOINT and re-queries the winner.
+    """
     statement = select(ReviewPolicy).where(
         ReviewPolicy.reason_code == reason_code,
         ReviewPolicy.policy_version == policy_version,
@@ -114,8 +121,15 @@ def get_or_create_review_policy(
         ownership_scope=ownership_scope,
         settings=settings,
     )
-    session.add(policy)
-    session.flush()
+    try:
+        with session.begin_nested():
+            session.add(policy)
+            session.flush()
+    except IntegrityError:
+        winner = session.scalar(statement)
+        if winner is not None:
+            return winner
+        raise
     return policy
 
 

@@ -12,9 +12,11 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     String,
     Text,
     func,
+    text,
     true,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -119,6 +121,16 @@ class ReviewPolicy(Base):
         CheckConstraint(
             f"ownership_scope IS NULL OR ownership_scope IN ({_sql_values(OWNERSHIP_SCOPES)})",
             name="review_policy_ownership_scope_valid",
+        ),
+        Index(
+            "uq_review_policies_active_identity",
+            "reason_code",
+            "policy_version",
+            text("COALESCE(knowledge_type, '')"),
+            text("COALESCE(ownership_scope, '')"),
+            unique=True,
+            sqlite_where=text("is_active"),
+            postgresql_where=text("is_active"),
         ),
     )
 
