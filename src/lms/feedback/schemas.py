@@ -119,9 +119,9 @@ class RubricCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
     ownership_scope: OwnershipScope
-    prompt_id: str | None = Field(default=None, max_length=36)
-    knowledge_node_id: str | None = Field(default=None, max_length=36)
-    case_id: str | None = Field(default=None, max_length=36)
+    prompt_id: str | None = Field(default=None, min_length=1, max_length=36)
+    knowledge_node_id: str | None = Field(default=None, min_length=1, max_length=36)
+    case_id: str | None = Field(default=None, min_length=1, max_length=36)
     status: RubricStatus = "draft"
     authoring_actor: str = Field(min_length=1, max_length=255)
     reviewing_actor: str | None = Field(default=None, max_length=255)
@@ -133,9 +133,9 @@ class RubricUpdate(BaseModel):
 
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
-    prompt_id: str | None = Field(default=None, max_length=36)
-    knowledge_node_id: str | None = Field(default=None, max_length=36)
-    case_id: str | None = Field(default=None, max_length=36)
+    prompt_id: str | None = Field(default=None, min_length=1, max_length=36)
+    knowledge_node_id: str | None = Field(default=None, min_length=1, max_length=36)
+    case_id: str | None = Field(default=None, min_length=1, max_length=36)
     status: RubricStatus | None = None
     reviewing_actor: str | None = Field(default=None, max_length=255)
 
@@ -148,11 +148,11 @@ class RubricRead(BaseModel):
     id: str
     title: str
     description: str | None
-    ownership_scope: str
+    ownership_scope: OwnershipScope
     prompt_id: str | None
     knowledge_node_id: str | None
     case_id: str | None
-    status: str
+    status: RubricStatus
     authoring_actor: str
     reviewing_actor: str | None
     created_at: datetime

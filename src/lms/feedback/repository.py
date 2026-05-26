@@ -322,7 +322,7 @@ def create_rubric_criterion(
     status: str = "active",
 ) -> RubricCriterion:
     """Create one criterion for an existing rubric."""
-    if get_rubric(session, rubric_id) is None:
+    if session.get(Rubric, rubric_id) is None:
         raise ValueError("referenced rubric was not found")
     _require_criterion_order_available(session, rubric_id, criterion_order)
     criterion = RubricCriterion(
@@ -394,9 +394,9 @@ def list_rubric_criteria(
         statement = statement.where(RubricCriterion.rubric_id == rubric_id)
     if status is not None:
         statement = statement.where(RubricCriterion.status == status)
-    statement = statement.order_by(RubricCriterion.rubric_id, RubricCriterion.criterion_order).limit(
-        limit
-    )
+    statement = statement.order_by(
+        RubricCriterion.rubric_id, RubricCriterion.criterion_order
+    ).limit(limit)
     return list(session.scalars(statement))
 
 

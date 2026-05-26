@@ -33,7 +33,9 @@ def upgrade() -> None:
         sa.Column("prompt_id", sa.String(length=36), nullable=True),
         sa.Column("knowledge_node_id", sa.String(length=36), nullable=True),
         sa.Column("case_id", sa.String(length=36), nullable=True),
-        sa.Column("status", sa.String(length=32), server_default=sa.text("'draft'"), nullable=False),
+        sa.Column(
+            "status", sa.String(length=32), server_default=sa.text("'draft'"), nullable=False
+        ),
         sa.Column("authoring_actor", sa.String(length=255), nullable=False),
         sa.Column("reviewing_actor", sa.String(length=255), nullable=True),
         sa.Column(
