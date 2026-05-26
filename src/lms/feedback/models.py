@@ -268,3 +268,61 @@ class RubricCriterion(Base):
     )
 
     rubric: Mapped[Rubric] = relationship("Rubric", back_populates="criteria")
+
+
+class RubricScore(Base):
+    """Criterion-level scoring result for one learner attempt."""
+
+    __tablename__ = "rubric_scores"
+    __table_args__ = (
+        CheckConstraint("raw_score >= 0", name="rubric_score_raw_non_negative"),
+        CheckConstraint("max_score > 0", name="rubric_score_max_positive"),
+        CheckConstraint(
+            "normalized_score >= 0.0 AND normalized_score <= 1.0",
+            name="rubric_score_normalized_unit_interval",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    rubric_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("rubrics.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    attempt_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("attempts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    learner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    scorer_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    scorer_id: Mapped[str | None] = mapped_column(String(255))
+    scorer_version: Mapped[str | None] = mapped_column(String(120))
+    raw_score: Mapped[float] = mapped_column(Float, nullable=False)
+    normalized_score: Mapped[float] = mapped_column(Float, nullable=False, index=True)
+    max_score: Mapped[float] = mapped_column(Float, nullable=False)
+    criterion_scores: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    evidence_record_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("evidence_records.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    feedback_record_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("feedback_records.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    score_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    rubric: Mapped[Rubric] = relationship("Rubric")

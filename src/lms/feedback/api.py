@@ -19,9 +19,11 @@ from lms.feedback.repository import (
     get_feedback_record,
     get_rubric,
     get_rubric_criterion,
+    get_rubric_score,
     list_feedback_actions,
     list_feedback_records,
     list_rubric_criteria,
+    list_rubric_scores,
     list_rubrics,
     update_rubric,
     update_rubric_criterion,
@@ -39,9 +41,12 @@ from lms.feedback.schemas import (
     RubricCriterionStatus,
     RubricCriterionUpdate,
     RubricRead,
+    RubricScoreCreate,
+    RubricScoreRead,
     RubricStatus,
     RubricUpdate,
 )
+from lms.feedback.scoring import RubricScoringError, score_attempt_with_rubric
 
 router = APIRouter(tags=["feedback"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -161,6 +166,55 @@ def get_feedback_action_route(feedback_action_id: str, session: SessionDep) -> F
             status_code=status.HTTP_404_NOT_FOUND, detail="Feedback action not found."
         )
     return FeedbackActionRead.model_validate(action)
+
+
+@router.post(
+    "/rubric-scores",
+    response_model=RubricScoreRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_rubric_score_route(
+    payload: RubricScoreCreate,
+    session: SessionDep,
+) -> RubricScoreRead:
+    """Score an attempt against a rubric and preserve partial-credit evidence."""
+    data = payload.model_dump()
+    try:
+        score = score_attempt_with_rubric(session, **data)
+        session.commit()
+        session.refresh(score)
+    except RubricScoringError as exc:
+        session.rollback()
+        raise HTTPException(status_code=exc.http_status, detail=str(exc)) from exc
+    return RubricScoreRead.model_validate(score)
+
+
+@router.get("/rubric-scores", response_model=list[RubricScoreRead])
+def list_rubric_scores_route(
+    session: SessionDep,
+    rubric_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    attempt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[RubricScoreRead]:
+    """Return rubric scores by rubric, attempt, or learner."""
+    scores = list_rubric_scores(
+        session,
+        rubric_id=rubric_id,
+        attempt_id=attempt_id,
+        learner_id=learner_id,
+        limit=limit,
+    )
+    return [RubricScoreRead.model_validate(score) for score in scores]
+
+
+@router.get("/rubric-scores/{rubric_score_id}", response_model=RubricScoreRead)
+def get_rubric_score_route(rubric_score_id: str, session: SessionDep) -> RubricScoreRead:
+    """Return one rubric score."""
+    score = get_rubric_score(session, rubric_score_id)
+    if score is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rubric score not found.")
+    return RubricScoreRead.model_validate(score)
 
 
 @router.post("/rubrics", response_model=RubricRead, status_code=status.HTTP_201_CREATED)

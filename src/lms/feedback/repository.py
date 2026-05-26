@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from lms.evidence.models import Attempt
-from lms.feedback.models import FeedbackAction, FeedbackRecord, Rubric, RubricCriterion
+from lms.feedback.models import FeedbackAction, FeedbackRecord, Rubric, RubricCriterion, RubricScore
 from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeNode
 from lms.prompts.models import Prompt
 
@@ -397,6 +397,69 @@ def list_rubric_criteria(
     statement = statement.order_by(
         RubricCriterion.rubric_id, RubricCriterion.criterion_order
     ).limit(limit)
+    return list(session.scalars(statement))
+
+
+def create_rubric_score(
+    session: Session,
+    *,
+    rubric_id: str,
+    attempt_id: str,
+    learner_id: str,
+    scorer_type: str,
+    raw_score: float,
+    normalized_score: float,
+    max_score: float,
+    criterion_scores: list[dict[str, Any]],
+    scorer_id: str | None = None,
+    scorer_version: str | None = None,
+    evidence_record_id: str | None = None,
+    feedback_record_id: str | None = None,
+    score_metadata: dict[str, Any] | None = None,
+) -> RubricScore:
+    """Persist a criterion-level rubric scoring result."""
+    score = RubricScore(
+        rubric_id=rubric_id,
+        attempt_id=attempt_id,
+        learner_id=learner_id,
+        scorer_type=scorer_type,
+        scorer_id=scorer_id,
+        scorer_version=scorer_version,
+        raw_score=raw_score,
+        normalized_score=normalized_score,
+        max_score=max_score,
+        criterion_scores=criterion_scores,
+        evidence_record_id=evidence_record_id,
+        feedback_record_id=feedback_record_id,
+        score_metadata=score_metadata,
+    )
+    session.add(score)
+    session.flush()
+    return score
+
+
+def get_rubric_score(session: Session, rubric_score_id: str) -> RubricScore | None:
+    """Return one rubric score by id."""
+    return session.get(RubricScore, rubric_score_id)
+
+
+def list_rubric_scores(
+    session: Session,
+    *,
+    rubric_id: str | None = None,
+    attempt_id: str | None = None,
+    learner_id: str | None = None,
+    limit: int = 100,
+) -> Sequence[RubricScore]:
+    """List rubric scores by rubric, attempt, or learner."""
+    statement = select(RubricScore)
+    if rubric_id is not None:
+        statement = statement.where(RubricScore.rubric_id == rubric_id)
+    if attempt_id is not None:
+        statement = statement.where(RubricScore.attempt_id == attempt_id)
+    if learner_id is not None:
+        statement = statement.where(RubricScore.learner_id == learner_id)
+    statement = statement.order_by(RubricScore.created_at.desc(), RubricScore.id).limit(limit)
     return list(session.scalars(statement))
 
 

@@ -158,3 +158,58 @@ class RubricRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     criteria: list[RubricCriterionRead]
+
+
+class RubricCriterionScoreCreate(BaseModel):
+    """Criterion-level score input for one rubric criterion."""
+
+    criterion_id: str = Field(min_length=1, max_length=36)
+    points: float = Field(ge=0)
+    rationale: str | None = None
+
+
+class RubricScoreCreate(BaseModel):
+    """Input for scoring an attempt against a rubric."""
+
+    rubric_id: str = Field(min_length=1, max_length=36)
+    attempt_id: str = Field(min_length=1, max_length=36)
+    scorer_type: str = Field(min_length=1, max_length=64)
+    scorer_id: str | None = Field(default=None, max_length=255)
+    scorer_version: str | None = Field(default=None, max_length=120)
+    criterion_scores: list[RubricCriterionScoreCreate] = Field(min_length=1)
+    score_metadata: dict[str, object] | None = None
+    feedback_threshold: float = Field(default=0.85, ge=0, le=1)
+    remediation_threshold: float = Field(default=0.5, ge=0, le=1)
+
+
+class RubricCriterionScoreRead(BaseModel):
+    """Serializable normalized criterion score."""
+
+    criterion_id: str
+    criterion_order: int
+    description: str
+    points: float
+    max_points: float
+    rationale: str | None = None
+
+
+class RubricScoreRead(BaseModel):
+    """Serializable rubric score with linked evidence and feedback ids."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    rubric_id: str
+    attempt_id: str
+    learner_id: str
+    scorer_type: str
+    scorer_id: str | None
+    scorer_version: str | None
+    raw_score: float
+    normalized_score: float
+    max_score: float
+    criterion_scores: list[RubricCriterionScoreRead]
+    evidence_record_id: str | None
+    feedback_record_id: str | None
+    score_metadata: dict[str, object] | None
+    created_at: datetime
