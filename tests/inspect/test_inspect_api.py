@@ -100,3 +100,19 @@ def test_inspect_shell_returns_html_content_type() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "<!doctype html>" in response.text
+
+
+def test_inspect_shell_is_mobile_friendly() -> None:
+    """Documented mobile-width check: Inspect shell must fit narrow viewports.
+
+    Replaces a manual screenshot: asserts the HTML attributes that prevent
+    horizontal-only interaction on mobile-width screens (320-375 px wide).
+    Specifically: viewport meta tag for correct scaling, and flex-wrap on
+    the navigation so tabs reflow rather than overflow.
+    """
+    with _client() as (client, _session):
+        response = client.get("/inspect")
+
+    html = response.text
+    assert "width=device-width" in html, "Missing viewport meta — mobile scaling broken"
+    assert "flex-wrap" in html, "Nav must wrap on narrow screens (flex-wrap required)"
