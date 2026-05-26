@@ -23,6 +23,10 @@ from lms.scheduling.fsrs_adapter import FSRSRating, evidence_to_fsrs_rating
 from lms.scheduling.models import ReviewQueueItem
 from lms.scheduling.repository import create_review_queue_item
 
+DEFAULT_DAILY_CAP = 25
+DEFAULT_RESUME_DAILY_CAP = 10
+DEFAULT_STALE_AFTER_DAYS = 45
+
 SUCCESS_INTERVALS_DAYS: tuple[int, ...] = (1, 3, 7, 14, 28)
 LOW_CONFIDENCE_INTERVAL_DAYS = 1
 SUCCESS_SCORE_THRESHOLD = 0.85
@@ -41,6 +45,34 @@ class ScheduleDecision:
     rule: str
 
 
+@dataclass(frozen=True)
+class SchedulerSettings:
+    """Learner-level scheduling controls for the v1 queue policy."""
+
+    daily_cap: int = DEFAULT_DAILY_CAP
+    pause_until: datetime | None = None
+    resume_daily_cap: int = DEFAULT_RESUME_DAILY_CAP
+    stale_after_days: int = DEFAULT_STALE_AFTER_DAYS
+
+    def __post_init__(self) -> None:
+        if self.daily_cap < 1:
+            raise ValueError("daily_cap must be at least 1")
+        if self.resume_daily_cap < 1:
+            raise ValueError("resume_daily_cap must be at least 1")
+        if self.stale_after_days < 1:
+            raise ValueError("stale_after_days must be at least 1")
+
+
+@dataclass(frozen=True)
+class ReviewQueueOverview:
+    """A capped queue plus total backlog context for API responses."""
+
+    items: list[ReviewQueueItem]
+    backlog_total: int
+    daily_cap: int
+    backlog_note: str
+
+
 def _count_prior_successful_reviews(
     session: Session, *, learner_id: str, knowledge_node_id: str
 ) -> int:
@@ -56,6 +88,205 @@ def _count_prior_successful_reviews(
         )
     )
     return int(session.scalar(statement) or 0)
+
+
+def _pending_queue_statement(*, learner_id: str) -> Any:
+    """Return the standard pending queue statement ordered by scheduler priority."""
+    return (
+        select(ReviewQueueItem)
+        .where(
+            ReviewQueueItem.learner_id == learner_id,
+            ReviewQueueItem.status == "pending",
+        )
+        .order_by(
+            ReviewQueueItem.due_at.asc(),
+            ReviewQueueItem.priority.desc(),
+            ReviewQueueItem.id,
+        )
+    )
+
+
+def _append_decision_event(item: ReviewQueueItem, event: dict[str, Any]) -> None:
+    """Add a deterministic event to the queue item's decision log."""
+    log = dict(item.decision_log or {})
+    events = list(log.get("events", []))
+    events.append(event)
+    log["events"] = events
+    item.decision_log = log
+
+
+def freeze_due_items_for_pause(
+    session: Session,
+    *,
+    learner_id: str,
+    pause_until: datetime,
+    now: datetime | None = None,
+) -> int:
+    """Freeze currently due pending items until the pause window ends."""
+    decision_now = now or utc_now()
+    if pause_until <= decision_now:
+        return 0
+
+    items = list(
+        session.scalars(
+            _pending_queue_statement(learner_id=learner_id).where(
+                ReviewQueueItem.due_at <= pause_until,
+                ReviewQueueItem.reason_code != "stale",
+            )
+        )
+    )
+    for item in items:
+        original_due_at = item.due_at
+        item.due_at = pause_until
+        item.priority = min(item.priority, 0.6)
+        _append_decision_event(
+            item,
+            {
+                "rule": "pause-freeze",
+                "at": decision_now.isoformat(),
+                "original_due_at": original_due_at.isoformat(),
+                "pause_until": pause_until.isoformat(),
+            },
+        )
+    session.flush()
+    return len(items)
+
+
+def mark_stale_queue_items(
+    session: Session,
+    *,
+    learner_id: str,
+    stale_after_days: int = DEFAULT_STALE_AFTER_DAYS,
+    now: datetime | None = None,
+) -> int:
+    """Mark old pending items stale instead of forcing a large overdue queue."""
+    if stale_after_days < 1:
+        raise ValueError("stale_after_days must be at least 1")
+    decision_now = now or utc_now()
+    stale_before = decision_now - timedelta(days=stale_after_days)
+    items = list(
+        session.scalars(
+            _pending_queue_statement(learner_id=learner_id).where(
+                ReviewQueueItem.due_at < stale_before,
+                ReviewQueueItem.reason_code.in_(("new-learning", "due-review", "overdue")),
+            )
+        )
+    )
+    for item in items:
+        original_reason_code = item.reason_code
+        original_due_at = item.due_at
+        item.reason_code = "stale"
+        item.reason_explanation = (
+            "This item is old enough to be treated as stale. Re-engage it, retire it, "
+            "or adjust the learning goal instead of forcing catch-up."
+        )
+        item.priority = min(item.priority, 0.3)
+        _append_decision_event(
+            item,
+            {
+                "rule": "mark-stale",
+                "at": decision_now.isoformat(),
+                "stale_after_days": stale_after_days,
+                "original_reason_code": original_reason_code,
+                "original_due_at": original_due_at.isoformat(),
+            },
+        )
+    session.flush()
+    return len(items)
+
+
+def apply_resume_ramp(
+    session: Session,
+    *,
+    learner_id: str,
+    daily_cap: int = DEFAULT_RESUME_DAILY_CAP,
+    now: datetime | None = None,
+) -> int:
+    """Spread an overdue backlog over future days after a pause."""
+    if daily_cap < 1:
+        raise ValueError("daily_cap must be at least 1")
+    decision_now = now or utc_now()
+    due_items = list(
+        session.scalars(
+            _pending_queue_statement(learner_id=learner_id).where(
+                ReviewQueueItem.due_at <= decision_now,
+                ReviewQueueItem.reason_code != "stale",
+            )
+        )
+    )
+    changed = 0
+    for index, item in enumerate(due_items):
+        day_offset = index // daily_cap
+        target_due_at = decision_now + timedelta(days=day_offset)
+        if item.due_at != target_due_at:
+            original_due_at = item.due_at
+            item.due_at = target_due_at
+            _append_decision_event(
+                item,
+                {
+                    "rule": "resume-ramp",
+                    "at": decision_now.isoformat(),
+                    "daily_cap": daily_cap,
+                    "original_due_at": original_due_at.isoformat(),
+                    "new_due_at": target_due_at.isoformat(),
+                },
+            )
+            changed += 1
+    session.flush()
+    return changed
+
+
+def get_review_queue_overview(
+    session: Session,
+    *,
+    learner_id: str,
+    settings: SchedulerSettings | None = None,
+    now: datetime | None = None,
+) -> ReviewQueueOverview:
+    """Apply sustainable-use rules and return a capped pending queue view."""
+    decision_now = now or utc_now()
+    scheduler_settings = settings or SchedulerSettings()
+    mark_stale_queue_items(
+        session,
+        learner_id=learner_id,
+        stale_after_days=scheduler_settings.stale_after_days,
+        now=decision_now,
+    )
+    if scheduler_settings.pause_until is not None:
+        freeze_due_items_for_pause(
+            session,
+            learner_id=learner_id,
+            pause_until=scheduler_settings.pause_until,
+            now=decision_now,
+        )
+
+    backlog_total = int(
+        session.scalar(
+            select(func.count())
+            .select_from(ReviewQueueItem)
+            .where(
+                ReviewQueueItem.learner_id == learner_id,
+                ReviewQueueItem.status == "pending",
+            )
+        )
+        or 0
+    )
+    items = list(
+        session.scalars(
+            _pending_queue_statement(learner_id=learner_id).limit(scheduler_settings.daily_cap)
+        )
+    )
+    backlog_note = (
+        f"{backlog_total} pending item(s); showing up to "
+        f"{scheduler_settings.daily_cap} today. The total is informational, not an "
+        "obligation score."
+    )
+    return ReviewQueueOverview(
+        items=items,
+        backlog_total=backlog_total,
+        daily_cap=scheduler_settings.daily_cap,
+        backlog_note=backlog_note,
+    )
 
 
 def _success_interval_days(prior_successes: int) -> int:
