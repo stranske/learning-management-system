@@ -21,7 +21,7 @@ from lms.auth.models import utc_now
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.graphs.models import KnowledgeNode
 from lms.scheduling.fsrs_adapter import FSRSRating, evidence_to_fsrs_rating
-from lms.scheduling.models import ReviewQueueItem
+from lms.scheduling.models import RemediationTrigger, ReviewQueueItem
 from lms.scheduling.repository import (
     create_remediation_trigger,
     create_review_queue_item,
@@ -97,7 +97,9 @@ def apply_remediation_triggers(
         knowledge_node_id=evidence_record.knowledge_node_id,
     )
     for trigger in triggers:
-        if not _trigger_matches(trigger.trigger_type, trigger.trigger_rules, attempt, evidence_record):
+        if not _trigger_matches(
+            trigger.trigger_type, trigger.trigger_rules, attempt, evidence_record
+        ):
             continue
         policy = get_or_create_review_policy(
             session,
@@ -179,7 +181,7 @@ def create_failed_prerequisite_trigger(
     pattern_id: str | None = None,
     prerequisite_node_id: str | None = None,
     priority: float = 0.9,
-) -> Any:
+) -> RemediationTrigger:
     """Create the common M5 failed-prerequisite trigger shape."""
     rules: dict[str, Any] = {"priority": priority}
     if prerequisite_node_id is not None:
@@ -201,7 +203,14 @@ def _trigger_matches(
     evidence_record: EvidenceRecord,
 ) -> bool:
     if trigger_type == "failed-prerequisite":
-        return evidence_record.correctness is False
+        if evidence_record.correctness is not False:
+            return False
+        prerequisite_node_id = trigger_rules.get("prerequisite_node_id")
+        if prerequisite_node_id is None:
+            return True
+        metadata = attempt.response_metadata or {}
+        failed_prerequisite_ids = metadata.get("failed_prerequisite_ids") or []
+        return prerequisite_node_id in failed_prerequisite_ids
     if trigger_type == "repeated-incorrect-attempts":
         minimum = int(trigger_rules.get("min_attempts", 2))
         metadata = attempt.response_metadata or {}

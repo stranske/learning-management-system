@@ -260,15 +260,13 @@ def list_misconception_patterns(
             statement.order_by(MisconceptionPattern.created_at.desc()).limit(limit)
         )
         return [
-            pattern
-            for pattern in candidates
-            if pattern.wrong_answer_signature.lower() in needle
-            or needle in pattern.wrong_answer_signature.lower()
+            pattern for pattern in candidates if pattern.wrong_answer_signature.lower() in needle
         ]
     return list(
         session.scalars(
-            statement.order_by(MisconceptionPattern.created_at.desc(), MisconceptionPattern.id)
-            .limit(limit)
+            statement.order_by(
+                MisconceptionPattern.created_at.desc(), MisconceptionPattern.id
+            ).limit(limit)
         )
     )
 

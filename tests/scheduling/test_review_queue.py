@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -57,6 +58,7 @@ def _make_attempt(
     confidence_rating: int | None = 4,
     support_level: str = "none",
     response_time_seconds: int | None = 30,
+    response_metadata: dict[str, Any] | None = None,
 ) -> tuple[Attempt, EvidenceRecord]:
     """Create an Attempt with an EvidenceRecord matching the requested signal."""
     attempt = create_attempt(
@@ -69,6 +71,7 @@ def _make_attempt(
             "observed_evidence": "obs",
             "next_action": "next",
         },
+        response_metadata=response_metadata,
         confidence_rating=confidence_rating,
         support_level=support_level,
         evidence={
