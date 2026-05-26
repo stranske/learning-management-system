@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lms.auth.models import new_uuid, utc_now
@@ -69,6 +78,11 @@ class CompetencyEvidence(Base):
 
     __tablename__ = "competency_evidence"
     __table_args__ = (
+        UniqueConstraint(
+            "competency_id",
+            "evidence_record_id",
+            name="uq_competency_evidence_competency_evidence_record",
+        ),
         CheckConstraint(
             f"evidence_role IN ({_sql_values(EVIDENCE_ROLES)})",
             name="evidence_role_valid",
@@ -112,4 +126,3 @@ class CompetencyEvidence(Base):
         nullable=False,
         index=True,
     )
-

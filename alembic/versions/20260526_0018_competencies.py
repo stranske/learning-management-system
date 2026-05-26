@@ -63,9 +63,7 @@ def upgrade() -> None:
         sa.Column("knowledge_node_id", sa.String(length=36), nullable=False),
         sa.Column("evidence_record_id", sa.String(length=36), nullable=False),
         sa.Column("learner_id", sa.String(length=36), nullable=False),
-        sa.Column(
-            "contribution_weight", sa.Float(), server_default="1.0", nullable=False
-        ),
+        sa.Column("contribution_weight", sa.Float(), server_default="1.0", nullable=False),
         sa.Column("evidence_role", sa.String(length=32), server_default="supports", nullable=False),
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
@@ -79,9 +77,16 @@ def upgrade() -> None:
             name=op.f("ck_competency_evidence_contribution_weight_unit_interval"),
         ),
         sa.ForeignKeyConstraint(["competency_id"], ["competencies.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["evidence_record_id"], ["evidence_records.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["evidence_record_id"], ["evidence_records.id"], ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["knowledge_node_id"], ["knowledge_nodes.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint(
+            "competency_id",
+            "evidence_record_id",
+            name=op.f("uq_competency_evidence_competency_evidence_record"),
+        ),
     )
     for column in (
         "competency_id",
@@ -115,4 +120,3 @@ def downgrade() -> None:
     ):
         op.drop_index(op.f(f"ix_competencies_{column}"), table_name="competencies")
     op.drop_table("competencies")
-

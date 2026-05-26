@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from lms.audit.repository import record_audit_event
 from lms.competencies.models import (
     COMPETENCY_STATUSES,
     EVIDENCE_ROLES,
@@ -22,6 +23,12 @@ def _require_choice(value: str, allowed: tuple[str, ...], label: str) -> str:
     if value not in allowed:
         raise ValueError(f"unknown {label} {value!r}; expected one of {allowed}")
     return value
+
+
+def _competency_graph_status(status: str) -> str:
+    if status == "active":
+        return "published"
+    return status
 
 
 def create_competency(
@@ -106,6 +113,14 @@ def create_competency_evidence(
     if not 0.0 <= contribution_weight <= 1.0:
         raise ValueError("contribution_weight must be between 0.0 and 1.0")
     _require_choice(evidence_role, EVIDENCE_ROLES, "evidence role")
+    duplicate = session.execute(
+        select(CompetencyEvidence.id).where(
+            CompetencyEvidence.competency_id == competency.id,
+            CompetencyEvidence.evidence_record_id == evidence.id,
+        )
+    ).scalar_one_or_none()
+    if duplicate is not None:
+        raise ValueError("competency evidence link already exists")
 
     _ensure_supports_competency_edge(
         session,
@@ -182,11 +197,29 @@ def _ensure_supports_competency_edge(
             description=competency.description,
             knowledge_type=competency.target_knowledge_type,
             ownership_scope=competency.ownership_scope,
-            status="published" if competency.status == "active" else "draft",
+            status=_competency_graph_status(competency.status),
             provenance="manual",
         )
         session.add(competency_node)
         session.flush()
+        record_audit_event(
+            session,
+            actor_id=actor_id,
+            action="create",
+            entity_type="KnowledgeNode",
+            entity_id=competency_node.id,
+            source_subsystem="competencies",
+            after_summary={
+                "id": competency_node.id,
+                "title": competency_node.title,
+                "knowledge_type": competency_node.knowledge_type,
+                "ownership_scope": competency_node.ownership_scope,
+                "status": competency_node.status,
+                "provenance": competency_node.provenance,
+                "imported_from": competency_node.imported_from,
+                "source_reference_id": competency_node.source_reference_id,
+            },
+        )
     from lms.graphs.models import KnowledgeEdge
 
     edge_exists = session.execute(
@@ -205,7 +238,7 @@ def _ensure_supports_competency_edge(
             edge_type="supports-competency",
             scope=competency.ownership_scope,
             actor_id=actor_id,
-            status="published",
+            status=_competency_graph_status(competency.status),
             notes="Competency evidence link.",
             source_subsystem="competencies",
         )
