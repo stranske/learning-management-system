@@ -7,10 +7,12 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from lms.evidence.models import Attempt
-from lms.feedback.models import FeedbackAction, FeedbackRecord
+from lms.feedback.models import FeedbackAction, FeedbackRecord, Rubric, RubricCriterion
+from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeNode
+from lms.prompts.models import Prompt
 
 
 def create_feedback_record(
@@ -190,3 +192,258 @@ def list_feedback_actions(
         statement = statement.where(FeedbackAction.status == status)
     statement = statement.order_by(FeedbackAction.created_at.desc(), FeedbackAction.id).limit(limit)
     return list(session.scalars(statement))
+
+
+def create_rubric(
+    session: Session,
+    *,
+    title: str,
+    ownership_scope: str,
+    authoring_actor: str,
+    description: str | None = None,
+    prompt_id: str | None = None,
+    knowledge_node_id: str | None = None,
+    case_id: str | None = None,
+    status: str = "draft",
+    reviewing_actor: str | None = None,
+    criteria: list[dict[str, Any]] | None = None,
+) -> Rubric:
+    """Create a rubric with optional nested criteria."""
+    _validate_rubric_links(
+        session,
+        ownership_scope=ownership_scope,
+        prompt_id=prompt_id,
+        knowledge_node_id=knowledge_node_id,
+    )
+    _require_unique_criterion_orders(criteria or [])
+    rubric = Rubric(
+        title=title,
+        description=description,
+        ownership_scope=ownership_scope,
+        prompt_id=prompt_id,
+        knowledge_node_id=knowledge_node_id,
+        case_id=case_id,
+        status=status,
+        authoring_actor=authoring_actor,
+        reviewing_actor=reviewing_actor,
+    )
+    for criterion_data in sorted(criteria or [], key=lambda item: item["criterion_order"]):
+        rubric.criteria.append(RubricCriterion(**criterion_data))
+    session.add(rubric)
+    session.flush()
+    return rubric
+
+
+def get_rubric(session: Session, rubric_id: str) -> Rubric | None:
+    """Return one rubric with criteria loaded in deterministic order."""
+    return session.scalar(
+        select(Rubric).options(selectinload(Rubric.criteria)).where(Rubric.id == rubric_id)
+    )
+
+
+def list_rubrics(
+    session: Session,
+    *,
+    ownership_scope: str | None = None,
+    prompt_id: str | None = None,
+    knowledge_node_id: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> Sequence[Rubric]:
+    """List rubrics with common authoring filters."""
+    statement = select(Rubric).options(selectinload(Rubric.criteria))
+    if ownership_scope is not None:
+        _require_ownership_scope(ownership_scope)
+        statement = statement.where(Rubric.ownership_scope == ownership_scope)
+    if prompt_id is not None:
+        statement = statement.where(Rubric.prompt_id == prompt_id)
+    if knowledge_node_id is not None:
+        statement = statement.where(Rubric.knowledge_node_id == knowledge_node_id)
+    if status is not None:
+        statement = statement.where(Rubric.status == status)
+    statement = statement.order_by(Rubric.created_at.desc(), Rubric.id).limit(limit)
+    return list(session.scalars(statement))
+
+
+def update_rubric(
+    session: Session,
+    rubric: Rubric,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+    prompt_id: str | None = None,
+    knowledge_node_id: str | None = None,
+    case_id: str | None = None,
+    status: str | None = None,
+    reviewing_actor: str | None = None,
+) -> Rubric:
+    """Update mutable rubric fields and revalidate linked scope."""
+    next_prompt_id = prompt_id if prompt_id is not None else rubric.prompt_id
+    next_node_id = knowledge_node_id if knowledge_node_id is not None else rubric.knowledge_node_id
+    _validate_rubric_links(
+        session,
+        ownership_scope=rubric.ownership_scope,
+        prompt_id=next_prompt_id,
+        knowledge_node_id=next_node_id,
+    )
+    for field_name, value in {
+        "title": title,
+        "description": description,
+        "prompt_id": prompt_id,
+        "knowledge_node_id": knowledge_node_id,
+        "case_id": case_id,
+        "status": status,
+        "reviewing_actor": reviewing_actor,
+    }.items():
+        if value is not None:
+            setattr(rubric, field_name, value)
+    session.flush()
+    return rubric
+
+
+def archive_rubric(session: Session, rubric: Rubric) -> Rubric:
+    """Archive a rubric and its active criteria."""
+    rubric.status = "archived"
+    for criterion in rubric.criteria:
+        criterion.status = "archived"
+    session.flush()
+    return rubric
+
+
+def create_rubric_criterion(
+    session: Session,
+    *,
+    rubric_id: str,
+    criterion_order: int,
+    description: str,
+    max_points: float,
+    performance_levels: dict[str, Any] | None = None,
+    validity_scope: str | None = None,
+    status: str = "active",
+) -> RubricCriterion:
+    """Create one criterion for an existing rubric."""
+    if get_rubric(session, rubric_id) is None:
+        raise ValueError("referenced rubric was not found")
+    _require_criterion_order_available(session, rubric_id, criterion_order)
+    criterion = RubricCriterion(
+        rubric_id=rubric_id,
+        criterion_order=criterion_order,
+        description=description,
+        max_points=max_points,
+        performance_levels=performance_levels or {},
+        validity_scope=validity_scope,
+        status=status,
+    )
+    session.add(criterion)
+    session.flush()
+    return criterion
+
+
+def update_rubric_criterion(
+    session: Session,
+    criterion: RubricCriterion,
+    *,
+    criterion_order: int | None = None,
+    description: str | None = None,
+    max_points: float | None = None,
+    performance_levels: dict[str, Any] | None = None,
+    validity_scope: str | None = None,
+    status: str | None = None,
+) -> RubricCriterion:
+    """Update mutable criterion fields."""
+    if criterion_order is not None and criterion_order != criterion.criterion_order:
+        _require_criterion_order_available(session, criterion.rubric_id, criterion_order)
+        criterion.criterion_order = criterion_order
+    for field_name, value in {
+        "description": description,
+        "max_points": max_points,
+        "performance_levels": performance_levels,
+        "validity_scope": validity_scope,
+        "status": status,
+    }.items():
+        if value is not None:
+            setattr(criterion, field_name, value)
+    session.flush()
+    return criterion
+
+
+def get_rubric_criterion(
+    session: Session,
+    rubric_id: str,
+    criterion_id: str,
+) -> RubricCriterion | None:
+    """Return one criterion by id only within its parent rubric."""
+    return session.scalar(
+        select(RubricCriterion).where(
+            RubricCriterion.rubric_id == rubric_id,
+            RubricCriterion.id == criterion_id,
+        )
+    )
+
+
+def list_rubric_criteria(
+    session: Session,
+    *,
+    rubric_id: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> Sequence[RubricCriterion]:
+    """List rubric criteria in deterministic order."""
+    statement = select(RubricCriterion)
+    if rubric_id is not None:
+        statement = statement.where(RubricCriterion.rubric_id == rubric_id)
+    if status is not None:
+        statement = statement.where(RubricCriterion.status == status)
+    statement = statement.order_by(RubricCriterion.rubric_id, RubricCriterion.criterion_order).limit(
+        limit
+    )
+    return list(session.scalars(statement))
+
+
+def _validate_rubric_links(
+    session: Session,
+    *,
+    ownership_scope: str,
+    prompt_id: str | None,
+    knowledge_node_id: str | None,
+) -> None:
+    _require_ownership_scope(ownership_scope)
+    if knowledge_node_id is not None:
+        node = session.get(KnowledgeNode, knowledge_node_id)
+        if node is None:
+            raise ValueError("referenced knowledge node was not found")
+        if node.ownership_scope != ownership_scope:
+            raise ValueError("rubric knowledge node must match the rubric ownership scope")
+    if prompt_id is not None:
+        prompt = session.get(Prompt, prompt_id)
+        if prompt is None:
+            raise ValueError("referenced prompt was not found")
+        target_node = session.get(KnowledgeNode, prompt.target_node_id)
+        if target_node is None or target_node.ownership_scope != ownership_scope:
+            raise ValueError("rubric prompt target must match the rubric ownership scope")
+
+
+def _require_ownership_scope(scope: str) -> None:
+    if scope not in OWNERSHIP_SCOPES:
+        raise ValueError(f"unknown ownership scope {scope!r}; expected one of {OWNERSHIP_SCOPES}")
+
+
+def _require_unique_criterion_orders(criteria: list[dict[str, Any]]) -> None:
+    orders = [criterion["criterion_order"] for criterion in criteria]
+    if len(orders) != len(set(orders)):
+        raise ValueError("criterion order must be unique per rubric")
+
+
+def _require_criterion_order_available(
+    session: Session,
+    rubric_id: str,
+    criterion_order: int,
+) -> None:
+    existing = session.scalar(
+        select(RubricCriterion.id).where(
+            RubricCriterion.rubric_id == rubric_id,
+            RubricCriterion.criterion_order == criterion_order,
+        )
+    )
+    if existing is not None:
+        raise ValueError("criterion order must be unique per rubric")
