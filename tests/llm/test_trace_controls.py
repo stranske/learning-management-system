@@ -121,3 +121,32 @@ def test_trace_control_endpoint_forgets_session_summary(
         stored = session.get(LLMSession, session_id)
     assert stored is not None
     assert stored.response_summary is None
+
+
+def test_trace_control_endpoint_rejects_other_learner_session(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    create_response = client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": "learner-1",
+            "mode": "study-coach",
+            "user_message": "Can you explain this?",
+        },
+    )
+    session_id = create_response.json()["session_id"]
+
+    forget_response = client.post(
+        f"/llm/sessions/{session_id}/trace-control",
+        json={"action": "forget", "actor_id": "learner-2"},
+    )
+
+    assert forget_response.status_code == 404
+    with session_factory() as session:
+        stored = session.get(LLMSession, session_id)
+    assert stored is not None
+    assert stored.response_summary == (
+        "Here is a concise explanation tied to the requested learning goal."
+    )
+    assert stored.trace_control_state == "default"

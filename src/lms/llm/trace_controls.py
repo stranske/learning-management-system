@@ -50,7 +50,6 @@ def apply_trace_control(
         before_summary=before,
         after_summary=_audit_summary(llm_session),
     )
-    session.flush()
     return llm_session
 
 

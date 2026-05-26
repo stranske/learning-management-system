@@ -276,6 +276,8 @@ def control_llm_trace_route(
     llm_session = session.get(LLMSession, session_id)
     if llm_session is None:
         raise HTTPException(status_code=404, detail="LLM session not found")
+    if llm_session.learner_id != payload.actor_id:
+        raise HTTPException(status_code=404, detail="LLM session not found")
     try:
         apply_trace_control(
             session,

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
+from lms.llm.api import _default_client
+from lms.llm.exceptions import LLMError
 from lms.llm.interaction_policy import InteractionContext, decide_interaction_policy
 
 
@@ -69,3 +72,15 @@ def test_llm_session_response_includes_controls_model_and_cost(
         stored = session.get(LLMSession, body["session_id"])
     assert stored is not None
     assert stored.coaching_intensity == "quiet"
+
+
+def test_llm_client_rejects_invalid_coaching_intensity() -> None:
+    client = _default_client()
+
+    with pytest.raises(LLMError, match="unknown coaching_intensity"):
+        client.complete(
+            mode="study-coach",
+            prompt="Try a retrieval attempt first.",
+            trace_class="formative",
+            coaching_intensity="unsupported",  # type: ignore[arg-type]
+        )
