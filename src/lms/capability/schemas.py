@@ -107,3 +107,27 @@ class GapAnalysisRead(BaseModel):
     recommended_action_types: list[str]
     ownership_scope: str
     created_at: datetime
+
+
+class MaintenancePlanCreate(BaseModel):
+    """Input for creating a maintenance plan from a gap analysis."""
+
+    gap_analysis_id: str = Field(min_length=1, max_length=36)
+
+
+class MaintenancePlanRead(BaseModel):
+    """Serializable persisted maintenance plan."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    target_id: str
+    gap_analysis_id: str
+    learner_id: str
+    status: str
+    plan_steps: list[dict[str, Any]]
+    schedule_ids: list[str]
+    rationale: str
+    generated_at: datetime
+    ownership_scope: str
+    created_at: datetime

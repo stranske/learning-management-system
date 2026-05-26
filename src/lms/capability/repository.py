@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from lms.auth.models import utc_now
 from lms.capability.models import (
     CAPABILITY_TARGET_STATUSES,
     CapabilityEstimate,
     CapabilityTarget,
     GapAnalysis,
+    MaintenancePlan,
 )
 from lms.competencies.models import Competency, CompetencyEvidence
 from lms.evidence.models import EvidenceRecord
@@ -21,6 +23,12 @@ from lms.graphs.models import KnowledgeNode
 from lms.learners.models import Learner, LearningGoal
 from lms.learners.repository import knowledge_profile_for_learner
 from lms.mastery.service import mastery_estimates_for_learner
+from lms.scheduling.repository import (
+    create_review_queue_item,
+    create_review_schedule,
+    create_scheduler_decision,
+    get_or_create_review_policy,
+)
 
 BreakdownRow = dict[str, object]
 
@@ -336,6 +344,139 @@ def list_gap_analyses(
     return list(session.scalars(statement))
 
 
+def create_maintenance_plan(
+    session: Session,
+    *,
+    gap_analysis_id: str,
+    policy_version: str = "maintenance-plan-v1",
+    now: datetime | None = None,
+) -> MaintenancePlan:
+    """Turn a gap analysis into plan steps plus linked scheduler records."""
+    analysis = get_gap_analysis(session, gap_analysis_id)
+    if analysis is None:
+        raise ValueError("gap analysis was not found")
+    target = get_capability_target(session, analysis.target_id)
+    if target is None:
+        raise ValueError("capability target was not found")
+    if analysis.ownership_scope != "personal" or target.ownership_scope != "personal":
+        raise ValueError("maintenance plans only support personal gap analyses")
+    if analysis.learner_id != target.learner_id:
+        raise ValueError("gap analysis learner must match capability target learner")
+
+    generated_at = now or utc_now()
+    plan = MaintenancePlan(
+        target_id=target.id,
+        gap_analysis_id=analysis.id,
+        learner_id=analysis.learner_id,
+        status="active",
+        plan_steps=[],
+        schedule_ids=[],
+        rationale=_maintenance_plan_rationale(analysis),
+        generated_at=generated_at,
+        ownership_scope="personal",
+    )
+    session.add(plan)
+    session.flush()
+
+    steps: list[dict[str, object]] = []
+    schedule_ids: list[str] = []
+    for index, gap_item in enumerate(_list_of_dicts(analysis.gap_items), start=1):
+        step = _maintenance_step(gap_item, step_number=index)
+        knowledge_node_id = step.get("knowledge_node_id")
+        if isinstance(knowledge_node_id, str) and knowledge_node_id:
+            reason_code = str(step["reason_code"])
+            due_at = _step_due_at(generated_at, reason_code=reason_code)
+            policy = get_or_create_review_policy(
+                session,
+                reason_code=reason_code,
+                policy_version=policy_version,
+                name=f"Maintenance plan {reason_code}",
+                settings={"source": "gap-analysis", "plan_id": plan.id},
+                ownership_scope=analysis.ownership_scope,
+            )
+            decision_log = {
+                "rule": "gap-analysis-maintenance-plan",
+                "gap_analysis_id": analysis.id,
+                "maintenance_plan_id": plan.id,
+                "gap_item": gap_item,
+                "step_number": index,
+            }
+            queue_item = create_review_queue_item(
+                session,
+                learner_id=analysis.learner_id,
+                knowledge_node_id=knowledge_node_id,
+                reason_code=reason_code,
+                reason_explanation=str(step["rationale"]),
+                due_at=due_at,
+                priority=_step_priority(reason_code=reason_code),
+                decision_log=decision_log,
+            )
+            schedule = create_review_schedule(
+                session,
+                learner_id=analysis.learner_id,
+                knowledge_node_id=knowledge_node_id,
+                reason_code=reason_code,
+                due_at=due_at,
+                policy_version=policy_version,
+                review_policy_id=policy.id,
+                review_queue_item_id=queue_item.id,
+                ownership_scope=analysis.ownership_scope,
+            )
+            decision = create_scheduler_decision(
+                session,
+                learner_id=analysis.learner_id,
+                knowledge_node_id=knowledge_node_id,
+                reason_code=reason_code,
+                decision_rationale=str(step["rationale"]),
+                policy_version=policy_version,
+                decision_log=decision_log,
+                review_policy_id=policy.id,
+                review_schedule_id=schedule.id,
+                review_queue_item_id=queue_item.id,
+                ownership_scope=analysis.ownership_scope,
+            )
+            schedule_ids.append(schedule.id)
+            step["review_queue_item_id"] = queue_item.id
+            step["review_schedule_id"] = schedule.id
+            step["scheduler_decision_id"] = decision.id
+        steps.append(step)
+
+    plan.plan_steps = steps
+    plan.schedule_ids = schedule_ids
+    session.flush()
+    return plan
+
+
+def get_maintenance_plan(session: Session, plan_id: str) -> MaintenancePlan | None:
+    """Return one maintenance plan by id."""
+    return session.get(MaintenancePlan, plan_id)
+
+
+def list_maintenance_plans(
+    session: Session,
+    *,
+    learner_id: str | None = None,
+    target_id: str | None = None,
+    gap_analysis_id: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> Sequence[MaintenancePlan]:
+    """List maintenance plans, newest first."""
+    statement = select(MaintenancePlan)
+    if learner_id is not None:
+        statement = statement.where(MaintenancePlan.learner_id == learner_id)
+    if target_id is not None:
+        statement = statement.where(MaintenancePlan.target_id == target_id)
+    if gap_analysis_id is not None:
+        statement = statement.where(MaintenancePlan.gap_analysis_id == gap_analysis_id)
+    if status is not None:
+        statement = statement.where(MaintenancePlan.status == status)
+    statement = statement.order_by(
+        MaintenancePlan.generated_at.desc(), MaintenancePlan.id
+    ).limit(limit)
+    return list(session.scalars(statement))
+
+
 def serialize_capability_target(target: CapabilityTarget) -> dict[str, object]:
     """Return a response-ready capability target payload."""
     return {
@@ -388,6 +529,23 @@ def serialize_gap_analysis(analysis: GapAnalysis) -> dict[str, object]:
         "recommended_action_types": analysis.recommended_action_types,
         "ownership_scope": analysis.ownership_scope,
         "created_at": analysis.created_at,
+    }
+
+
+def serialize_maintenance_plan(plan: MaintenancePlan) -> dict[str, object]:
+    """Return a response-ready maintenance plan payload."""
+    return {
+        "id": plan.id,
+        "target_id": plan.target_id,
+        "gap_analysis_id": plan.gap_analysis_id,
+        "learner_id": plan.learner_id,
+        "status": plan.status,
+        "plan_steps": plan.plan_steps,
+        "schedule_ids": plan.schedule_ids,
+        "rationale": plan.rationale,
+        "generated_at": plan.generated_at,
+        "ownership_scope": plan.ownership_scope,
+        "created_at": plan.created_at,
     }
 
 
@@ -860,3 +1018,68 @@ def _list_of_dicts(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _maintenance_plan_rationale(analysis: GapAnalysis) -> str:
+    action_count = len(_list_of_dicts(analysis.gap_items))
+    return (
+        f"Generated {action_count} evidence-maintenance step(s) from gap analysis "
+        f"{analysis.id} for learner {analysis.learner_id}."
+    )
+
+
+def _maintenance_step(gap_item: dict[str, object], *, step_number: int) -> dict[str, object]:
+    action_type = str(gap_item.get("recommended_action_type", "review"))
+    reason_code = _reason_code_for_action(action_type)
+    references = {
+        key: gap_item[key]
+        for key in (
+            "prompt_id",
+            "knowledge_node_id",
+            "rubric_id",
+            "case_id",
+            "feedback_action_id",
+            "competency_id",
+        )
+        if key in gap_item
+    }
+    step: dict[str, object] = {
+        "step_number": step_number,
+        "gap_type": str(gap_item.get("gap_type", "gap")),
+        "action_type": action_type,
+        "reason_code": reason_code,
+        "status": "planned",
+        "rationale": str(gap_item.get("rationale", "Plan the next evidence step.")),
+        "references": references,
+        "required_evidence": gap_item.get("required_evidence", []),
+    }
+    if isinstance(gap_item.get("knowledge_node_id"), str):
+        step["knowledge_node_id"] = str(gap_item["knowledge_node_id"])
+    if isinstance(gap_item.get("competency_id"), str):
+        step["competency_id"] = str(gap_item["competency_id"])
+    return step
+
+
+def _reason_code_for_action(action_type: str) -> str:
+    normalized = action_type.lower()
+    if "remediation" in normalized or "practice" in normalized:
+        return "remediation"
+    if "initial" in normalized or "new" in normalized:
+        return "new-learning"
+    return "due-review"
+
+
+def _step_due_at(now: datetime, *, reason_code: str) -> datetime:
+    if reason_code == "remediation":
+        return now
+    if reason_code == "new-learning":
+        return now + timedelta(days=1)
+    return now + timedelta(days=3)
+
+
+def _step_priority(*, reason_code: str) -> float:
+    if reason_code == "remediation":
+        return 0.9
+    if reason_code == "new-learning":
+        return 0.7
+    return 0.6
