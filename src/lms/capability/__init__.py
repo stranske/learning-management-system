@@ -1,2 +1,1 @@
 """Capability target domain package."""
-
