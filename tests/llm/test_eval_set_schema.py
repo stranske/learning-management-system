@@ -86,6 +86,27 @@ def test_load_eval_set_rejects_unknown_field(tmp_path: Path) -> None:
         load_eval_set(target)
 
 
+def test_load_eval_set_rejects_directory_paths(tmp_path: Path) -> None:
+    with pytest.raises(EvalSetError, match="not a regular file"):
+        load_eval_set(tmp_path)
+
+
+def test_load_eval_set_rejects_whitespace_required_strings(tmp_path: Path) -> None:
+    payload = {
+        "entry_id": "tmp-1",
+        "scenario": "answer-seeking",
+        "mode": "study-coach",
+        "trace_class": "ephemeral",
+        "prompt": "   ",
+        "expected_labels": ["asks_for_retrieval"],
+    }
+    target = tmp_path / "blank-prompt.jsonl"
+    target.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(EvalSetError, match="field 'prompt' must be a non-empty string"):
+        load_eval_set(target)
+
+
 def test_load_eval_set_rejects_duplicate_entry_ids(tmp_path: Path) -> None:
     row = {
         "entry_id": "tmp-1",

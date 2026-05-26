@@ -54,8 +54,9 @@ file can carry section headings without breaking parsing.
 ### Allowed expected labels
 
 `asks_for_retrieval`, `gives_direct_explanation`, `flags_unverified_claim`,
-`offers_next_action`, `respects_quiet_mode`. These match the labels in the
-formative interaction policy (`src/lms/llm/interaction_policy.py`) and the
+`offers_next_action`, `respects_quiet_mode`. The canonical identifier list
+lives in `src/lms/llm/eval_sets.py`; the labels are conceptually aligned with
+the formative interaction policy (`src/lms/llm/interaction_policy.py`) and the
 evaluation rubric in `docs/product/early-design-decisions.md` Segment 3.
 
 ## How to add entries
@@ -94,5 +95,5 @@ uv run lms llm replay-eval docs/llm/eval-sets/study-coach-v1.jsonl --dry-run
 
 `--dry-run` validates every entry against the schema and prints a per-scenario
 summary without issuing provider calls. The non-dry-run mode replays through
-`LLMClient.replay`, which uses the fake provider by default; production
-provider replays require explicit config.
+`LLMClient.replay` with the CLI's fake provider. Configured-provider replays
+are available through the Python API rather than this CLI command.

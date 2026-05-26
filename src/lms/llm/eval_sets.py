@@ -111,6 +111,8 @@ def load_eval_set(path: Path) -> tuple[EvalSetEntry, ...]:
     """
     if not path.exists():
         raise EvalSetError(f"eval set file does not exist: {path}")
+    if not path.is_file():
+        raise EvalSetError(f"eval set path is not a regular file: {path}")
 
     entries: list[EvalSetEntry] = []
     seen_ids: set[str] = set()
@@ -285,7 +287,7 @@ def _entry_from_payload(payload: Any, *, source: str) -> EvalSetEntry:
 
 def _required_str(payload: Mapping[str, Any], field: str, *, source: str) -> str:
     value = payload[field]
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value.strip():
         raise EvalSetError(f"{source}: field '{field}' must be a non-empty string")
     return value
 
