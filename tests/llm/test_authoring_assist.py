@@ -15,6 +15,7 @@ from lms.llm.client import LLMClient
 from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig
 from lms.llm.models import LLMSession
 from lms.llm.providers import FakeProvider
+from lms.sources.models import SourceReference
 from lms.sources.repository import create_source_reference
 
 
@@ -168,3 +169,103 @@ def test_proposal_records_audit_event(db_session: Session) -> None:
     assert summary.get("llm_proposal_id") == result.llm_proposal.id
     assert summary.get("llm_session_id") == result.llm_session.id
     assert summary.get("llm_model") == "fake-authoring-model"
+
+
+def test_proposal_links_knowledge_node_to_source_reference(db_session: Session) -> None:
+    """The proposed knowledge node must link back to the originating SourceReference."""
+    ids = _seed_proposal_dependencies(db_session)
+    result = propose_authoring_drafts(
+        db_session,
+        client=_build_client(),
+        source_reference_id=ids["source_id"],
+        target_node_id=ids["node_id"],
+        learning_goal_id=ids["goal_id"],
+        actor_id="user:bea",
+        draft=_draft(),
+        learner_id=ids["learner_id"],
+    )
+    db_session.commit()
+
+    assert result.knowledge_node.source_reference_id == ids["source_id"]
+    assert result.llm_proposal.source_reference_id == ids["source_id"]
+
+
+def test_proposal_inherits_local_only_source_visibility(db_session: Session) -> None:
+    """Proposals from local-only sources link to that source, inheriting its visibility constraint."""
+    user = User(id="user-loc", email="loc@example.test", username="loc", display_name="Loc")
+    db_session.add(user)
+    db_session.flush()
+    node = create_knowledge_node(
+        db_session,
+        title="Local concept",
+        knowledge_type="factual",
+        scope="personal",
+        actor_id="user:loc",
+        status="published",
+    )
+    learner = create_learner_for_user(db_session, user_id=user.id, display_name="Loc")
+    goal = create_learning_goal(
+        db_session,
+        learner_id=learner.id,
+        title="Local goal",
+        knowledge_type="factual",
+        target_node_ids=[node.id],
+        ownership_scope="personal",
+    )
+    local_source = create_source_reference(
+        db_session,
+        source_type="internal-note",
+        stable_locator="internal:local-only-note",
+        content="private local observation",
+        actor_id="user:loc",
+        source_visibility="local-only",
+    )
+    db_session.commit()
+
+    result = propose_authoring_drafts(
+        db_session,
+        client=_build_client(),
+        source_reference_id=local_source.id,
+        target_node_id=node.id,
+        learning_goal_id=goal.id,
+        actor_id="user:loc",
+        draft=ProposalDraft(
+            related_node_title="Local subtopic",
+            related_node_knowledge_type="factual",
+            prompt_body="What does the local note say?",
+            prompt_knowledge_type="factual",
+            prompt_intended_cognitive_action="recall",
+            prompt_demand_level="low",
+            prompt_expected_answer_form="short-text",
+        ),
+        learner_id=learner.id,
+    )
+    db_session.commit()
+
+    linked = db_session.get(SourceReference, result.knowledge_node.source_reference_id)
+    assert linked is not None
+    assert linked.source_visibility == "local-only"
+
+
+def test_proposal_trace_and_cost_recorded_through_llm_wrapper(db_session: Session) -> None:
+    """Proposals must record formative trace class and positive cost through the LLM wrapper."""
+    ids = _seed_proposal_dependencies(db_session)
+    result = propose_authoring_drafts(
+        db_session,
+        client=_build_client(),
+        source_reference_id=ids["source_id"],
+        target_node_id=ids["node_id"],
+        learning_goal_id=ids["goal_id"],
+        actor_id="user:bea",
+        draft=_draft(),
+        learner_id=ids["learner_id"],
+    )
+    db_session.commit()
+
+    stored = db_session.get(LLMSession, result.llm_session.id)
+    assert stored is not None
+    assert stored.trace_class == "formative"
+    assert stored.cost_micro_usd > 0
+    assert stored.input_tokens > 0
+    assert stored.output_tokens > 0
+    assert stored.mode == "authoring-assist"
