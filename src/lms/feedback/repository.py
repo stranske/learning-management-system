@@ -6,11 +6,18 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from lms.evidence.models import Attempt
-from lms.feedback.models import FeedbackAction, FeedbackRecord, Rubric, RubricCriterion, RubricScore
+from lms.feedback.models import (
+    FeedbackAction,
+    FeedbackRecord,
+    MisconceptionPattern,
+    Rubric,
+    RubricCriterion,
+    RubricScore,
+)
 from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeNode
 from lms.prompts.models import Prompt
 
@@ -192,6 +199,76 @@ def list_feedback_actions(
         statement = statement.where(FeedbackAction.status == status)
     statement = statement.order_by(FeedbackAction.created_at.desc(), FeedbackAction.id).limit(limit)
     return list(session.scalars(statement))
+
+
+def create_misconception_pattern(
+    session: Session,
+    *,
+    pattern_label: str,
+    wrong_answer_signature: str,
+    diagnosis_text: str,
+    ownership_scope: str,
+    suggested_feedback_action_type: str,
+    target_knowledge_node_id: str | None = None,
+    confidence: float | None = None,
+) -> MisconceptionPattern:
+    """Create a deterministic misconception pattern with explicit scope checks."""
+    _require_ownership_scope(ownership_scope)
+    if target_knowledge_node_id is not None:
+        node = session.get(KnowledgeNode, target_knowledge_node_id)
+        if node is None:
+            raise ValueError("referenced knowledge node was not found")
+        if node.ownership_scope != ownership_scope:
+            raise ValueError("misconception pattern knowledge node must match ownership scope")
+    pattern = MisconceptionPattern(
+        pattern_label=pattern_label,
+        wrong_answer_signature=wrong_answer_signature,
+        diagnosis_text=diagnosis_text,
+        target_knowledge_node_id=target_knowledge_node_id,
+        ownership_scope=ownership_scope,
+        confidence=confidence,
+        suggested_feedback_action_type=suggested_feedback_action_type,
+    )
+    session.add(pattern)
+    session.flush()
+    return pattern
+
+
+def list_misconception_patterns(
+    session: Session,
+    *,
+    ownership_scope: str | None = None,
+    target_knowledge_node_id: str | None = None,
+    signature_text: str | None = None,
+    limit: int = 100,
+) -> Sequence[MisconceptionPattern]:
+    """List misconception patterns, optionally matching a learner answer signature."""
+    statement = select(MisconceptionPattern)
+    if ownership_scope is not None:
+        _require_ownership_scope(ownership_scope)
+        statement = statement.where(MisconceptionPattern.ownership_scope == ownership_scope)
+    if target_knowledge_node_id is not None:
+        statement = statement.where(
+            or_(
+                MisconceptionPattern.target_knowledge_node_id == target_knowledge_node_id,
+                MisconceptionPattern.target_knowledge_node_id.is_(None),
+            )
+        )
+    if signature_text is not None:
+        needle = signature_text.lower()
+        candidates = session.scalars(
+            statement.order_by(MisconceptionPattern.created_at.desc()).limit(limit)
+        )
+        return [
+            pattern for pattern in candidates if pattern.wrong_answer_signature.lower() in needle
+        ]
+    return list(
+        session.scalars(
+            statement.order_by(
+                MisconceptionPattern.created_at.desc(), MisconceptionPattern.id
+            ).limit(limit)
+        )
+    )
 
 
 def create_rubric(

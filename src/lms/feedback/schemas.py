@@ -74,6 +74,28 @@ class FeedbackActionRead(FeedbackActionCreate):
     updated_at: datetime
 
 
+class MisconceptionPatternCreate(BaseModel):
+    """Input for creating one deterministic misconception pattern."""
+
+    pattern_label: str = Field(min_length=1, max_length=255)
+    wrong_answer_signature: str = Field(min_length=1)
+    diagnosis_text: str = Field(min_length=1)
+    target_knowledge_node_id: str | None = Field(default=None, min_length=1, max_length=36)
+    ownership_scope: OwnershipScope
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    suggested_feedback_action_type: FeedbackActionType
+
+
+class MisconceptionPatternRead(MisconceptionPatternCreate):
+    """Serializable misconception pattern."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class RubricCriterionCreate(BaseModel):
     """Input for creating one rubric criterion."""
 

@@ -42,6 +42,7 @@ FEEDBACK_ACTION_TYPES: tuple[str, ...] = (
 FEEDBACK_ACTION_STATUSES: tuple[str, ...] = ("open", "in-progress", "completed", "dismissed")
 RUBRIC_STATUSES: tuple[str, ...] = ("draft", "published", "archived")
 RUBRIC_CRITERION_STATUSES: tuple[str, ...] = ("active", "archived")
+MISCONCEPTION_ACTION_TYPES: tuple[str, ...] = FEEDBACK_ACTION_TYPES
 
 
 class FeedbackRecord(Base):
@@ -152,6 +153,54 @@ class FeedbackAction(Base):
 
     feedback_record: Mapped[FeedbackRecord | None] = relationship(
         "FeedbackRecord", back_populates="actions"
+    )
+
+
+class MisconceptionPattern(Base):
+    """Deterministic misconception catalog entry for local feedback rules."""
+
+    __tablename__ = "misconception_patterns"
+    __table_args__ = (
+        CheckConstraint(
+            "ownership_scope IN ('personal', 'institutional')",
+            name="misconception_pattern_ownership_scope_valid",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)",
+            name="misconception_pattern_confidence_unit_interval",
+        ),
+        CheckConstraint(
+            f"suggested_feedback_action_type IN ({_sql_values(MISCONCEPTION_ACTION_TYPES)})",
+            name="misconception_pattern_action_type_valid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    pattern_label: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    wrong_answer_signature: Mapped[str] = mapped_column(Text, nullable=False)
+    diagnosis_text: Mapped[str] = mapped_column(Text, nullable=False)
+    target_knowledge_node_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_nodes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    ownership_scope: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    suggested_feedback_action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+        nullable=False,
     )
 
 

@@ -17,6 +17,14 @@ ReasonCode = Literal[
 ]
 QueueStatus = Literal["pending", "dispatched", "completed", "skipped"]
 ScheduleState = Literal["scheduled", "completed", "skipped", "stale"]
+OwnershipScope = Literal["personal", "institutional"]
+RemediationTriggerType = Literal[
+    "failed-prerequisite",
+    "repeated-incorrect-attempts",
+    "high-confidence-error",
+    "hint-dependence",
+    "manual-author-flag",
+]
 
 
 class ReviewQueueItemRead(BaseModel):
@@ -48,6 +56,27 @@ class ReviewQueueResponse(BaseModel):
     returned_count: int = Field(ge=0)
     backlog_note: str
     items: list[ReviewQueueItemRead]
+
+
+class RemediationTriggerCreate(BaseModel):
+    """Input for creating one deterministic remediation trigger."""
+
+    pattern_id: str | None = Field(default=None, min_length=1, max_length=36)
+    knowledge_node_id: str = Field(min_length=1, max_length=36)
+    trigger_type: RemediationTriggerType
+    trigger_rules: dict[str, Any] = Field(default_factory=dict)
+    ownership_scope: OwnershipScope
+    is_active: bool = True
+
+
+class RemediationTriggerRead(RemediationTriggerCreate):
+    """Serializable remediation trigger."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
 
 
 class ReviewPolicyRead(BaseModel):
