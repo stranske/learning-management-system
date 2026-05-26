@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from lms.auth.models import User
+from lms.capability.models import GapAnalysis
 from lms.capability.repository import (
     create_capability_target,
     create_gap_analysis,
@@ -110,3 +111,15 @@ def test_gap_analysis_uses_nonpunitive_gap_language(db_session: Session) -> None
     assert "learner" not in rationales
     assert "failure" not in rationales
     assert "deficient" not in rationales
+
+
+def test_gap_analysis_scope_contract_is_personal_only() -> None:
+    """Gap analyses expose one clear ownership-scope invariant."""
+    constraint_names = {
+        constraint.name
+        for constraint in GapAnalysis.__table__.constraints
+        if constraint.name is not None
+    }
+
+    assert "ck_gap_analyses_personal_scope_only" in constraint_names
+    assert "ck_gap_analyses_ownership_scope_valid" not in constraint_names

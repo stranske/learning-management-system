@@ -213,10 +213,6 @@ class GapAnalysis(Base):
 
     __tablename__ = "gap_analyses"
     __table_args__ = (
-        CheckConstraint(
-            f"ownership_scope IN ({_sql_values(OWNERSHIP_SCOPES)})",
-            name="ownership_scope_valid",
-        ),
         CheckConstraint("ownership_scope = 'personal'", name="personal_scope_only"),
         CheckConstraint(
             f"severity IN ({_sql_values(GAP_ANALYSIS_SEVERITIES)})",
@@ -255,9 +251,7 @@ class GapAnalysis(Base):
         String(32), nullable=False, default="low", server_default="low", index=True
     )
     required_evidence: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
-    recommended_action_types: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, default=list
-    )
+    recommended_action_types: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     ownership_scope: Mapped[str] = mapped_column(
         String(32), nullable=False, default="personal", server_default="personal", index=True
     )
