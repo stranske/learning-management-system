@@ -36,6 +36,7 @@ def upgrade() -> None:
     )
     for column in ("title", "ownership_scope", "rubric_id", "knowledge_node_id", "status"):
         op.create_index(op.f(f"ix_cases_{column}"), "cases", [column])
+    op.create_index(op.f("ix_cases_created_at"), "cases", ["created_at"])
 
     op.create_table(
         "case_steps",
@@ -101,7 +102,7 @@ def downgrade() -> None:
     op.drop_table("evidence_packets")
     op.drop_index(op.f("ix_case_steps_case_id"), table_name="case_steps")
     op.drop_table("case_steps")
+    op.drop_index(op.f("ix_cases_created_at"), table_name="cases")
     for column in ("status", "knowledge_node_id", "rubric_id", "ownership_scope", "title"):
         op.drop_index(op.f(f"ix_cases_{column}"), table_name="cases")
     op.drop_table("cases")
-

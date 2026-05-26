@@ -84,7 +84,10 @@ def list_cases(
     limit: int = 100,
 ) -> Sequence[Case]:
     """List case shells with common authoring filters."""
-    statement = select(Case).options(selectinload(Case.steps), selectinload(Case.evidence_packets))
+    statement = select(Case).options(
+        selectinload(Case.steps).selectinload(CaseStep.decision_points),
+        selectinload(Case.evidence_packets),
+    )
     if ownership_scope is not None:
         _require_scope(ownership_scope)
         statement = statement.where(Case.ownership_scope == ownership_scope)
