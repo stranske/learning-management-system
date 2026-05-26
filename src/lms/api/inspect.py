@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -85,7 +86,7 @@ def learner_overview_route(
     }
 
 
-@router.get("")
+@router.get("", response_class=HTMLResponse)
 def inspect_shell_route() -> str:
     """Return a minimal mobile-friendly Inspect shell."""
     return (

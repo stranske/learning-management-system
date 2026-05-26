@@ -91,3 +91,12 @@ def test_inspect_does_not_mix_ownership_scopes() -> None:
 
     assert response.status_code == 200
     assert response.json()["ownership_scope"] == "institutional"
+
+
+def test_inspect_shell_returns_html_content_type() -> None:
+    with _client() as (client, _session):
+        response = client.get("/inspect")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<!doctype html>" in response.text
