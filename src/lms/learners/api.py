@@ -12,6 +12,7 @@ from lms.auth.models import User
 from lms.auth.repository import get_user
 from lms.db.session import get_session
 from lms.graphs.schemas import OwnershipScope
+from lms.learners.knowledge_profile import knowledge_profiles_for_learner
 from lms.learners.models import Learner, LearningGoal
 from lms.learners.repository import (
     create_learner_for_user,
@@ -23,6 +24,7 @@ from lms.learners.repository import (
 )
 from lms.learners.schemas import (
     GoalStatus,
+    KnowledgeProfileRead,
     LearnerCreate,
     LearnerRead,
     LearningGoalCreate,
@@ -120,6 +122,29 @@ def list_learning_goals_route(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
+
+
+@router.get(
+    "/{learner_id}/knowledge-profile",
+    response_model=list[KnowledgeProfileRead],
+)
+def get_knowledge_profile_route(
+    learner_id: str,
+    session: SessionDep,
+    _current_user: CurrentUserDep,
+    ownership_scope: Annotated[
+        OwnershipScope,
+        Query(description="Knowledge graph ownership scope to summarize."),
+    ] = "personal",
+) -> list[KnowledgeProfileRead]:
+    """Return per-node knowledge profiles for a learner in one ownership scope."""
+    if get_learner(session, learner_id=learner_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
+    return knowledge_profiles_for_learner(
+        session,
+        learner_id=learner_id,
+        ownership_scope=ownership_scope,
+    )
 
 
 @router.patch(

@@ -69,3 +69,28 @@ class LearningGoalRead(BaseModel):
     target_nodes: list[KnowledgeNodeRead]
     created_at: datetime
     updated_at: datetime
+
+
+class SupportDependence(BaseModel):
+    """Aggregated support-dependence signal across recent evidence for one node."""
+
+    last_support_level: str
+    hint_use_count: int
+    reference_access_count: int
+    support_level_counts: dict[str, int]
+
+
+class KnowledgeProfileRead(BaseModel):
+    """Computed learner-state view combining mastery, evidence, and scope."""
+
+    learner_id: str
+    ownership_scope: str
+    knowledge_node_id: str
+    knowledge_node_title: str
+    current_estimate: float
+    confidence: float
+    evidence_count: int
+    last_evidence_id: str | None
+    last_evidence_at: datetime | None
+    support_dependence: SupportDependence
+    next_evidence_needed: str
