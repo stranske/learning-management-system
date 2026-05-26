@@ -2,10 +2,6 @@
 
 This PR has **merge conflicts** that must be resolved before CI can run or the PR can be merged.
 
-## LMS Overlay (Repo-Specific)
-
-When resolving conflicts in LMS domain code, read `.github/codex/prompts/lms_project_context.md` and prefer resolutions that preserve learner-loop and evidence-traceability invariants.
-
 ## Your Task
 
 Resolve all merge conflicts by integrating changes from the base branch with this PR's changes.
