@@ -18,6 +18,24 @@ from lms.feedback.repository import (
 from lms.prompts.models import Prompt
 
 
+class RubricScoringError(ValueError):
+    """Base error for rubric scoring; carries the HTTP status to surface."""
+
+    http_status: int = 422
+
+
+class AttemptNotFoundError(RubricScoringError):
+    http_status = 404
+
+
+class RubricNotFoundError(RubricScoringError):
+    http_status = 404
+
+
+class InvalidRubricScoringError(RubricScoringError):
+    http_status = 422
+
+
 def score_attempt_with_rubric(
     session: Session,
     *,
@@ -34,14 +52,16 @@ def score_attempt_with_rubric(
     """Score an attempt, write linked evidence, and create low-score feedback."""
     attempt = session.get(Attempt, attempt_id)
     if attempt is None:
-        raise ValueError("referenced attempt was not found")
+        raise AttemptNotFoundError("referenced attempt was not found")
     rubric = get_rubric(session, rubric_id)
     if rubric is None:
-        raise ValueError("referenced rubric was not found")
+        raise RubricNotFoundError("referenced rubric was not found")
     if not rubric.criteria:
-        raise ValueError("rubric must have at least one criterion before scoring")
+        raise InvalidRubricScoringError("rubric must have at least one criterion before scoring")
     if not criterion_scores:
-        raise ValueError("criterion_scores must include at least one criterion score")
+        raise InvalidRubricScoringError(
+            "criterion_scores must include at least one criterion score"
+        )
 
     normalized_scores = _normalize_criterion_scores(rubric, criterion_scores)
     raw_score = sum(score["points"] for score in normalized_scores)
@@ -68,9 +88,9 @@ def score_attempt_with_rubric(
             "scorer_type": scorer_type,
             "scorer_id": scorer_id,
             "scorer_version": scorer_version,
+            "rubric_ownership_scope": rubric.ownership_scope,
             **(score_metadata or {}),
         },
-        validity_scope=rubric.ownership_scope,
         attempt_context=attempt.response_metadata,
     )
 
@@ -146,13 +166,19 @@ def _normalize_criterion_scores(
     for item in criterion_scores:
         criterion_id = str(item.get("criterion_id") or "")
         if criterion_id in seen:
-            raise ValueError("criterion_scores must not contain duplicate criterion ids")
+            raise InvalidRubricScoringError(
+                "criterion_scores must not contain duplicate criterion ids"
+            )
         criterion = criteria_by_id.get(criterion_id)
         if criterion is None:
-            raise ValueError(f"unknown or inactive rubric criterion id: {criterion_id}")
+            raise InvalidRubricScoringError(
+                f"unknown or inactive rubric criterion id: {criterion_id}"
+            )
         points = float(item.get("points", 0))
         if points < 0 or points > criterion.max_points:
-            raise ValueError("criterion score points must be within criterion max_points")
+            raise InvalidRubricScoringError(
+                "criterion score points must be within criterion max_points"
+            )
         seen.add(criterion_id)
         normalized.append(
             {
@@ -164,6 +190,12 @@ def _normalize_criterion_scores(
                 "rationale": item.get("rationale"),
             }
         )
+    missing = [cid for cid in criteria_by_id if cid not in seen]
+    if missing:
+        raise InvalidRubricScoringError(
+            "criterion_scores must include every active rubric criterion; "
+            f"missing: {', '.join(sorted(missing))}"
+        )
     return sorted(normalized, key=lambda score: score["criterion_order"])
 
 
@@ -174,7 +206,9 @@ def _knowledge_node_id_for_score(session: Session, rubric: Rubric, attempt: Atte
     prompt = session.get(Prompt, prompt_id)
     if prompt is not None:
         return prompt.target_node_id
-    raise ValueError("rubric score requires a rubric knowledge node or prompt target")
+    raise InvalidRubricScoringError(
+        "rubric score requires a rubric knowledge node or prompt target"
+    )
 
 
 def _lowest_scored_gap(criterion_scores: list[dict[str, Any]]) -> str:

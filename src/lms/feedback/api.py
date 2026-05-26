@@ -46,7 +46,7 @@ from lms.feedback.schemas import (
     RubricStatus,
     RubricUpdate,
 )
-from lms.feedback.scoring import score_attempt_with_rubric
+from lms.feedback.scoring import RubricScoringError, score_attempt_with_rubric
 
 router = APIRouter(tags=["feedback"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -183,14 +183,9 @@ def create_rubric_score_route(
         score = score_attempt_with_rubric(session, **data)
         session.commit()
         session.refresh(score)
-    except ValueError as exc:
+    except RubricScoringError as exc:
         session.rollback()
-        status_code = (
-            status.HTTP_404_NOT_FOUND
-            if str(exc) in {"referenced attempt was not found", "referenced rubric was not found"}
-            else status.HTTP_422_UNPROCESSABLE_ENTITY
-        )
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.http_status, detail=str(exc)) from exc
     return RubricScoreRead.model_validate(score)
 
 

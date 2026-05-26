@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy.orm import Session
 
 from lms.evidence.repository import create_attempt, get_evidence_record
 from lms.feedback.repository import create_rubric, get_feedback_record, list_feedback_actions
-from lms.feedback.scoring import score_attempt_with_rubric
+from lms.feedback.scoring import InvalidRubricScoringError, score_attempt_with_rubric
 from lms.graphs.repository import create_knowledge_node
 
 
@@ -75,7 +76,8 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
     )
     db_session.commit()
 
-    evidence = get_evidence_record(db_session, score.evidence_record_id or "")
+    assert score.evidence_record_id is not None
+    evidence = get_evidence_record(db_session, score.evidence_record_id)
     assert evidence is not None
     assert score.raw_score == 4
     assert score.max_score == 5
@@ -122,3 +124,20 @@ def test_low_rubric_score_creates_revision_or_remediation_feedback_action(
     assert len(actions) == 1
     assert actions[0].action_type == "prerequisite-remediation"
     assert feedback.next_action_ids == [actions[0].id]
+
+
+def test_rubric_score_requires_every_active_criterion(db_session: Session) -> None:
+    """Omitting an active criterion must raise rather than inflate the normalized score."""
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+
+    with pytest.raises(InvalidRubricScoringError, match="every active rubric criterion"):
+        score_attempt_with_rubric(
+            db_session,
+            rubric_id=rubric_id,
+            attempt_id=attempt_id,
+            scorer_type="human",
+            criterion_scores=[
+                {"criterion_id": criterion_ids[0], "points": 2},
+            ],
+        )
