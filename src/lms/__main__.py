@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from lms.db.session import session_scope
 from lms.export_import import ExportImportError, export_jsonl, export_to_path, import_jsonl
 from lms.importers.csv_graph import CsvGraphImportError, import_csv_graph
@@ -249,7 +251,7 @@ def main() -> None:
         try:
             with session_scope() as session:
                 summary = import_jsonl(session, args.path, dry_run=args.dry_run)
-        except ExportImportError as exc:
+        except (ExportImportError, SQLAlchemyError) as exc:
             raise SystemExit(f"import failed: {exc}") from exc
         mode = "dry run" if summary.dry_run else "apply"
         counts = " ".join(f"{key}={value}" for key, value in sorted(summary.counts.items()))

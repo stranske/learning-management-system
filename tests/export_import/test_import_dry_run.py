@@ -41,3 +41,11 @@ def test_dry_run_validates_foreign_keys_without_writing(
         import_jsonl(db_session, path, dry_run=True)
 
     assert db_session.query(Learner).count() == 0
+
+
+def test_dry_run_rejects_non_object_jsonl_entries(tmp_path: Path, db_session: Session) -> None:
+    path = tmp_path / "import.jsonl"
+    path.write_text('["not", "an", "object"]\n', encoding="utf-8")
+
+    with pytest.raises(ExportImportError, match="line 1: entry must be an object"):
+        import_jsonl(db_session, path, dry_run=True)

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Column, Table, inspect, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 import lms.audit.models  # noqa: F401  # register metadata
 import lms.evidence.models  # noqa: F401  # register metadata
@@ -28,18 +28,6 @@ from lms.prompts.models import Prompt, PromptVersion, prompt_source_references
 from lms.sources.models import SourceReference
 
 SCHEMA_VERSION = 1
-EXPORT_TYPES = (
-    "User",
-    "Learner",
-    "SourceReference",
-    "KnowledgeNode",
-    "KnowledgeEdge",
-    "LearningGoal",
-    "Prompt",
-    "Attempt",
-    "EvidenceRecord",
-    "LLMSession",
-)
 
 MODEL_BY_TYPE = {
     "User": User,
@@ -106,6 +94,7 @@ RELATIONSHIP_KEYS = {
 }
 
 PII_FIELDS = {"User": {"email"}}
+SOURCE_CONTENT_FIELDS = {"body", "content", "raw_content", "source_content", "text"}
 ALL_VALUE = "all"
 
 
@@ -137,13 +126,18 @@ def export_jsonl(
         confirm_all=confirm_all,
     )
     for model in EXPORT_ORDER:
-        for row in session.scalars(select(model).order_by(model.id)):
+        statement = _export_statement(model)
+        for row in session.scalars(statement):
             record_type = model.__name__
             if isinstance(row, LLMSession) and not _export_llm_session(
                 row, include_llm_traces=include_llm_traces
             ):
                 continue
-            payload = _model_to_record(row, include_pii=include_pii)
+            payload = _model_to_record(
+                row,
+                include_pii=include_pii,
+                include_source_content=include_source_content,
+            )
             yield json.dumps(
                 {
                     "type": record_type,
@@ -205,13 +199,27 @@ def _export_llm_session(session: LLMSession, *, include_llm_traces: str) -> bool
     return session.trace_class == "evidence-grade" and session.external_export_allowed
 
 
-def _model_to_record(row: Any, *, include_pii: str) -> dict[str, Any]:
+def _export_statement(model: type[Any]) -> Any:
+    statement = select(model).order_by(model.id)
+    if model is LearningGoal:
+        return statement.options(selectinload(LearningGoal.target_nodes))
+    if model is Prompt:
+        return statement.options(selectinload(Prompt.source_references))
+    return statement
+
+
+def _model_to_record(row: Any, *, include_pii: str, include_source_content: str) -> dict[str, Any]:
     mapper = inspect(row).mapper
     record_type = row.__class__.__name__
     record: dict[str, Any] = {}
     redacted_fields = PII_FIELDS.get(record_type, set())
+    source_content_fields = set()
+    if record_type == "SourceReference" and include_source_content != ALL_VALUE:
+        source_content_fields = SOURCE_CONTENT_FIELDS
     for column in mapper.columns:
         if include_pii != ALL_VALUE and column.key in redacted_fields:
+            continue
+        if column.key in source_content_fields:
             continue
         record[column.key] = _dump_value(getattr(row, column.key))
     if isinstance(row, LearningGoal):
@@ -243,7 +251,9 @@ def _load_entries(path: Path) -> list[dict[str, Any]]:
     return entries
 
 
-def _validate_entry_shape(entry: dict[str, Any], *, line_number: int) -> None:
+def _validate_entry_shape(entry: Any, *, line_number: int) -> None:
+    if not isinstance(entry, dict):
+        raise ExportImportError(f"line {line_number}: entry must be an object")
     record_type = entry.get("type")
     if record_type not in MODEL_BY_TYPE:
         raise ExportImportError(f"line {line_number}: unknown type {record_type!r}")
