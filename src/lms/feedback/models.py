@@ -1,11 +1,23 @@
-"""SQLAlchemy models for durable learner feedback records and actions."""
+"""SQLAlchemy models for durable learner feedback, rubrics, and actions."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, String, Text, func, text
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lms.auth.models import new_uuid, utc_now
@@ -28,6 +40,8 @@ FEEDBACK_ACTION_TYPES: tuple[str, ...] = (
     "author-review",
 )
 FEEDBACK_ACTION_STATUSES: tuple[str, ...] = ("open", "in-progress", "completed", "dismissed")
+RUBRIC_STATUSES: tuple[str, ...] = ("draft", "published", "archived")
+RUBRIC_CRITERION_STATUSES: tuple[str, ...] = ("active", "archived")
 
 
 class FeedbackRecord(Base):
@@ -139,3 +153,118 @@ class FeedbackAction(Base):
     feedback_record: Mapped[FeedbackRecord | None] = relationship(
         "FeedbackRecord", back_populates="actions"
     )
+
+
+class Rubric(Base):
+    """A performance standard that can be linked to prompts, nodes, or later cases."""
+
+    __tablename__ = "rubrics"
+    __table_args__ = (
+        CheckConstraint(
+            "ownership_scope IN ('personal', 'institutional')",
+            name="rubric_ownership_scope_valid",
+        ),
+        CheckConstraint(
+            f"status IN ({_sql_values(RUBRIC_STATUSES)})",
+            name="rubric_status_valid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    ownership_scope: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    prompt_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("prompts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    knowledge_node_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_nodes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    case_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="draft",
+        server_default=text("'draft'"),
+        index=True,
+    )
+    authoring_actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    reviewing_actor: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    criteria: Mapped[list[RubricCriterion]] = relationship(
+        "RubricCriterion",
+        back_populates="rubric",
+        cascade="all, delete-orphan",
+        order_by="RubricCriterion.criterion_order",
+    )
+
+
+class RubricCriterion(Base):
+    """One ordered criterion within a rubric."""
+
+    __tablename__ = "rubric_criteria"
+    __table_args__ = (
+        CheckConstraint("criterion_order >= 1", name="rubric_criterion_order_positive"),
+        CheckConstraint("max_points > 0", name="rubric_criterion_max_points_positive"),
+        CheckConstraint(
+            f"status IN ({_sql_values(RUBRIC_CRITERION_STATUSES)})",
+            name="rubric_criterion_status_valid",
+        ),
+        UniqueConstraint("rubric_id", "criterion_order", name="rubric_criterion_order_unique"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    rubric_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("rubrics.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    criterion_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    max_points: Mapped[float] = mapped_column(Float, nullable=False)
+    performance_levels: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    validity_scope: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="active",
+        server_default=text("'active'"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    rubric: Mapped[Rubric] = relationship("Rubric", back_populates="criteria")
