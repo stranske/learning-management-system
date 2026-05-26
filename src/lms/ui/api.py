@@ -8,9 +8,11 @@ from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
+from lms.evidence.models import Attempt
 from lms.evidence.repository import create_attempt
 from lms.evidence.schemas import AttemptCreate, StructuredFeedback
 from lms.prompts.models import Prompt
@@ -30,6 +32,10 @@ def learn_surface_route(
     prompt = session.get(Prompt, prompt_id) if prompt_id is not None else None
     prompt_body = _prompt_body(prompt) if prompt is not None else "No prompt selected."
     citations = _source_citation_items(prompt) if prompt is not None else []
+    provenance = (
+        _prompt_provenance(prompt) if prompt is not None else "No prompt provenance available."
+    )
+    attempt_summary = _latest_attempt_summary(session, learner_id=learner_id, prompt_id=prompt_id)
 
     return _page(
         "Learn",
@@ -42,6 +48,7 @@ def learn_surface_route(
           <section aria-labelledby="prompt-heading">
             <h2 id="prompt-heading">Prompt</h2>
             <p class="prompt-text">{escape(prompt_body)}</p>
+            <p class="prompt-provenance">{escape(provenance)}</p>
           </section>
           <form class="attempt-form" method="post" action="/learn/attempts">
             <input type="hidden" name="learner_id" value="{escape(learner_id)}">
@@ -64,7 +71,7 @@ def learn_surface_route(
           </form>
           <section aria-labelledby="feedback-heading">
             <h2 id="feedback-heading">Feedback and next action</h2>
-            <p>Feedback appears after an attempt is recorded through the attempts API.</p>
+            <p>{escape(attempt_summary)}</p>
           </section>
           <section aria-labelledby="sources-heading" class="source-panel">
             <h2 id="sources-heading">Source citations after attempt</h2>
@@ -95,6 +102,8 @@ async def submit_learn_attempt_route(request: Request, session: SessionDep) -> s
     attempt = create_attempt(session, **payload.model_dump())
     session.commit()
     session.refresh(attempt)
+    prompt = session.get(Prompt, attempt.prompt_id)
+    citations = _source_citation_items(prompt) if prompt is not None else []
 
     return _page(
         "Learn",
@@ -107,7 +116,13 @@ async def submit_learn_attempt_route(request: Request, session: SessionDep) -> s
           <section aria-labelledby="feedback-heading">
             <h2 id="feedback-heading">Feedback and next action</h2>
             <p>Attempt <strong>{escape(attempt.id)}</strong> was recorded.</p>
+            <p>Confidence: {escape(_confidence_label(attempt.confidence_rating))}</p>
+            <p>Correctness: pending scoring evidence.</p>
             <p>Review feedback and continue practice.</p>
+          </section>
+          <section aria-labelledby="sources-heading" class="source-panel">
+            <h2 id="sources-heading">Source citations after attempt</h2>
+            <ul>{''.join(citations) if citations else '<li>No source citations linked.</li>'}</ul>
           </section>
         </main>
         """,
@@ -203,6 +218,13 @@ def _prompt_body(prompt: Prompt) -> str:
     return prompt.versions[-1].body
 
 
+def _prompt_provenance(prompt: Prompt) -> str:
+    return (
+        f"Provenance: {prompt.authoring_method}; "
+        f"author {prompt.authoring_actor}; reviewer {prompt.reviewing_actor}."
+    )
+
+
 def _source_citation_items(prompt: Prompt) -> list[str]:
     items: list[str] = []
     for source in prompt.source_references:
@@ -215,6 +237,41 @@ def _source_citation_items(prompt: Prompt) -> list[str]:
             citation = f"{escape(source.id)}: {escape(source.stable_locator)}"
         items.append(f"<li>{citation}</li>")
     return items
+
+
+def _latest_attempt_summary(session: Session, *, learner_id: str, prompt_id: str | None) -> str:
+    if prompt_id is None:
+        return "Feedback appears after an attempt is recorded through the attempts API."
+    attempt = session.scalars(
+        select(Attempt)
+        .where(Attempt.learner_id == learner_id, Attempt.prompt_id == prompt_id)
+        .order_by(Attempt.created_at.desc())
+        .limit(1)
+    ).first()
+    if attempt is None:
+        return "Feedback appears after an attempt is recorded through the attempts API."
+
+    correctness = next(
+        (
+            record.correctness
+            for record in attempt.evidence_records
+            if record.correctness is not None
+        ),
+        None,
+    )
+    correctness_label = (
+        "pending scoring evidence"
+        if correctness is None
+        else "correct" if correctness else "incorrect"
+    )
+    return (
+        f"Latest evidence: confidence {_confidence_label(attempt.confidence_rating)}; "
+        f"correctness {correctness_label}."
+    )
+
+
+def _confidence_label(value: int | None) -> str:
+    return "not recorded" if value is None else f"{value}/5"
 
 
 def _optional_int(value: str | None) -> int | None:
