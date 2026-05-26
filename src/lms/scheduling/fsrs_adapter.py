@@ -120,8 +120,9 @@ FSRS_RULES: tuple[FSRSRule, ...] = (
         value=None,
         scheduling_included=False,
         reason="Transfer evidence is retained but excluded from FSRS interval calculation.",
-        applies=lambda record: (record.transfer_distance or "").strip().lower()
-        in TRANSFER_EXCLUDED_DISTANCES,
+        applies=lambda record: (
+            (record.transfer_distance or "").strip().lower() in TRANSFER_EXCLUDED_DISTANCES
+        ),
     ),
     FSRSRule(
         rule_id="partial-under-half",
