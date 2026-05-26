@@ -17,6 +17,7 @@ from lms.prompts.api import router as prompts_router
 from lms.scheduling.api import router as review_queue_router
 from lms.settings import get_settings
 from lms.sources.api import router as sources_router
+from lms.ui.api import router as learner_ui_router
 
 
 def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
@@ -49,6 +50,7 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     app.include_router(mastery_router)
     app.include_router(review_queue_router)
     app.include_router(llm_router)
+    app.include_router(learner_ui_router)
     return app
 
 
