@@ -11,16 +11,20 @@ from lms.capability.repository import (
     archive_capability_target,
     create_capability_target,
     create_gap_analysis,
+    create_maintenance_plan,
     get_capability_estimate,
     get_capability_target,
     get_gap_analysis,
+    get_maintenance_plan,
     list_capability_estimates,
     list_capability_targets,
     list_gap_analyses,
+    list_maintenance_plans,
     recompute_capability_estimate,
     serialize_capability_estimate,
     serialize_capability_target,
     serialize_gap_analysis,
+    serialize_maintenance_plan,
     update_capability_target,
 )
 from lms.capability.schemas import (
@@ -32,6 +36,9 @@ from lms.capability.schemas import (
     CapabilityTargetUpdate,
     GapAnalysisCreate,
     GapAnalysisRead,
+    MaintenancePlanCreate,
+    MaintenancePlanRead,
+    MaintenancePlanStatus,
 )
 from lms.db.session import get_session
 
@@ -247,3 +254,62 @@ def get_gap_analysis_route(analysis_id: str, session: SessionDep) -> dict[str, o
             detail="Gap analysis not found.",
         )
     return serialize_gap_analysis(analysis)
+
+
+@router.post(
+    "/maintenance-plans",
+    response_model=MaintenancePlanRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_maintenance_plan_route(
+    payload: MaintenancePlanCreate,
+    session: SessionDep,
+) -> dict[str, object]:
+    """Generate and persist a maintenance plan from one gap analysis."""
+    try:
+        plan = create_maintenance_plan(session, gap_analysis_id=payload.gap_analysis_id)
+        session.commit()
+        session.refresh(plan)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    return serialize_maintenance_plan(plan)
+
+
+@router.get("/maintenance-plans", response_model=list[MaintenancePlanRead])
+def list_maintenance_plans_route(
+    session: SessionDep,
+    learner_id: Annotated[str | None, Query(max_length=36)] = None,
+    target_id: Annotated[str | None, Query(max_length=36)] = None,
+    gap_analysis_id: Annotated[str | None, Query(max_length=36)] = None,
+    plan_status: Annotated[
+        MaintenancePlanStatus | None,
+        Query(alias="status", description="Filter by maintenance plan status."),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[dict[str, object]]:
+    """List persisted maintenance plans."""
+    plans = list_maintenance_plans(
+        session,
+        learner_id=learner_id,
+        target_id=target_id,
+        gap_analysis_id=gap_analysis_id,
+        status=plan_status,
+        limit=limit,
+    )
+    return [serialize_maintenance_plan(plan) for plan in plans]
+
+
+@router.get("/maintenance-plans/{plan_id}", response_model=MaintenancePlanRead)
+def get_maintenance_plan_route(plan_id: str, session: SessionDep) -> dict[str, object]:
+    """Return one persisted maintenance plan by id."""
+    plan = get_maintenance_plan(session, plan_id)
+    if plan is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Maintenance plan not found.",
+        )
+    return serialize_maintenance_plan(plan)
