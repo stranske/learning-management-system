@@ -23,6 +23,8 @@ from lms.db.base import Base
 
 TRACE_CLASSES: tuple[str, ...] = ("evidence-grade", "formative", "ephemeral")
 LLM_MODES: tuple[str, ...] = ("study-coach", "practice", "transfer", "authoring-assist")
+COACHING_INTENSITIES: tuple[str, ...] = ("full", "light", "quiet")
+TRACE_CONTROL_STATES: tuple[str, ...] = ("default", "kept", "forgotten")
 
 
 def _sql_values(values: tuple[str, ...]) -> str:
@@ -47,6 +49,14 @@ class LLMSession(Base):
             name="mode_valid",
         ),
         CheckConstraint(
+            f"coaching_intensity IN ({_sql_values(COACHING_INTENSITIES)})",
+            name="coaching_intensity_valid",
+        ),
+        CheckConstraint(
+            f"trace_control_state IN ({_sql_values(TRACE_CONTROL_STATES)})",
+            name="trace_control_state_valid",
+        ),
+        CheckConstraint(
             "input_tokens >= 0 AND output_tokens >= 0 AND cost_micro_usd >= 0",
             name="accounting_non_negative",
         ),
@@ -59,6 +69,12 @@ class LLMSession(Base):
     model: Mapped[str] = mapped_column(String(120), nullable=False)
     prompt_template_version: Mapped[str | None] = mapped_column(String(120))
     learner_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    coaching_intensity: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="full", server_default="full", index=True
+    )
+    trace_control_state: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="default", server_default="default", index=True
+    )
     parent_session_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("llm_sessions.id", ondelete="SET NULL"),
@@ -82,6 +98,7 @@ class LLMSession(Base):
         Boolean, nullable=False, default=True, server_default=true()
     )
     response_summary: Mapped[str | None] = mapped_column(Text)
+    transcript_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_replay: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )

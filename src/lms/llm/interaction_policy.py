@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 PolicyMode = Literal["study-coach", "practice"]
+CoachingIntensity = Literal["full", "light", "quiet"]
 
 ANSWER_SEEKING_TERMS = (
     "answer",
@@ -52,6 +53,7 @@ class InteractionContext:
     recent_attempt_correct: bool | None = None
     recent_incorrect_streak: int = 0
     recent_attempt_latency_seconds: int | None = None
+    coaching_intensity: CoachingIntensity = "full"
 
 
 @dataclass(frozen=True)
@@ -180,6 +182,20 @@ def decide_interaction_policy(context: InteractionContext) -> PolicyDecision:
             source_constraints=context.source_constraints,
         )
 
+    if context.coaching_intensity == "quiet":
+        return PolicyDecision(
+            behavior="quiet-mode-request",
+            learning_risk="low",
+            next_action=(
+                "Give one brief reminder of the formative approach, then minimize nudges "
+                "unless learning integrity requires intervention."
+            ),
+            response_style="quiet-mode",
+            direct_answer_allowed=True,
+            disabled_supports=("formative-nudges",),
+            source_constraints=context.source_constraints,
+        )
+
     return PolicyDecision(
         behavior="productive-learning-turn",
         learning_risk="low",
@@ -199,6 +215,7 @@ def build_policy_prompt(context: InteractionContext, decision: PolicyDecision) -
         [
             f"Mode: {context.mode}",
             f"Learner: {context.learner_id}",
+            f"Coaching intensity: {context.coaching_intensity}",
             f"Prompt id: {context.prompt_id or 'none'}",
             f"Policy behavior: {decision.behavior}",
             f"Response style: {decision.response_style}",

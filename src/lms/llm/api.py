@@ -21,7 +21,9 @@ from lms.llm.interaction_policy import (
     decide_interaction_policy,
     flag_uncited_claims,
 )
+from lms.llm.models import LLMSession
 from lms.llm.providers import FakeProvider
+from lms.llm.trace_controls import apply_trace_control
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -41,6 +43,7 @@ class LLMSessionCreate(BaseModel):
     hint_count: int = Field(default=0, ge=0)
     confidence_rating: int | None = Field(default=None, ge=1, le=5)
     recent_attempt_correct: bool | None = None
+    coaching_intensity: Literal["full", "light", "quiet"] = "full"
 
 
 class LLMSessionRead(BaseModel):
@@ -49,6 +52,12 @@ class LLMSessionRead(BaseModel):
     session_id: str
     mode: str
     trace_class: str
+    coaching_intensity: str
+    model: str
+    cost_micro_usd: int
+    cost_summary: dict[str, int]
+    external_export_allowed: bool
+    trace_control_state: str
     response_text: str
     policy_decision: dict[str, object]
     flags: list[str]
@@ -116,6 +125,23 @@ class AuthoringAssistProposeResponse(BaseModel):
     prompt_authoring_method: str
 
 
+class LLMTraceControlRequest(BaseModel):
+    """Learner keep/forget action for a retained LLM trace."""
+
+    action: Literal["keep", "forget"]
+    actor_id: str = Field(min_length=1, max_length=255)
+
+
+class LLMTraceControlRead(BaseModel):
+    """Trace-control result for a stored LLM session."""
+
+    session_id: str
+    trace_class: str
+    trace_control_state: str
+    response_summary_retained: bool
+    external_export_allowed: bool
+
+
 @router.post(
     "/authoring-assist/propose",
     response_model=AuthoringAssistProposeResponse,
@@ -180,6 +206,7 @@ def create_llm_session_route(payload: LLMSessionCreate, session: SessionDep) -> 
         hint_count=payload.hint_count,
         confidence_rating=payload.confidence_rating,
         recent_attempt_correct=payload.recent_attempt_correct,
+        coaching_intensity=payload.coaching_intensity,
     )
     decision = decide_interaction_policy(context)
     client = _default_client()
@@ -192,6 +219,7 @@ def create_llm_session_route(payload: LLMSessionCreate, session: SessionDep) -> 
             trace_class=decision.trace_class,
             source_constraints=decision.source_constraints,
             learner_id=payload.learner_id,
+            coaching_intensity=payload.coaching_intensity,
             prompt_template_version="study-coach-policy-v1",
             provider_name="fake",
         )
@@ -202,6 +230,7 @@ def create_llm_session_route(payload: LLMSessionCreate, session: SessionDep) -> 
             prompt=prompt,
             trace_class=decision.trace_class,
             learner_id=payload.learner_id,
+            coaching_intensity=payload.coaching_intensity,
             prompt_template_version="study-coach-policy-v1",
             provider_name="fake",
         )
@@ -214,6 +243,16 @@ def create_llm_session_route(payload: LLMSessionCreate, session: SessionDep) -> 
         session_id=response.session.id,
         mode=response.session.mode,
         trace_class=response.session.trace_class,
+        coaching_intensity=response.session.coaching_intensity,
+        model=response.session.model,
+        cost_micro_usd=response.session.cost_micro_usd,
+        cost_summary={
+            "input_tokens": response.session.input_tokens,
+            "output_tokens": response.session.output_tokens,
+            "cost_micro_usd": response.session.cost_micro_usd,
+        },
+        external_export_allowed=response.session.external_export_allowed,
+        trace_control_state=response.session.trace_control_state,
         response_text=response.text,
         policy_decision={
             "behavior": decision.behavior,
@@ -224,4 +263,36 @@ def create_llm_session_route(payload: LLMSessionCreate, session: SessionDep) -> 
             "disabled_supports": list(decision.disabled_supports),
         },
         flags=list(flags),
+    )
+
+
+@router.post("/sessions/{session_id}/trace-control", response_model=LLMTraceControlRead)
+def control_llm_trace_route(
+    session_id: str,
+    payload: LLMTraceControlRequest,
+    session: SessionDep,
+) -> LLMTraceControlRead:
+    """Apply a learner keep/forget override to one persisted LLM session."""
+    llm_session = session.get(LLMSession, session_id)
+    if llm_session is None:
+        raise HTTPException(status_code=404, detail="LLM session not found")
+    if llm_session.learner_id != payload.actor_id:
+        raise HTTPException(status_code=404, detail="LLM session not found")
+    try:
+        apply_trace_control(
+            session,
+            llm_session,
+            action=payload.action,
+            actor_id=payload.actor_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    session.commit()
+    session.refresh(llm_session)
+    return LLMTraceControlRead(
+        session_id=llm_session.id,
+        trace_class=llm_session.trace_class,
+        trace_control_state=llm_session.trace_control_state,
+        response_summary_retained=llm_session.response_summary is not None,
+        external_export_allowed=llm_session.external_export_allowed,
     )

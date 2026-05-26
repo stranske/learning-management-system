@@ -21,7 +21,8 @@ from lms.llm.exceptions import (
     SourceConstraintViolation,
     StructuredOutputValidationError,
 )
-from lms.llm.models import LLM_MODES, TRACE_CLASSES, LLMSession
+from lms.llm.interaction_policy import CoachingIntensity
+from lms.llm.models import COACHING_INTENSITIES, LLM_MODES, TRACE_CLASSES, LLMSession
 from lms.llm.providers import ProviderAdapter, ProviderResponse
 from lms.llm.redaction import RedactionResult, redact_pii
 
@@ -79,6 +80,7 @@ class LLMClient:
         source_constraints: Sequence[str] | None = None,
         max_tokens: int | None = None,
         learner_id: str | None = None,
+        coaching_intensity: CoachingIntensity = "full",
         prompt_template_version: str | None = None,
         provider_name: str | None = None,
     ) -> LLMResponse:
@@ -102,6 +104,7 @@ class LLMClient:
         """
         self._validate_mode(mode)
         self._validate_trace_class(trace_class)
+        self._validate_coaching_intensity(coaching_intensity)
 
         model = self.config.model_for(mode)
         provider = self._resolve_provider(provider_name)
@@ -155,6 +158,7 @@ class LLMClient:
             model=provider_response.model,
             prompt_template_version=prompt_template_version,
             learner_id=learner_id,
+            coaching_intensity=coaching_intensity,
             input_tokens=provider_response.input_tokens,
             output_tokens=provider_response.output_tokens,
             cost_micro_usd=provider_response.cost_micro_usd,
@@ -234,6 +238,14 @@ class LLMClient:
     def _validate_trace_class(trace_class: str) -> None:
         if trace_class not in TRACE_CLASSES:
             raise LLMError(f"unknown trace_class '{trace_class}'; valid: {TRACE_CLASSES}")
+
+    @staticmethod
+    def _validate_coaching_intensity(coaching_intensity: str) -> None:
+        if coaching_intensity not in COACHING_INTENSITIES:
+            raise LLMError(
+                f"unknown coaching_intensity '{coaching_intensity}'; "
+                f"valid: {COACHING_INTENSITIES}"
+            )
 
     def _resolve_provider(self, provider_name: str | None) -> ProviderAdapter:
         name = provider_name or self.config.default_provider
