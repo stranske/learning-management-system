@@ -35,6 +35,14 @@ def test_alembic_upgrade_head_creates_llm_sessions_table(
         names = {c["name"] for c in check_constraints}
         assert "ck_llm_sessions_trace_class_valid" in names
         assert "ck_llm_sessions_mode_valid" in names
+        assert "ck_llm_sessions_coaching_intensity_valid" in names
+        assert "ck_llm_sessions_trace_control_state_valid" in names
+        columns = {column["name"] for column in inspector.get_columns("llm_sessions")}
+        assert {
+            "coaching_intensity",
+            "trace_control_state",
+            "transcript_deleted_at",
+        }.issubset(columns)
     finally:
         engine.dispose()
 

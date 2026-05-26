@@ -79,6 +79,7 @@ class LLMClient:
         source_constraints: Sequence[str] | None = None,
         max_tokens: int | None = None,
         learner_id: str | None = None,
+        coaching_intensity: str = "full",
         prompt_template_version: str | None = None,
         provider_name: str | None = None,
     ) -> LLMResponse:
@@ -155,6 +156,7 @@ class LLMClient:
             model=provider_response.model,
             prompt_template_version=prompt_template_version,
             learner_id=learner_id,
+            coaching_intensity=coaching_intensity,
             input_tokens=provider_response.input_tokens,
             output_tokens=provider_response.output_tokens,
             cost_micro_usd=provider_response.cost_micro_usd,
