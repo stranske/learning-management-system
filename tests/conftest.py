@@ -14,6 +14,7 @@ import lms.evidence.models  # noqa: F401  # register Base.metadata
 import lms.graphs.models  # noqa: F401  # register Base.metadata
 import lms.learners.models  # noqa: F401  # register Base.metadata
 import lms.llm.models  # noqa: F401  # register Base.metadata
+import lms.llm.proposals  # noqa: F401  # register Base.metadata
 import lms.prompts.models  # noqa: F401  # register Base.metadata
 import lms.scheduling.models  # noqa: F401  # register Base.metadata
 import lms.sources.models  # noqa: F401  # register Base.metadata
