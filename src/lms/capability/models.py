@@ -34,6 +34,7 @@ CAPABILITY_ESTIMATE_REDACTION_CLASSES: tuple[str, ...] = (
     "learner-facing-inferred-mastery",
     "internal-inferred-mastery",
 )
+GAP_ANALYSIS_SEVERITIES: tuple[str, ...] = ("low", "medium", "high")
 
 capability_target_nodes = Table(
     "capability_target_nodes",
@@ -204,4 +205,69 @@ class CapabilityEstimate(Base):
     )
 
     target: Mapped[CapabilityTarget] = relationship("CapabilityTarget")
+    learner: Mapped[Learner] = relationship("Learner")
+
+
+class GapAnalysis(Base):
+    """Persisted gap analysis derived from one capability estimate."""
+
+    __tablename__ = "gap_analyses"
+    __table_args__ = (
+        CheckConstraint(
+            f"ownership_scope IN ({_sql_values(OWNERSHIP_SCOPES)})",
+            name="ownership_scope_valid",
+        ),
+        CheckConstraint("ownership_scope = 'personal'", name="personal_scope_only"),
+        CheckConstraint(
+            f"severity IN ({_sql_values(GAP_ANALYSIS_SEVERITIES)})",
+            name="severity_valid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    target_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("capability_targets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    estimate_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("capability_estimates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    learner_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("learners.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    gap_items: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False, default=list)
+    severity: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="low", server_default="low", index=True
+    )
+    required_evidence: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    recommended_action_types: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    ownership_scope: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="personal", server_default="personal", index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    target: Mapped[CapabilityTarget] = relationship("CapabilityTarget")
+    estimate: Mapped[CapabilityEstimate] = relationship("CapabilityEstimate")
     learner: Mapped[Learner] = relationship("Learner")
