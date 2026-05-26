@@ -28,7 +28,7 @@ dependencies = [
     "sqlalchemy>=2.0.50",
     "alembic>=1.13.0",
     "psycopg[binary]>=3.3.4",
-    "uvicorn[standard]>=0.30.0",
+    "uvicorn[standard]>=0.48.0",
     "pandas>=3.0.3",
     "mistune>=3.0.0",
 ]
