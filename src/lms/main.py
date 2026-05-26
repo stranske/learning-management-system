@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from importlib.resources import files
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from lms.api.audit import router as audit_router
 from lms.api.health import router as health_router
@@ -55,6 +58,8 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     app.include_router(review_queue_router)
     app.include_router(llm_router)
     app.include_router(learner_ui_router)
+    static_path = files("lms.ui.static")
+    app.mount("/static/ui", StaticFiles(directory=str(static_path)), name="ui-static")
     return app
 
 
