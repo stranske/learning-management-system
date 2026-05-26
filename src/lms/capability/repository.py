@@ -723,12 +723,12 @@ def _node_gap_items(
     if evidence_count > 0 and confidence < target.confidence_threshold:
         items.append(
             _gap_item(
-                gap_type="stale_evidence",
+                gap_type="low_confidence_evidence",
                 severity="medium",
-                recommended_action_type="refresh-evidence",
+                recommended_action_type="collect-stronger-evidence",
                 knowledge_node_id=node_id,
                 required_evidence=target.required_evidence_types,
-                rationale="Evidence exists, but confidence is still below the target threshold.",
+                rationale="Evidence exists, but confidence coverage remains below the target threshold.",
                 current_estimate=current_estimate,
                 confidence=confidence,
             )

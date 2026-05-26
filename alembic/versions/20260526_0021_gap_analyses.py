@@ -1,7 +1,7 @@
 """Add personal capability gap analyses.
 
 Revision ID: 20260526_0021_gap_analyses
-Revises: 20260526_0020_capability_estimates
+Revises: 20260526_0020_transfer_cases
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260526_0021_gap_analyses"
-down_revision = "20260526_0020_capability_estimates"
+down_revision = "20260526_0020_transfer_cases"
 branch_labels = None
 depends_on = None
 

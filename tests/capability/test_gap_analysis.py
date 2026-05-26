@@ -97,10 +97,16 @@ def test_gap_analysis_uses_nonpunitive_gap_language(db_session: Session) -> None
     estimate = recompute_capability_estimate(db_session, target_id=target.id)
 
     analysis = create_gap_analysis(db_session, estimate_id=estimate.id)
+    gap_types = {item["gap_type"] for item in analysis.gap_items}
     rationales = " ".join(str(item["rationale"]).lower() for item in analysis.gap_items)
 
-    assert "support_dependence" in {item["gap_type"] for item in analysis.gap_items}
+    assert "low_confidence_evidence" in gap_types
+    assert "stale_evidence" not in gap_types
+    assert "support_dependence" in gap_types
+    assert "collect-stronger-evidence" in analysis.recommended_action_types
     assert "independent-practice" in analysis.recommended_action_types
+    assert "confidence coverage" in rationales
+    assert "stale" not in rationales
     assert "learner" not in rationales
     assert "failure" not in rationales
     assert "deficient" not in rationales
