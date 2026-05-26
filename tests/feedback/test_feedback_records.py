@@ -52,3 +52,37 @@ def test_attempt_feedback_promotes_to_feedback_record(db_session: Session) -> No
     assert actions[0].action_type == "prerequisite-remediation"
     assert actions[0].title == "Retry with a required substitution check."
     assert records[0].next_action_ids == [actions[0].id]
+
+
+def test_minimal_legacy_attempt_feedback_promotes_to_feedback_record(
+    db_session: Session,
+) -> None:
+    """Legacy feedback payloads without M5 fields still promote safely."""
+    attempt = create_attempt(
+        db_session,
+        learner_id="learner-1",
+        prompt_id="prompt-1",
+        response_text="Attempt answer",
+        feedback={"next_action": "Review the source"},
+    )
+    db_session.commit()
+
+    records = list_feedback_records(
+        db_session,
+        learner_id="learner-1",
+        attempt_id=attempt.id,
+        feedback_level="coaching",
+    )
+    assert len(records) == 1
+    assert records[0].goal == "Review learner response"
+    assert records[0].observed_evidence == "Attempt answer"
+
+    actions = list_feedback_actions(
+        db_session,
+        learner_id="learner-1",
+        feedback_record_id=records[0].id,
+        status="open",
+    )
+    assert len(actions) == 1
+    assert actions[0].action_type == "retry"
+    assert actions[0].title == "Review the source"

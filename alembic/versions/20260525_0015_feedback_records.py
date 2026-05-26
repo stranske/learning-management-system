@@ -1,7 +1,7 @@
 """Add durable feedback records and actions.
 
 Revision ID: 20260525_0015_feedback_records
-Revises: 20260525_0014_scheduler_records
+Revises: 20260526_0015_review_policy_active_unique
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260525_0015_feedback_records"
-down_revision = "20260525_0014_scheduler_records"
+down_revision = "20260526_0015_review_policy_active_unique"
 branch_labels = None
 depends_on = None
 
@@ -40,7 +40,9 @@ def upgrade() -> None:
         sa.Column("attempt_id", sa.String(length=36), nullable=True),
         sa.Column("prompt_id", sa.String(length=36), nullable=True),
         sa.Column("evidence_record_id", sa.String(length=36), nullable=True),
-        sa.Column("feedback_level", sa.String(length=32), server_default="coaching", nullable=False),
+        sa.Column(
+            "feedback_level", sa.String(length=32), server_default="coaching", nullable=False
+        ),
         sa.Column("goal", sa.Text(), nullable=False),
         sa.Column("observed_evidence", sa.Text(), nullable=False),
         sa.Column("diagnosis", sa.Text(), nullable=True),
@@ -55,7 +57,9 @@ def upgrade() -> None:
             name=op.f("ck_feedback_records_feedback_record_level_valid"),
         ),
         sa.ForeignKeyConstraint(["attempt_id"], ["attempts.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["evidence_record_id"], ["evidence_records.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(
+            ["evidence_record_id"], ["evidence_records.id"], ondelete="SET NULL"
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     for column in (

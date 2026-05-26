@@ -93,6 +93,10 @@ def promote_attempt_feedback(
     """Promote legacy Attempt.feedback into durable record/action rows."""
     source_feedback = dict(attempt.feedback)
     next_action = str(source_feedback.get("next_action", "")).strip()
+    goal = str(source_feedback.get("goal") or "Review learner response")
+    observed_evidence = str(
+        source_feedback.get("observed_evidence") or attempt.response_text or next_action
+    )
     feedback_level = "remediation" if source_feedback.get("gap") else "coaching"
     record = create_feedback_record(
         session,
@@ -101,9 +105,9 @@ def promote_attempt_feedback(
         prompt_id=attempt.prompt_id,
         evidence_record_id=evidence_record_id,
         feedback_level=feedback_level,
-        goal=str(source_feedback["goal"]),
-        observed_evidence=str(source_feedback["observed_evidence"]),
-        diagnosis=str(source_feedback.get("observed_evidence") or ""),
+        goal=goal,
+        observed_evidence=observed_evidence,
+        diagnosis=observed_evidence,
         gap=source_feedback.get("gap"),
         source_feedback=source_feedback,
     )
@@ -153,9 +157,7 @@ def list_feedback_records(
         statement = statement.where(FeedbackRecord.prompt_id == prompt_id)
     if feedback_level is not None:
         statement = statement.where(FeedbackRecord.feedback_level == feedback_level)
-    statement = statement.order_by(FeedbackRecord.created_at.desc(), FeedbackRecord.id).limit(
-        limit
-    )
+    statement = statement.order_by(FeedbackRecord.created_at.desc(), FeedbackRecord.id).limit(limit)
     return list(session.scalars(statement))
 
 
@@ -184,7 +186,5 @@ def list_feedback_actions(
         statement = statement.where(FeedbackAction.action_type == action_type)
     if status is not None:
         statement = statement.where(FeedbackAction.status == status)
-    statement = statement.order_by(FeedbackAction.created_at.desc(), FeedbackAction.id).limit(
-        limit
-    )
+    statement = statement.order_by(FeedbackAction.created_at.desc(), FeedbackAction.id).limit(limit)
     return list(session.scalars(statement))
