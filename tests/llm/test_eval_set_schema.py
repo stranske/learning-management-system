@@ -61,12 +61,20 @@ def test_study_coach_gold_set_schema_valid() -> None:
     )
     assert covered_scenarios <= set(ALLOWED_SCENARIOS)
 
+    covered_labels: set[str] = set()
     for entry in entries:
         assert entry.expected_labels, f"{entry.entry_id} must have expected_labels"
         assert set(entry.expected_labels) <= set(ALLOWED_EXPECTED_LABELS)
         assert entry.prompt.strip(), f"{entry.entry_id} prompt must be non-empty"
         assert entry.mode in ("study-coach", "practice", "transfer", "authoring-assist")
         assert entry.trace_class in ("ephemeral", "formative", "evidence-grade")
+        covered_labels.update(entry.expected_labels)
+
+    missing_labels = set(ALLOWED_EXPECTED_LABELS) - covered_labels
+    assert not missing_labels, (
+        f"study-coach-v1 must exercise every allowed expected label at least once; "
+        f"missing: {sorted(missing_labels)}"
+    )
 
 
 def test_load_eval_set_rejects_unknown_field(tmp_path: Path) -> None:
