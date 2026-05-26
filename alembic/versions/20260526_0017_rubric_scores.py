@@ -36,15 +36,23 @@ def upgrade() -> None:
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
-        sa.CheckConstraint("raw_score >= 0", name=op.f("ck_rubric_scores_rubric_score_raw_non_negative")),
-        sa.CheckConstraint("max_score > 0", name=op.f("ck_rubric_scores_rubric_score_max_positive")),
+        sa.CheckConstraint(
+            "raw_score >= 0", name=op.f("ck_rubric_scores_rubric_score_raw_non_negative")
+        ),
+        sa.CheckConstraint(
+            "max_score > 0", name=op.f("ck_rubric_scores_rubric_score_max_positive")
+        ),
         sa.CheckConstraint(
             "normalized_score >= 0.0 AND normalized_score <= 1.0",
             name=op.f("ck_rubric_scores_rubric_score_normalized_unit_interval"),
         ),
         sa.ForeignKeyConstraint(["attempt_id"], ["attempts.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["evidence_record_id"], ["evidence_records.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["feedback_record_id"], ["feedback_records.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(
+            ["evidence_record_id"], ["evidence_records.id"], ondelete="SET NULL"
+        ),
+        sa.ForeignKeyConstraint(
+            ["feedback_record_id"], ["feedback_records.id"], ondelete="SET NULL"
+        ),
         sa.ForeignKeyConstraint(["rubric_id"], ["rubrics.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id"),
     )
