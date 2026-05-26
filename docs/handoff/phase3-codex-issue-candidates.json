@@ -1,0 +1,509 @@
+{
+  "agent": "codex",
+  "phase": "phase3-issue-generation",
+  "generated_at": "2026-05-26T06:30:59.817432+00:00",
+  "scope": "milestones-5-and-6",
+  "issues": [
+    {
+      "issue_id": "M5-001",
+      "milestone": "M5",
+      "title": "Add learner knowledge profiles",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [],
+      "body_markdown": "## Why\n\nMilestone 5 needs a learner-facing state summary that is broader than the existing computed mastery list. `KnowledgeProfile` should combine mastery evidence, confidence, support dependence, and graph scope so gap-closing can start from what the learner appears able to do now.\n\n## Scope\n\n- Add `KnowledgeProfile` as a sibling to `Learner` in `src/lms/learners/models.py` or as a computed/service-backed model under `src/lms/learners/` if persistence is not needed yet.\n- Extend `src/lms/learners/schemas.py`, `src/lms/learners/repository.py`, and `src/lms/learners/api.py` with `GET /learners/{learner_id}/knowledge-profile`.\n- Use `src/lms/mastery/service.py::mastery_estimates_for_learner` and `src/lms/evidence/models.py::EvidenceRecord` rather than redefining mastery state.\n- Respect `KnowledgeNode.ownership_scope` from `src/lms/graphs/models.py` when summarizing nodes.\n\n## Non-Goals\n\n- Adding role or institution certification records.\n- Creating `CertificationSnapshot`, `Course`, `Module`, `Lesson`, or a separate `LearningObjective` entity.\n- Replacing the current `MasteryEstimate` computed-view behavior with a persisted mastery table.\n\n## Tasks\n\n- [ ] Add `KnowledgeProfile` schema fields for learner id, ownership scope, knowledge node id, current estimate, confidence, evidence count, last evidence id, support-dependence markers, and next evidence needed.\n- [ ] Implement profile aggregation from `EvidenceRecord`, `KnowledgeNode`, and `mastery_estimates_for_learner` without writing duplicate mastery rows.\n- [ ] Add the `/learners/{learner_id}/knowledge-profile` route with an `ownership_scope` query parameter defaulting to `personal`.\n- [ ] Register any new model metadata in `tests/conftest.py` and `tests/ui/conftest.py` if a persistent table is added.\n- [ ] Write tests in `tests/learners/test_knowledge_profile.py`, not under `tests/integration/`.\n\n## Acceptance Criteria\n\n- [ ] `tests/learners/test_knowledge_profile.py::test_knowledge_profile_summarizes_mastery_and_support_dependence` passes.\n- [ ] `tests/learners/test_knowledge_profile.py::test_knowledge_profile_filters_by_ownership_scope` passes.\n- [ ] `GET /learners/{learner_id}/knowledge-profile?ownership_scope=personal` returns no institutional-scope nodes.\n- [ ] The implementation reads existing `EvidenceRecord` rows and does not introduce a persisted `MasteryEstimate` table.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` headings `Current Capability And Certification`, `Learner Model`, and `Mastery Is An Evidence-Backed Estimate`. The current implementation already has verbose evidence in `src/lms/evidence/models.py` and on-demand mastery in `src/lms/mastery/service.py`; this issue should add the learner-state view that later capability estimates consume."
+    },
+    {
+      "issue_id": "M5-002",
+      "milestone": "M5",
+      "title": "Persist review policies and scheduler decisions",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-001"
+      ],
+      "body_markdown": "## Why\n\nThe review queue currently stores `ReviewQueueItem.decision_log`, but Milestone 5 needs durable schedule records, policy records, and explainable decisions that survive queue item churn. These records make scheduler behavior auditable for review, remediation, and gap-closing plans.\n\n## Scope\n\n- Extend `src/lms/scheduling/models.py` with `ReviewPolicy`, `ReviewSchedule`, and `SchedulerDecision`.\n- Extend `src/lms/scheduling/schemas.py`, `src/lms/scheduling/repository.py`, `src/lms/scheduling/service.py`, and `src/lms/scheduling/api.py`.\n- Add read-oriented endpoints `/review-policies`, `/review-schedules`, and `/scheduler-decisions`; service code writes the records.\n- Join schedules and decisions to `learner_id`, `knowledge_node_id`, `EvidenceRecord`, and optional `ReviewQueueItem` ids where available.\n\n## Non-Goals\n\n- Replacing the existing `/learners/{learner_id}/review-queue` endpoint.\n- Implementing a learned scheduler or graph-based implicit-review credit.\n- Adding `EvidenceDecayPolicy`, `RecertificationPolicy`, or institutional certification behavior.\n\n## Tasks\n\n- [ ] Add `ReviewPolicy`, `ReviewSchedule`, and `SchedulerDecision` SQLAlchemy models with reason code, schedule state, due-at, policy version, knowledge type, ownership scope, source evidence id, and decision rationale fields.\n- [ ] Add Alembic migration after `20260525_0013_llm_learner_controls.py` for the new scheduling tables.\n- [ ] Update scheduler service functions so queue creation can also create a `ReviewSchedule` and `SchedulerDecision` record.\n- [ ] Expose read/list routes with learner id and knowledge node filters, keeping writes inside scheduling services for now.\n- [ ] Write tests in `tests/scheduling/test_review_schedules.py` and `tests/scheduling/test_scheduler_decisions.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/scheduling/test_review_schedules.py::test_review_schedule_records_survive_queue_completion` passes.\n- [ ] `tests/scheduling/test_scheduler_decisions.py::test_scheduler_decision_explains_remediation_reason` passes.\n- [ ] `GET /scheduler-decisions?learner_id=...` returns decision rationale and source evidence ids.\n- [ ] The existing `tests/scheduling/test_review_queue.py` and `tests/scheduling/test_sustainability.py` still pass.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` heading `Retrieval, Spacing, Interleaving, And Remediation Should Be Scheduler Inputs` and `docs/product/early-design-decisions.md` Segment 8. Build on `ReviewQueueItem` in `src/lms/scheduling/models.py`; do not collapse the queue and schedule tables into one record because the brief calls out schedule records that survive queue item lifecycle changes."
+    },
+    {
+      "issue_id": "M5-003",
+      "milestone": "M5",
+      "title": "Add remediation triggers and misconception patterns",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-002"
+      ],
+      "body_markdown": "## Why\n\nFeedback should diagnose recurring wrong-answer patterns and turn them into next actions rather than only recording correctness. `RemediationTrigger` and `MisconceptionPattern` give the scheduler and feedback system explicit rules for failed prerequisites, repeated misses, and conceptual-conflict repairs.\n\n## Scope\n\n- Add `MisconceptionPattern` in `src/lms/feedback/models.py` or `src/lms/graphs/models.py`; prefer `src/lms/feedback/` unless graph ownership is required by the implementation.\n- Add `RemediationTrigger` in `src/lms/scheduling/models.py` with links to pattern id, knowledge node id, and trigger rule metadata.\n- Create `src/lms/feedback/schemas.py`, `src/lms/feedback/repository.py`, and `src/lms/feedback/api.py` because `src/lms/feedback/` is currently only a placeholder package.\n- Expose `/knowledge/misconceptions` or `/feedback/misconceptions` consistently, plus read/write APIs for remediation triggers.\n\n## Non-Goals\n\n- Building a full adaptive tutor or automatic natural-language misconception classifier.\n- Adding full Scenario or Simulation records.\n- Creating human coaching assignment or escalation entities.\n\n## Tasks\n\n- [ ] Add `MisconceptionPattern` fields for pattern label, wrong-answer signature, diagnosis text, target knowledge node, ownership scope, confidence, and suggested feedback action type.\n- [ ] Add `RemediationTrigger` fields for failed prerequisite, repeated incorrect attempts, high-confidence error, hint-dependence, and manual author flag rules.\n- [ ] Implement repository helpers that match an `Attempt`/`EvidenceRecord` payload to configured triggers deterministically.\n- [ ] Add routes for creating and listing patterns and triggers with ownership-scope validation against `KnowledgeNode` when a node id is supplied.\n- [ ] Write focused tests in `tests/feedback/test_misconception_patterns.py` and `tests/scheduling/test_remediation_triggers.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/feedback/test_misconception_patterns.py::test_pattern_matches_wrong_answer_signature` passes.\n- [ ] `tests/scheduling/test_remediation_triggers.py::test_failed_prerequisite_trigger_schedules_remediation_reason` passes.\n- [ ] Cross-scope pattern-to-node links are rejected unless they are explicit graph references already allowed by `KnowledgeEdge` rules.\n- [ ] No LLM call is required for deterministic pattern matching.\n\n## Implementation Notes\n\nSee `docs/product/research-domain-model.md` Section 2.4 seed records for misconception patterns and `docs/product/project-plan.md` heading `Feedback And Rubric System`. This is a catalog/rules foundation; later LLM feedback can propose pattern matches, but deterministic local matching must work first."
+    },
+    {
+      "issue_id": "M5-004",
+      "milestone": "M5",
+      "title": "Promote feedback records and actions",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-003"
+      ],
+      "body_markdown": "## Why\n\nPhase 1 stored structured feedback on `Attempt.feedback` to keep the learner loop small. Milestone 5 promotes feedback into durable records with explicit next actions so revisions, remediation, and feedback analytics can operate without overloading attempts.\n\n## Scope\n\n- Add `FeedbackRecord` and `FeedbackAction` models in `src/lms/feedback/models.py`.\n- Preserve compatibility with existing `src/lms/evidence/models.py::Attempt.feedback` and `src/lms/evidence/api.py::create_attempt_route`.\n- Add `src/lms/feedback/schemas.py`, `src/lms/feedback/repository.py`, and `src/lms/feedback/api.py` routes for `/feedback` and `/feedback-actions`.\n- Include action types: retry, parallel-prompt, prerequisite-remediation, model-comparison, revision, coach-review, and author-review as data values without creating coaching entities.\n\n## Non-Goals\n\n- Removing `Attempt.feedback` before a compatibility path exists.\n- Adding `Coach`, `CoachAssignment`, `CoachIntervention`, or manager workflow entities.\n- Adding institutional certification or summative evaluation policy.\n\n## Tasks\n\n- [ ] Add a migration for `feedback_records` and `feedback_actions` with links to learner id, attempt id, prompt id, evidence record id, feedback level, diagnosis, gap, and next action ids.\n- [ ] Implement a repository helper that creates a `FeedbackRecord` from the current `Attempt.feedback` shape during attempt creation.\n- [ ] Add CRUD/list routes with filters for learner id, attempt id, prompt id, feedback level, and action status.\n- [ ] Update `src/lms/main.py` to include the feedback router.\n- [ ] Write tests in `tests/feedback/test_feedback_records.py` and `tests/api/test_feedback.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/feedback/test_feedback_records.py::test_attempt_feedback_promotes_to_feedback_record` passes.\n- [ ] `tests/api/test_feedback.py::test_create_feedback_action_for_remediation` passes.\n- [ ] Existing `tests/evidence/test_attempts.py` still pass with the legacy `Attempt.feedback` response shape.\n- [ ] The OpenAPI schema includes `/feedback` and `/feedback-actions`.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` headings `Feedback Should Create A Next Action` and `Feedback And Rubric System`. The current migration path starts from `Attempt.feedback` in `src/lms/evidence/models.py`; keep that field as a compatibility source while new feedback records become the durable representation."
+    },
+    {
+      "issue_id": "M5-005",
+      "milestone": "M5",
+      "title": "Add reusable feedback templates",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-004"
+      ],
+      "body_markdown": "## Why\n\nAuthors need reusable, auditable feedback language that connects goal, evidence, gap, and next action while avoiding trait labels. `FeedbackTemplate` turns repeated feedback patterns into data without requiring an LLM call for every message.\n\n## Scope\n\n- Add `FeedbackTemplate` in `src/lms/feedback/models.py` with placeholder metadata and ownership scope.\n- Extend `src/lms/feedback/schemas.py`, `src/lms/feedback/repository.py`, and `src/lms/feedback/api.py` with `/feedback-templates` routes.\n- Add a small rendering helper under `src/lms/feedback/templates.py` or `src/lms/feedback/service.py`.\n- Link templates optionally to `MisconceptionPattern`, `FeedbackAction`, and knowledge node ids.\n\n## Non-Goals\n\n- Building a rich authoring UI; M6 consumes this API later.\n- Generating templates automatically with unrestricted LLM calls.\n- Introducing trait-feedback or fixed learner labels in default template text.\n\n## Tasks\n\n- [ ] Add `FeedbackTemplate` model fields for name, template_body, placeholder_schema, feedback_level, action_type, ownership_scope, status, authoring_actor, and timestamps.\n- [ ] Implement placeholder validation so missing required placeholders return a deterministic validation error.\n- [ ] Add route tests for creating, listing, rendering, archiving, and rejecting fixed-label default copy.\n- [ ] Document the test location as `tests/feedback/test_feedback_templates.py`, not `tests/integration/`.\n\n## Acceptance Criteria\n\n- [ ] `tests/feedback/test_feedback_templates.py::test_render_feedback_template_with_goal_gap_next_action` passes.\n- [ ] `tests/feedback/test_feedback_templates.py::test_template_rejects_missing_required_placeholder` passes.\n- [ ] `POST /feedback-templates` stores the placeholder schema and `POST /feedback-templates/{id}/render` renders with supplied values.\n- [ ] Default seed/template examples avoid fixed ability labels.\n\n## Implementation Notes\n\nSee `docs/product/research-domain-model.md` Section 5.2 seed records and `docs/product/project-plan.md` heading `Feedback And Rubric System`. Keep template rendering deterministic; LLM-assisted wording improvements can be a future authoring assist feature using the existing `src/lms/llm/authoring_assist.py` path."
+    },
+    {
+      "issue_id": "M5-006",
+      "milestone": "M5",
+      "title": "Add rubrics and criteria APIs",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [],
+      "body_markdown": "## Why\n\nTransfer and reasoning-quality assessments need explicit performance standards. `Rubric` and `RubricCriterion` let prompts and cases define what good work means before any score is attached.\n\n## Scope\n\n- Add `Rubric` and `RubricCriterion` in `src/lms/feedback/models.py`.\n- Extend `src/lms/feedback/schemas.py`, `src/lms/feedback/repository.py`, and `src/lms/feedback/api.py` with `/rubrics` and `/rubric-criteria` routes.\n- Allow rubrics to link to `Prompt`, `KnowledgeNode`, and later `Case` ids without requiring all links at creation.\n- Record `ownership_scope` and authoring audit fields consistently with `KnowledgeNode` and `Prompt` patterns.\n\n## Non-Goals\n\n- Scoring attempts or work products; that belongs in the `RubricScore` issue.\n- Adding curriculum `Course`, `Module`, or `Lesson` authoring models.\n- Adding institutional certification snapshots.\n\n## Tasks\n\n- [ ] Add `Rubric` and `RubricCriterion` tables with criterion order, description, max points, performance levels, validity scope, and status.\n- [ ] Add Alembic migration and register feedback metadata in test fixtures.\n- [ ] Implement create/read/list/update/archive routes for rubrics and nested criteria.\n- [ ] Validate that criterion max points are positive and criterion order is unique per rubric.\n- [ ] Write tests in `tests/feedback/test_rubrics.py` and `tests/api/test_rubrics.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/feedback/test_rubrics.py::test_rubric_criteria_order_and_score_bounds` passes.\n- [ ] `tests/api/test_rubrics.py::test_create_rubric_with_criteria` passes.\n- [ ] `GET /rubrics/{rubric_id}` returns criteria in deterministic order.\n- [ ] A rubric linked to a personal-scope node cannot silently link to an institutional-scope node.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` heading `Feedback And Rubric System` and `docs/product/research-domain-model.md` `OutcomeMeasure` / Section 5.3 assessment records. This issue only defines standards; scoring and evidence creation come next."
+    },
+    {
+      "issue_id": "M5-007",
+      "milestone": "M5",
+      "title": "Score attempts with rubrics",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-004",
+        "M5-006"
+      ],
+      "body_markdown": "## Why\n\nRubric scoring turns complex learner work into evidence without reducing reasoning quality to binary correctness. `RubricScore` should connect criteria scores to feedback, partial-credit evidence, and scheduler next actions.\n\n## Scope\n\n- Add `RubricScore` in `src/lms/feedback/models.py` with criterion-level score breakdowns.\n- Add `src/lms/feedback/scoring.py` or service functions that score an `Attempt` against a `Rubric`.\n- Extend `/rubric-scores` routes in `src/lms/feedback/api.py`.\n- Write `EvidenceRecord.partial_credit_dimensions`, `raw_score`, `normalized_score`, `max_score`, and `scoring_method` metadata through the existing evidence model fields.\n\n## Non-Goals\n\n- Building an LLM judge as the default scorer.\n- Creating WorkProduct scoring; the case issue consumes this rubric scorer later.\n- Changing FSRS rating rules outside the documented partial-credit handoff.\n\n## Tasks\n\n- [ ] Add `RubricScore` table with links to rubric, attempt, learner, scorer_type, scorer_id, scorer_version, raw/normalized/max score, criterion scores JSON, and created_at.\n- [ ] Implement score creation so the summed criterion scores produce normalized score and a matching `EvidenceRecord` update or child record.\n- [ ] Create a `FeedbackRecord` and `FeedbackAction` when a score falls below a configured revision or remediation threshold.\n- [ ] Add tests at `tests/feedback/test_rubric_scoring.py`, not under `tests/integration/`.\n- [ ] Add API tests in `tests/api/test_rubric_scores.py` for happy path and invalid criterion ids.\n\n## Acceptance Criteria\n\n- [ ] `tests/feedback/test_rubric_scoring.py::test_rubric_score_writes_partial_credit_evidence` passes.\n- [ ] `tests/feedback/test_rubric_scoring.py::test_low_rubric_score_creates_revision_or_remediation_feedback_action` passes.\n- [ ] `tests/api/test_rubric_scores.py::test_post_rubric_score_returns_criterion_breakdown` passes.\n- [ ] The existing `tests/scheduling/test_fsrs_adapter.py` still passes and partial-credit boundaries remain explicit.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` headings `Mastery Is An Evidence-Backed Estimate`, `Feedback And Rubric System`, and the SchedulerEvidenceAdapter rule table. Use the existing verbose `EvidenceRecord` fields rather than adding a second assessment-evidence table."
+    },
+    {
+      "issue_id": "M5-008",
+      "milestone": "M5",
+      "title": "Add model answers and hint reveal tracking",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-004"
+      ],
+      "body_markdown": "## Why\n\nModel answers and hints support feedback without turning every struggle into an immediate answer reveal. Reveal tracking matters because hint use should affect evidence interpretation through the existing `hint_used` and support-level fields.\n\n## Scope\n\n- Add `ModelAnswer` and `Hint` in `src/lms/feedback/models.py` linked to `Prompt` and optional `Rubric` ids.\n- Add reveal-tracking records or fields that update `Attempt.hint_used`, `Attempt.support_level`, and related `EvidenceRecord.hint_used` where appropriate.\n- Extend `src/lms/feedback/api.py` with `/model-answers`, `/hints`, and reveal endpoints.\n- Keep source citation links visible by joining through `Prompt.source_references` in `src/lms/prompts/models.py`.\n\n## Non-Goals\n\n- Showing model answers before an attempt by default.\n- Replacing prompt source references with model answer bodies.\n- Adding full tutoring-session orchestration.\n\n## Tasks\n\n- [ ] Add `ModelAnswer` and `Hint` models with reveal policy, reveal order, support level, source citation metadata, and whether the reveal is learner-initiated or system-triggered.\n- [ ] Implement hint reveal endpoint that records learner id, prompt id, hint id, attempt id when present, and timestamp.\n- [ ] Implement model answer reveal endpoint that can require a completed attempt unless the request explicitly marks instructor/test mode.\n- [ ] Update attempt/evidence creation helpers so revealed hints down-weight support-sensitive evidence through existing fields.\n- [ ] Write tests in `tests/feedback/test_hints_model_answers.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/feedback/test_hints_model_answers.py::test_hint_reveal_marks_attempt_and_evidence_hint_used` passes.\n- [ ] `tests/feedback/test_hints_model_answers.py::test_model_answer_requires_attempt_before_reveal_by_default` passes.\n- [ ] `GET /hints?prompt_id=...` returns ordered hints without exposing hidden model-answer content.\n- [ ] Local-only source locators remain hidden in learner-facing feedback responses.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` headings `Feedback And Rubric System` and `Mastery Is An Evidence-Backed Estimate`. The current `Attempt` and `EvidenceRecord` models already have `hint_used`, `reference_accessed`, and `support_level`; this issue wires those fields to real hint/model-answer interactions."
+    },
+    {
+      "issue_id": "M5-009",
+      "milestone": "M5",
+      "title": "Implement revision request loops",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-007",
+        "M5-008"
+      ],
+      "body_markdown": "## Why\n\nFeedback becomes learning when the learner can revise and resubmit. `RevisionRequest` makes the request-to-revised-submission loop explicit for prompt attempts now and case work products once those land.\n\n## Scope\n\n- Add `RevisionRequest` in `src/lms/feedback/models.py` linked to `FeedbackRecord`, `FeedbackAction`, `Attempt`, and optional future work-product id as a string FK placeholder only after `WorkProduct` exists.\n- Extend `src/lms/feedback/schemas.py`, `src/lms/feedback/repository.py`, and `src/lms/feedback/api.py` with `/revision-requests` routes.\n- Update feedback action handling so `revision` actions can open, submit, accept, or close a request.\n- Create evidence records for revised attempts through existing evidence services, not a separate revision-evidence table.\n\n## Non-Goals\n\n- Adding human review assignment models.\n- Adding a new WorkProduct table in this issue.\n- Treating revision completion as permanent certification or completion status.\n\n## Tasks\n\n- [ ] Add `RevisionRequest` status values such as open, submitted, accepted, closed, and superseded with timestamp fields for requested/submitted/resolved events.\n- [ ] Implement API routes to create a revision request from feedback, submit revised response text, and resolve it with a result note.\n- [ ] Create or link a new `Attempt` when a prompt revision is submitted so mastery and scheduler code continue to read standard evidence.\n- [ ] Add scheduler hook metadata so accepted or failed revisions can create review/remediation schedule decisions later.\n- [ ] Write tests in `tests/feedback/test_revision_requests.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/feedback/test_revision_requests.py::test_revision_request_creates_revised_attempt_and_feedback_link` passes.\n- [ ] `tests/feedback/test_revision_requests.py::test_revision_request_status_transitions_are_validated` passes.\n- [ ] A revision request cannot be submitted for a learner different from the original feedback learner.\n- [ ] Revision completion is visible from `/feedback/{feedback_id}` or an adjacent feedback detail route.\n\n## Implementation Notes\n\nSee `docs/product/research-domain-model.md` Section 5.2 `intervention-revision-after-feedback` and `docs/product/project-plan.md` `Feedback And Rubric System`. Keep the first implementation prompt/attempt-centered; case work products can attach once `src/lms/cases/` lands."
+    },
+    {
+      "issue_id": "M5-010",
+      "milestone": "M5",
+      "title": "Add competencies and competency evidence",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [],
+      "body_markdown": "## Why\n\nMilestone 5 needs observable capability units that knowledge nodes and evidence can roll up into. `Competency` and `CompetencyEvidence` provide that bridge without introducing institutional certification records.\n\n## Scope\n\n- Create `src/lms/competencies/` with `models.py`, `schemas.py`, `repository.py`, `api.py`, and `__init__.py`.\n- Add `Competency` and `CompetencyEvidence` models linked to `KnowledgeNode`, `KnowledgeEdge(edge_type='supports-competency')`, and `EvidenceRecord`.\n- Expose `/competencies` and `/competency-evidence` routes.\n- Register the competencies router in `src/lms/main.py` and model metadata in test fixtures.\n\n## Non-Goals\n\n- Adding role curricula, institution certification, or manager policy records.\n- Creating `CertificationSnapshot` or permanent pass/fail capability labels.\n- Replacing knowledge graph edges with competency-only relationships.\n\n## Tasks\n\n- [ ] Add `Competency` fields for title, description, ownership_scope, target knowledge type, validity scope, status, and timestamps.\n- [ ] Add `CompetencyEvidence` association records between competencies, knowledge nodes, and evidence records with contribution weight and evidence role.\n- [ ] Implement aggregation helper that lists evidence contributing to one competency for one learner.\n- [ ] Enforce ownership-scope consistency between a competency and linked knowledge nodes.\n- [ ] Write tests in `tests/competencies/test_competencies.py` and `tests/api/test_competencies.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/competencies/test_competencies.py::test_competency_links_nodes_with_matching_ownership_scope` passes.\n- [ ] `tests/competencies/test_competencies.py::test_competency_evidence_aggregates_existing_evidence_records` passes.\n- [ ] `tests/api/test_competencies.py::test_create_and_list_competency_evidence` passes.\n- [ ] `KnowledgeEdge` support for `supports-competency` remains compatible with existing graph tests.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` `Learning Object Model`, `Current Capability And Certification`, and `Phase 2 Adaptive Learning Core`. Competencies are observable capability groupings; they are not certification snapshots and should keep the same cautious current-evidence language used by mastery estimates."
+    },
+    {
+      "issue_id": "M5-011",
+      "milestone": "M5",
+      "title": "Create personal capability targets",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-010"
+      ],
+      "body_markdown": "## Why\n\nA personal learner needs to define the target capability before the system can estimate gaps. `CapabilityTarget` is the first record in the target-to-estimate-to-plan loop and must reject institutional scope in M5.\n\n## Scope\n\n- Create `src/lms/capability/` with `models.py`, `schemas.py`, `repository.py`, `service.py`, `api.py`, and `__init__.py`.\n- Add `CapabilityTarget` with personal ownership scope, learner id, target nodes, target competencies, required evidence types, and confidence threshold fields.\n- Expose `/capability/targets` routes and register them in `src/lms/main.py`.\n- Validate links against `LearningGoal`, `KnowledgeNode`, and `Competency` records where present.\n\n## Non-Goals\n\n- Accepting institutional-scope target creation.\n- Adding formal certification requirements or snapshots.\n- Adding Course/Module/Lesson paths for target definition.\n\n## Tasks\n\n- [ ] Add `CapabilityTarget` model and migration for `capability_targets` plus association tables for target nodes and target competencies.\n- [ ] Implement create/read/list/update/archive repository functions with `ownership_scope='personal'` enforced in Pydantic and repository layers.\n- [ ] Add service validation that target node scopes and competency scopes match the target scope.\n- [ ] Add API tests for rejecting `ownership_scope='institutional'` requests.\n- [ ] Write tests in `tests/capability/test_capability_targets.py` and `tests/api/test_capability_targets.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/capability/test_capability_targets.py::test_capability_target_requires_personal_scope` passes.\n- [ ] `tests/api/test_capability_targets.py::test_create_personal_capability_target_with_nodes_and_competencies` passes.\n- [ ] `POST /capability/targets` rejects institutional scope with 422 or 400 and a clear message.\n- [ ] Target creation does not require any curriculum container entity.\n\n## Implementation Notes\n\nSee `docs/product/early-design-decisions.md` Segment 5 and `docs/product/project-plan.md` `Current Capability And Certification`. The issue is intentionally personal-scope only because institutional evaluation artifacts are deferred."
+    },
+    {
+      "issue_id": "M5-012",
+      "milestone": "M5",
+      "title": "Compute capability estimates",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-001",
+        "M5-010",
+        "M5-011"
+      ],
+      "body_markdown": "## Why\n\nOnce a target exists, the learner needs a current evidence-backed estimate against it. `CapabilityEstimate` should summarize mastery, competency evidence, validity scope, and confidence without claiming permanent certification.\n\n## Scope\n\n- Add `CapabilityEstimate` in `src/lms/capability/models.py` and service logic in `src/lms/capability/service.py`.\n- Consume `KnowledgeProfile`, `CompetencyEvidence`, `EvidenceRecord`, and `mastery_estimates_for_learner`.\n- Expose `/capability/estimates` routes for creating/recomputing and reading estimates.\n- Store evidence breakdowns and confidence language suitable for learner-facing UI.\n\n## Non-Goals\n\n- Adding permanent certification status or pass/fail badges.\n- Training a learned mastery model.\n- Estimating institutional targets or cross-learner rankings.\n\n## Tasks\n\n- [ ] Add `CapabilityEstimate` fields for target id, learner id, generated_at, estimator_version, current_score, confidence, validity_scope, evidence_breakdown JSON, weak_node_ids, and commentary redaction class.\n- [ ] Implement deterministic estimate computation from existing evidence and target requirements.\n- [ ] Add API route that recomputes an estimate for a target and persists the estimate with the target's personal scope.\n- [ ] Ensure estimate commentary can be excluded from default export later if it contains inferred-mastery explanation.\n- [ ] Write tests in `tests/capability/test_capability_estimates.py` and `tests/api/test_capability_estimates.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/capability/test_capability_estimates.py::test_capability_estimate_uses_mastery_and_competency_evidence` passes.\n- [ ] `tests/capability/test_capability_estimates.py::test_capability_estimate_reports_low_confidence_for_sparse_evidence` passes.\n- [ ] `tests/api/test_capability_estimates.py::test_recompute_capability_estimate_for_personal_target` passes.\n- [ ] Estimate response text uses present-tense cautious language such as current evidence suggests.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` `Current Capability And Certification` and `Mastery Is An Evidence-Backed Estimate`. Use the existing mastery computation and evidence records; this issue adds a target-relative estimate, not a new general mastery table."
+    },
+    {
+      "issue_id": "M5-013",
+      "milestone": "M5",
+      "title": "Generate personal gap analyses",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-012"
+      ],
+      "body_markdown": "## Why\n\nThe capability loop becomes actionable when the system can compare the current estimate to the target and identify missing evidence, weak nodes, and transfer gaps. `GapAnalysis` turns capability estimates into a concrete gap-closing problem.\n\n## Scope\n\n- Add `GapAnalysis` in `src/lms/capability/models.py` with service logic in `src/lms/capability/service.py`.\n- Expose `/capability/gap-analyses` routes.\n- Compare `CapabilityEstimate` evidence breakdowns against `CapabilityTarget` requirements.\n- Classify gaps as missing evidence, weak mastery, stale evidence, support dependence, or transfer evidence needed.\n\n## Non-Goals\n\n- Generating the maintenance plan steps; that belongs to the next issue.\n- Adding institutional certification failure language.\n- Adding public/client education analytics.\n\n## Tasks\n\n- [ ] Add `GapAnalysis` model fields for target id, estimate id, learner id, generated_at, gap_items JSON, severity, required_evidence, recommended_action_types, and ownership_scope.\n- [ ] Implement service logic that creates one gap item per unmet target requirement with node and competency references where available.\n- [ ] Add API route to create/read/list gap analyses by target and learner id.\n- [ ] Validate that analyses can only be generated from personal-scope targets and estimates.\n- [ ] Write tests in `tests/capability/test_gap_analysis.py` and `tests/api/test_gap_analyses.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/capability/test_gap_analysis.py::test_gap_analysis_identifies_missing_transfer_evidence` passes.\n- [ ] `tests/capability/test_gap_analysis.py::test_gap_analysis_uses_nonpunitive_gap_language` passes.\n- [ ] `tests/api/test_gap_analyses.py::test_create_gap_analysis_from_estimate` passes.\n- [ ] Gap analysis records include enough node/competency ids for the M6 capability UI to render next work.\n\n## Implementation Notes\n\nSee `docs/product/early-design-decisions.md` Segment 5 and `docs/product/development-testing-surfaces.md` Surface 7. Keep the language nonpunitive: gaps are missing or weak evidence states, not learner identity labels."
+    },
+    {
+      "issue_id": "M5-014",
+      "milestone": "M5",
+      "title": "Create maintenance plans from gaps",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-002",
+        "M5-013"
+      ],
+      "body_markdown": "## Why\n\nGap analysis should produce a learning-maintenance loop, not just a report. `MaintenancePlan` turns gap items into scheduled retrieval, remediation, practice, transfer, and reassessment steps that the review scheduler can explain.\n\n## Scope\n\n- Add `MaintenancePlan` in `src/lms/capability/models.py` with plan-step structure tied to gap analysis items.\n- Integrate with `ReviewSchedule` and `SchedulerDecision` from `src/lms/scheduling/models.py`.\n- Expose `/capability/maintenance-plans` routes.\n- Ensure plan steps can reference prompts, knowledge nodes, rubrics, cases, and feedback actions without requiring all references at creation.\n\n## Non-Goals\n\n- Adding a general notification system.\n- Adding human coaching assignment or escalation rules.\n- Adding institutional recertification policy.\n\n## Tasks\n\n- [ ] Add `MaintenancePlan` model fields for target id, gap analysis id, learner id, status, plan_steps JSON, schedule ids, rationale, generated_at, and ownership_scope.\n- [ ] Implement service logic that converts gap item types into next-action steps and optional review schedules.\n- [ ] Add route tests for plan creation from a gap analysis and schedule linkage.\n- [ ] Update `/learners/{learner_id}/review-queue` or adjacent scheduler response only if needed to expose linked maintenance-plan context without breaking existing tests.\n- [ ] Write tests in `tests/capability/test_maintenance_plans.py` and `tests/api/test_maintenance_plans.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/capability/test_maintenance_plans.py::test_maintenance_plan_turns_gap_items_into_scheduler_steps` passes.\n- [ ] `tests/api/test_maintenance_plans.py::test_create_maintenance_plan_from_gap_analysis` passes.\n- [ ] A plan step created for remediation has a linked `SchedulerDecision` with reason code `remediation` or an equivalent documented M5 reason code.\n- [ ] The existing review queue tests still pass with no shame/gamification language added to backlog output.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` `Current Capability And Certification` and `docs/product/early-design-decisions.md` Segment 8. The plan should feed the existing scheduler and review surfaces; do not create notification, escalation, or coaching workflow entities in M5."
+    },
+    {
+      "issue_id": "M5-015",
+      "milestone": "M5",
+      "title": "Persist LLM interaction skills and feedback events",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-004"
+      ],
+      "body_markdown": "## Why\n\nM4 kept LLM modes and learning policy mostly in code/config. M5 promotes named interaction skills and per-turn feedback events into data so transfer, feedback, privacy, and cost review can be audited by mode and trace class.\n\n## Scope\n\n- Add `LearningInteractionSkill` and `LLMFeedbackEvent` in `src/lms/llm/models.py`.\n- Extend `src/lms/llm/api.py` with `/llm/interaction-skills` and `/llm/feedback-events` routes.\n- Integrate with existing `LLMSession`, `TRACE_CLASSES`, `LLM_MODES`, and `src/lms/llm/interaction_policy.py`.\n- Link LLM feedback events to `FeedbackRecord`, `EvidenceRecord`, source citation ids, and trace classification where available.\n\n## Non-Goals\n\n- Changing provider routing defaults or model choices.\n- Adding unrestricted transcript retention.\n- Replacing `LLMSession` with feedback events.\n\n## Tasks\n\n- [ ] Add `LearningInteractionSkill` fields for name, mode, policy version, description, allowed trace classes, source-citation requirement, and active flag.\n- [ ] Add `LLMFeedbackEvent` fields for session id, learner id, skill id, feedback record id, event type, trace_class, source_reference_ids, unverified flag, cost metadata, and created_at.\n- [ ] Update LLM session creation to optionally record a feedback event when the response produces a learning-policy nudge or feedback outcome.\n- [ ] Add retention/redaction handling so formative and ephemeral event bodies follow Segment 9 defaults.\n- [ ] Write tests in `tests/llm/test_interaction_skills.py` and `tests/llm/test_feedback_events.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/llm/test_interaction_skills.py::test_create_interaction_skill_for_transfer_mode` passes.\n- [ ] `tests/llm/test_feedback_events.py::test_llm_feedback_event_records_trace_class_and_citations` passes.\n- [ ] `tests/llm/test_feedback_events.py::test_ephemeral_feedback_event_excludes_verbatim_body_by_default` passes.\n- [ ] Existing LLM budget, routing, learner-control, and trace-redaction tests still pass.\n\n## Implementation Notes\n\nSee `docs/product/early-design-decisions.md` Segments 9 and 10 and `docs/product/project-plan.md` `LLM Learning Interaction Layer`. Build on `LLMSession` in `src/lms/llm/models.py`; events are per-turn feedback facts, not a second transcript store."
+    },
+    {
+      "issue_id": "M5-016",
+      "milestone": "M5",
+      "title": "Add transfer case shells and steps",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-006"
+      ],
+      "body_markdown": "## Why\n\nM5 takes the case-related subset of transfer assessment: realistic case shells with evidence packets, ordered steps, decision points, and rubric links. This supports transfer without building the full later simulation layer.\n\n## Scope\n\n- Create `src/lms/cases/` with `models.py`, `schemas.py`, `repository.py`, `service.py`, `api.py`, and `__init__.py`.\n- Add `Case`, `CaseStep`, `DecisionPoint`, and `EvidencePacket` models.\n- Expose `/cases`, `/cases/{case_id}/steps`, and decision/evidence-packet read/write routes.\n- Link cases to `Rubric`, `KnowledgeNode`, `SourceReference`, and `ownership_scope` where applicable.\n\n## Non-Goals\n\n- Adding `Scenario`, `SimulationRun`, or `Debrief` records.\n- Adding public education program or client learning path records.\n- Implementing branching runtime orchestration beyond stored decision point definitions.\n\n## Tasks\n\n- [ ] Add `Case`, `CaseStep`, `DecisionPoint`, and `EvidencePacket` tables with ordered steps and source references.\n- [ ] Add migrations and register case models in test fixtures and `src/lms/main.py`.\n- [ ] Implement repository validation for step ordering, personal/institutional ownership-scope consistency, and rubric link existence.\n- [ ] Add API tests for creating a case with evidence packets and ordered steps.\n- [ ] Write tests in `tests/cases/test_cases.py` and `tests/api/test_cases.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/cases/test_cases.py::test_case_steps_are_ordered_and_scope_checked` passes.\n- [ ] `tests/cases/test_cases.py::test_decision_point_links_to_case_step_and_evidence_packet` passes.\n- [ ] `tests/api/test_cases.py::test_create_case_with_rubric_and_evidence_packet` passes.\n- [ ] No table or route named for the deferred full simulation envelope is added.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` `Scenario And Simulation Layer` and `docs/product/research-domain-model.md` Section 2.5 transfer seed records. The brief narrows this to the transfer-case subset, so model `Case` records directly and leave broader simulation concepts for a later milestone."
+    },
+    {
+      "issue_id": "M5-017",
+      "milestone": "M5",
+      "title": "Accept case work products as transfer evidence",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-007",
+        "M5-016"
+      ],
+      "body_markdown": "## Why\n\nTransfer cases need learner submissions that can be scored and converted into evidence. `WorkProduct` records capture memos, rationales, classifications, or similar artifacts and connect them to rubric feedback and transfer-distance evidence.\n\n## Scope\n\n- Add `WorkProduct` in `src/lms/cases/models.py` linked to case id, case step id, learner id, rubric id, and optional prompt id.\n- Expose `/cases/{case_id}/work-products` routes in `src/lms/cases/api.py`.\n- Reuse `RubricScore`, `FeedbackRecord`, and `EvidenceRecord` rather than creating a separate scoring stack.\n- Set `EvidenceRecord.transfer_distance` and validity scope for transfer-case submissions.\n\n## Non-Goals\n\n- Building the full simulation runtime.\n- Adding manager review, coaching intervention, or external file-storage workflows.\n- Treating one case score as permanent capability certification.\n\n## Tasks\n\n- [ ] Add `WorkProduct` fields for learner id, case id, step id, submission_type, body or artifact ref, status, submitted_at, rubric_score_id, and revision_request_id.\n- [ ] Implement submit/list/read routes with learner and case filters.\n- [ ] Implement service helper that scores a work product with a rubric and creates transfer evidence using existing evidence fields.\n- [ ] Integrate revision requests so case feedback can request a revised work product.\n- [ ] Write tests in `tests/cases/test_work_products.py` and `tests/api/test_case_work_products.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/cases/test_work_products.py::test_work_product_scoring_creates_transfer_evidence` passes.\n- [ ] `tests/cases/test_work_products.py::test_case_feedback_can_request_work_product_revision` passes.\n- [ ] `tests/api/test_case_work_products.py::test_submit_case_work_product` passes.\n- [ ] Transfer evidence records include `transfer_distance` and a validity scope tied to the case.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` Milestone 5 and `Scenario And Simulation Layer`. This issue is the assessment handoff from cases into evidence and feedback; keep artifact storage simple and reuse `answer_artifact_ref` when a body is too large to inline."
+    },
+    {
+      "issue_id": "M5-018",
+      "milestone": "M5",
+      "title": "Extend research registry review YAML",
+      "labels": [
+        "priority:low",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [],
+      "body_markdown": "## Why\n\nM5 needs research hygiene records for scan and evidence-review workflow, but the research registry remains YAML-only. `ResearchScan` and `EvidenceReview` should extend the validator without becoming runtime database entities or HTTP resources.\n\n## Scope\n\n- Add YAML schemas for `ResearchScan` and `EvidenceReview` under `src/lms/research_registry/schemas.py`.\n- Add seed/example files under `docs/research/registry/` if needed, such as `research-scans.yml` and `evidence-reviews.yml`.\n- Extend `src/lms/research_registry/validator.py` to validate the new YAML files.\n- Add tests under `tests/research_registry/test_research_reviews.py`.\n\n## Non-Goals\n\n- Adding runtime `/research/*` CRUD APIs.\n- Adding SQLAlchemy models for research registry records.\n- Pulling copyrighted note bodies into the public repo.\n\n## Tasks\n\n- [ ] Define `ResearchScan` fields for id, topic, scan_date, source_ids, claim_ids, summary, decision, next_review_at, and reviewer.\n- [ ] Define `EvidenceReview` fields for id, evidence_source_id, claim_ids, review_status, reliability_notes, limitations, decision, and reviewed_at.\n- [ ] Update the validator CLI or test helper so missing referenced claims/sources fail validation.\n- [ ] Add examples that use paraphrase-only summaries and stable ids.\n- [ ] Write tests that assert validator success and failure cases for missing references.\n\n## Acceptance Criteria\n\n- [ ] `tests/research_registry/test_research_reviews.py::test_research_scan_references_existing_claims_and_sources` passes.\n- [ ] `tests/research_registry/test_research_reviews.py::test_evidence_review_rejects_missing_source_id` passes.\n- [ ] No `ResearchScan` or `EvidenceReview` SQLAlchemy model is added under `src/lms/`.\n- [ ] No `/research` route appears in the OpenAPI schema.\n\n## Implementation Notes\n\nSee `docs/product/research-domain-model.md` v1 scope note and `docs/product/project-plan.md` API Surface Sketch note that `/research/*` remains deferred. This issue keeps the registry as validated YAML while allowing M5 evidence-review work to be tracked."
+    },
+    {
+      "issue_id": "M5-019",
+      "milestone": "M5",
+      "title": "Extend export/import for M5 records",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M5"
+      ],
+      "depends_on": [
+        "M5-001",
+        "M5-002",
+        "M5-003",
+        "M5-004",
+        "M5-005",
+        "M5-006",
+        "M5-007",
+        "M5-008",
+        "M5-009",
+        "M5-010",
+        "M5-011",
+        "M5-012",
+        "M5-013",
+        "M5-014",
+        "M5-015",
+        "M5-016",
+        "M5-017"
+      ],
+      "body_markdown": "## Why\n\nThe v1 export contract is already load-bearing for personal learning data. Every new M5 runtime entity must be exportable/importable with safe redaction defaults so the personal-learning dataset remains portable as feedback, cases, and gap-closing records accumulate.\n\n## Scope\n\n- Extend `src/lms/export_import.py` `MODEL_BY_TYPE`, `EXPORT_ORDER`, `DEPENDENCIES`, `RELATIONSHIP_KEYS`, and redaction rules for all new M5 runtime models.\n- Cover `KnowledgeProfile` if persisted; `ReviewSchedule`, `ReviewPolicy`, `SchedulerDecision`, `RemediationTrigger`, `MisconceptionPattern`, `FeedbackRecord`, `FeedbackTemplate`, `FeedbackAction`, `Rubric`, `RubricCriterion`, `RubricScore`, `ModelAnswer`, `Hint`, `RevisionRequest`, `Competency`, `CompetencyEvidence`, `LearningInteractionSkill`, `LLMFeedbackEvent`, `CapabilityTarget`, `CapabilityEstimate`, `GapAnalysis`, `MaintenancePlan`, `Case`, `CaseStep`, `DecisionPoint`, `EvidencePacket`, and `WorkProduct`.\n- Update CLI behavior only where `src/lms/__main__.py` needs new type support.\n- Add redaction defaults for inferred capability commentary, LLM feedback event bodies, local-only evidence packet content, and PII fields.\n\n## Non-Goals\n\n- Exporting YAML-only `ResearchScan` or `EvidenceReview` as runtime records.\n- Default-exporting verbatim formative or ephemeral LLM traces.\n- Adding external backup services.\n\n## Tasks\n\n- [ ] Add every new M5 runtime model to the typed JSONL export order after its dependencies.\n- [ ] Add import dependency validation for feedback, rubric, competency, capability, case, scheduler, and LLM-event foreign keys.\n- [ ] Define redaction defaults: feedback bodies included by default; capability inferred commentary excluded or summarized by default; formative/ephemeral LLM feedback event verbatim bodies excluded by default; local-only evidence packet body content excluded by default.\n- [ ] Update dry-run and apply import tests with a fixture containing representative M5 records.\n- [ ] Write tests in `tests/export_import/test_m5_export_contract.py` and extend `tests/export_import/test_redaction_defaults.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/export_import/test_m5_export_contract.py::test_export_import_round_trip_m5_runtime_records` passes.\n- [ ] `tests/export_import/test_redaction_defaults.py::test_m5_redaction_excludes_inferred_capability_and_formative_llm_bodies` passes.\n- [ ] `lms import --dry-run` rejects a `WorkProduct` that references a missing `Case`.\n- [ ] `lms import --apply` writes M5 records only after dry-run validation succeeds.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` `Export and import contract (v1)` and the Phase 3 brief's export quality bar. Keep YAML registry files outside this runtime export path; they are source-controlled docs, not database records."
+    },
+    {
+      "issue_id": "M6-001",
+      "milestone": "M6",
+      "title": "Set web routing, Pico CSS, and PWA scaffold",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M5-019"
+      ],
+      "body_markdown": "## Why\n\nM6 needs a consistent web prototype foundation before individual learner and author surfaces expand beyond the current minimal `/learn`, `/review`, and `/inspect` HTML routes. The foundation should land the responsive CSS approach, establish app routes, and add PWA scaffolding without introducing new domain entities.\n\n## Scope\n\n- Adopt **Pico** (classless / semantic-first CSS framework, no build step) as the responsive CSS for the prototype. Document the choice and the no-build-tooling rationale in `docs/development/web-prototype.md`.\n- Refactor `src/lms/ui/api.py` into a route convention such as `/app/learner`, `/app/author`, `/app/support`, and `/app/admin` while preserving compatibility redirects for `/learn` and `/review` if needed.\n- Add static asset serving for `manifest.webmanifest`, service-worker placeholder, icons, and shared Pico CSS under `src/lms/ui/static/` or an equivalent package path.\n- Add empty-state and mobile-width HTML contract patterns (shared layout helpers) that subsequent surfaces will follow.\n\n## Non-Goals\n\n- Adding Tailwind, a JavaScript build pipeline, or a SPA framework. Pico is chosen specifically to avoid Node-toolchain overhead at the v1 prototype stage; if a richer design system becomes necessary later (e.g., the public pension education path in M8), the framework choice can revisit then.\n- Adding new database entities.\n- Implementing offline sync behavior beyond a service-worker placeholder.\n\n## Tasks\n\n- [ ] Add Pico CSS to the project (vendored CSS file or CDN reference per documented rationale) and document the route naming convention in `docs/development/web-prototype.md`.\n- [ ] Add shared layout/rendering helpers in `src/lms/ui/` for navigation, empty states, forms, and mobile viewport metadata using semantic HTML that Pico styles by default.\n- [ ] Add PWA manifest, icon placeholders, and service worker placeholder routes/static files.\n- [ ] Update `src/lms/main.py` or FastAPI static mounting as needed.\n- [ ] Write tests in `tests/ui/test_app_shell.py` and `tests/ui/test_pwa_scaffold.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_app_shell.py::test_app_shell_uses_documented_routes_and_mobile_viewport` passes.\n- [ ] `tests/ui/test_pwa_scaffold.py::test_manifest_and_service_worker_are_served` passes.\n- [ ] `docs/development/web-prototype.md` names Pico as the framework choice and explains how new surfaces should use semantic HTML that Pico styles by default.\n- [ ] No Node toolchain, package.json, or build-step is added by this issue.\n- [ ] Existing `tests/ui/test_learner_loop.py` and `tests/ui/test_review_surface.py` still pass or have documented compatibility redirects.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Design Defaults and `docs/product/project-plan.md` Milestone 6. This is UI infrastructure only; M6 surfaces should consume M1-M5 APIs and avoid adding new LMS domain models. Pico is chosen for v1 because it produces clean semantic HTML that survives screenshot testing (see M6-012) and avoids the build-pipeline overhead that would otherwise distract from the M6 acceptance gate (M6-013). The CSS framework choice is intentionally revisitable when M8 accessibility work or richer design needs justify it; until then, classless Pico keeps the cost-to-coverage ratio favorable."
+    },
+    {
+      "issue_id": "M6-002",
+      "milestone": "M6",
+      "title": "Build authoring UI for goals, graph, and prompts",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-001"
+      ],
+      "body_markdown": "## Why\n\nThe project owner needs to author the trimmed learning object set directly: `LearningGoal`, `KnowledgeNode`, `KnowledgeEdge`, `SourceReference`, and `Prompt`. This surface replaces CLI-only setup for the M6 acceptance path without adding curriculum containers.\n\n## Scope\n\n- Add author routes under `src/lms/ui/api.py` or `src/lms/ui/author.py` for `/app/author/goals`, `/app/author/knowledge`, and `/app/author/prompts`.\n- Use existing APIs/models in `src/lms/learners/`, `src/lms/graphs/`, `src/lms/sources/`, and `src/lms/prompts/`.\n- Show prompt provenance fields from `src/lms/prompts/models.py` and source drift status from `src/lms/sources/models.py`.\n- Enforce `ownership_scope` in forms and reject cross-scope edge creation through existing graph rules.\n\n## Non-Goals\n\n- Adding Course/Module/Lesson editors.\n- Adding a separate `LearningObjective` editor.\n- Adding new backend authoring entities.\n\n## Tasks\n\n- [ ] Implement author goal create/list/edit forms with target-node selection and empty states.\n- [ ] Implement knowledge node and edge authoring forms with status, edge type, confidence, and ownership-scope controls.\n- [ ] Implement prompt authoring forms with source reference selection, demand level, intended cognitive action, expected answer form, and provenance display.\n- [ ] Add validation feedback for draft nodes, missing source references, and publication-gate failures.\n- [ ] Write tests in `tests/ui/test_author_learning_objects.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_author_learning_objects.py::test_author_can_create_goal_node_edge_and_prompt_from_ui` passes.\n- [ ] `tests/ui/test_author_learning_objects.py::test_author_ui_blocks_cross_scope_normal_edge` passes.\n- [ ] The author UI shows clear empty states when there are no nodes, prompts, or sources.\n- [ ] The UI text does not mention unsupported curriculum container authoring.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Surface 3 and Surface 4. The M6 acceptance gate is adapted to Goal + Node + Prompt + Rubric, so this issue intentionally avoids deferred curriculum entities."
+    },
+    {
+      "issue_id": "M6-003",
+      "milestone": "M6",
+      "title": "Build authoring UI for rubrics, templates, and cases",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-001",
+        "M5-005",
+        "M5-006",
+        "M5-016"
+      ],
+      "body_markdown": "## Why\n\nAuthors need to create the M5 feedback and transfer-case assets through the web prototype. Rubric, feedback-template, and case authoring makes the acceptance path possible without hand-seeding database rows.\n\n## Scope\n\n- Add author routes under `/app/author/rubrics`, `/app/author/feedback-templates`, and `/app/author/cases`.\n- Use backend APIs from `src/lms/feedback/api.py` and `src/lms/cases/api.py`.\n- Support nested rubric criteria, feedback template placeholders, case steps, evidence packets, and decision points.\n- Show ownership scope and linked source/rubric status on every form.\n\n## Non-Goals\n\n- Building the full simulation UI.\n- Adding human review assignment workflows.\n- Adding public-facing education authoring.\n\n## Tasks\n\n- [ ] Implement rubric and criterion create/edit/list forms with criterion order and max-points validation messages.\n- [ ] Implement feedback-template form with placeholder preview/render test action.\n- [ ] Implement case shell, step, decision point, and evidence-packet forms with empty states.\n- [ ] Add links from prompt authoring to rubric selection where available.\n- [ ] Write tests in `tests/ui/test_author_feedback_cases.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_author_feedback_cases.py::test_author_can_create_rubric_template_and_case` passes.\n- [ ] `tests/ui/test_author_feedback_cases.py::test_template_preview_renders_placeholder_values` passes.\n- [ ] The case authoring UI does not expose deferred full simulation terminology as a creatable object.\n- [ ] Mobile viewport markup and shared shell styling are present on all three authoring pages.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Surface 3 and `docs/product/project-plan.md` Milestone 5/6. This issue consumes M5 entities and should not add new backend tables."
+    },
+    {
+      "issue_id": "M6-004",
+      "milestone": "M6",
+      "title": "Build learner dashboard",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-001",
+        "M5-001",
+        "M5-014"
+      ],
+      "body_markdown": "## Why\n\nThe learner dashboard should answer what to do next without turning progress into shallow gamification. It brings together goals, mastery summary, due reviews, next actions, recent evidence, feedback, and maintenance-plan steps.\n\n## Scope\n\n- Add `/app/learner` dashboard route in `src/lms/ui/api.py` or `src/lms/ui/learner.py`.\n- Read from `src/lms/learners/api.py`, `src/lms/mastery/service.py`, `src/lms/scheduling/api.py`, `src/lms/feedback/api.py`, and `src/lms/capability/api.py`.\n- Display `LearningGoal`, knowledge profile, due reviews, recent evidence, feedback actions, and maintenance plan steps.\n- Use nonpunitive copy for backlog, stale items, weak evidence, and gaps.\n\n## Non-Goals\n\n- Adding badges, rankings, streaks, or fixed ability labels.\n- Adding new learner-state entities.\n- Building manager-visible analytics from personal learner data.\n\n## Tasks\n\n- [ ] Implement dashboard summary panels with empty states for no goals, no reviews, no feedback, and no capability targets.\n- [ ] Add links into attempt flow, review queue, feedback detail, and capability views.\n- [ ] Show mastery model attribution and evidence count when mastery is displayed.\n- [ ] Ensure mobile-width layout has no horizontal overflow for long node titles or feedback actions.\n- [ ] Write tests in `tests/ui/test_learner_dashboard.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_learner_dashboard.py::test_dashboard_shows_next_actions_reviews_and_recent_evidence` passes.\n- [ ] `tests/ui/test_learner_dashboard.py::test_dashboard_empty_states_are_specific_and_nonpunitive` passes.\n- [ ] Dashboard HTML includes `name=\"viewport\"` and shared CSS from M6-001.\n- [ ] Dashboard copy avoids fixed learner labels and unsupported acceleration claims.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Surface 1 and Design Defaults. The existing `/learn` route in `src/lms/ui/api.py` is a minimal attempt shell; this issue adds the actual learner home surface for repeated use."
+    },
+    {
+      "issue_id": "M6-005",
+      "milestone": "M6",
+      "title": "Build review schedule UI",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-001",
+        "M5-002",
+        "M5-014"
+      ],
+      "body_markdown": "## Why\n\nThe review UI should show due work and explain why each item appeared. M5 schedule and scheduler-decision records let the M6 surface go beyond the current minimal `/review` page's queue list.\n\n## Scope\n\n- Expand or move the current `/review` route from `src/lms/ui/api.py` into `/app/learner/reviews`.\n- Read `ReviewQueueItem`, `ReviewSchedule`, `ReviewPolicy`, and `SchedulerDecision` data from `src/lms/scheduling/`.\n- Show reason codes, due dates, review intervals, priority, blocked/available status, pause/vacation state, daily cap, stale item actions, and linked maintenance plan steps.\n- Preserve the existing backlog language from `src/lms/scheduling/api.py` that frames totals as informational.\n\n## Non-Goals\n\n- Implementing new scheduler algorithms.\n- Adding notification or escalation entities.\n- Adding institutional review policy UI beyond read-only display of existing policy records.\n\n## Tasks\n\n- [ ] Implement review list, schedule detail, and scheduler-decision explanation panels.\n- [ ] Add controls for testing pause/resume/stale actions only where backend endpoints already exist; otherwise render disabled controls with clear state.\n- [ ] Add empty state for no due reviews and separate state for all items blocked by prerequisites.\n- [ ] Link review items to attempt flow when a prompt id is available.\n- [ ] Write tests in `tests/ui/test_review_schedule_surface.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_review_schedule_surface.py::test_review_surface_shows_schedule_and_decision_reason` passes.\n- [ ] `tests/ui/test_review_schedule_surface.py::test_review_surface_handles_empty_and_blocked_states` passes.\n- [ ] Existing `tests/ui/test_review_surface.py` still passes or verifies a compatibility redirect.\n- [ ] The page includes mobile viewport metadata and no hover-only controls.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Surface 6 and `docs/product/early-design-decisions.md` Segment 8. Keep this issue UI-focused; scheduler writes and models should already be present from M5."
+    },
+    {
+      "issue_id": "M6-006",
+      "milestone": "M6",
+      "title": "Build prompt attempt flow",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-001",
+        "M5-004",
+        "M5-007"
+      ],
+      "body_markdown": "## Why\n\nThe current `/learn` page is a debug-friendly attempt form. M6 needs a real activity attempt flow that presents the prompt, collects response and confidence, tracks reference access, submits the attempt, and routes the learner to scored feedback.\n\n## Scope\n\n- Expand `src/lms/ui/api.py` or create `src/lms/ui/attempts.py` under `/app/learner/attempts`.\n- Use `Prompt`, `PromptVersion`, `SourceReference`, `Attempt`, `EvidenceRecord`, `RubricScore`, and `FeedbackRecord` APIs.\n- Show source citations after attempt and provenance before/after as required by design defaults.\n- Support prompt answer forms currently listed in `src/lms/prompts/models.py` without overbuilding rich editors.\n\n## Non-Goals\n\n- Adding new assessment entities.\n- Adding model-answer reveal before an attempt by default.\n- Building native mobile or offline attempt submission.\n\n## Tasks\n\n- [ ] Implement attempt start page with task instructions, demand level, expected answer form, and confidence control.\n- [ ] Implement attempt submit handling that calls existing attempt and scoring routes/services and handles validation errors inline.\n- [ ] Add post-submit transition to feedback detail with feedback action and next review information.\n- [ ] Track reference access and elapsed seconds where the backend supports it.\n- [ ] Write tests in `tests/ui/test_activity_attempt_flow.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_activity_attempt_flow.py::test_attempt_flow_records_response_confidence_and_reference_access` passes.\n- [ ] `tests/ui/test_activity_attempt_flow.py::test_attempt_flow_routes_to_feedback_after_rubric_scoring` passes.\n- [ ] Prompt provenance and source citations render with local-only source locators hidden.\n- [ ] The UI handles no-prompt, unpublished-prompt, and already-submitted states explicitly.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Surface 1. Reuse the current `src/lms/ui/api.py` helpers where helpful, but the result should be an activity flow rather than a single debug form."
+    },
+    {
+      "issue_id": "M6-007",
+      "milestone": "M6",
+      "title": "Build feedback, hint, and revision UI",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-006",
+        "M5-008",
+        "M5-009"
+      ],
+      "body_markdown": "## Why\n\nLearners need to understand feedback, reveal hints intentionally, inspect model answers when allowed, and revise work. This surface makes feedback actionable instead of a score-only endpoint.\n\n## Scope\n\n- Add feedback detail routes under `/app/learner/feedback`.\n- Use `FeedbackRecord`, `FeedbackAction`, `Hint`, `ModelAnswer`, `RubricScore`, and `RevisionRequest` APIs from `src/lms/feedback/`.\n- Show goal, observed evidence, diagnosis, gap, next action, rubric criterion breakdown, hint reveal state, model-answer reveal state, and revision status.\n- Link back to attempt flow, review queue, and maintenance-plan steps.\n\n## Non-Goals\n\n- Adding new scoring logic.\n- Showing hidden model answers before backend reveal policy allows it.\n- Adding human coaching workflow entities.\n\n## Tasks\n\n- [ ] Implement feedback list and feedback detail pages with empty states.\n- [ ] Implement hint reveal and model-answer reveal interactions using backend reveal endpoints.\n- [ ] Implement revision request create/submit forms for prompt attempts and case work products where backend references exist.\n- [ ] Render rubric criterion scores with max points and formative comments separated from final score language.\n- [ ] Write tests in `tests/ui/test_feedback_surface.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_feedback_surface.py::test_feedback_view_shows_goal_gap_next_action_and_rubric_breakdown` passes.\n- [ ] `tests/ui/test_feedback_surface.py::test_hint_reveal_updates_feedback_view_without_exposing_model_answer` passes.\n- [ ] `tests/ui/test_feedback_surface.py::test_revision_request_can_be_submitted_from_feedback_view` passes.\n- [ ] Feedback copy avoids trait labels and shame language.\n\n## Implementation Notes\n\nSee `docs/product/research-domain-model.md` Section 5.2 and `docs/product/project-plan.md` `Feedback And Rubric System`. Keep reveal policy enforced by backend responses; the UI should not infer hidden content."
+    },
+    {
+      "issue_id": "M6-008",
+      "milestone": "M6",
+      "title": "Polish LLM study session UI",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-001",
+        "M5-015"
+      ],
+      "body_markdown": "## Why\n\nM4 exposed LLM study sessions through API behavior; M6 should make the learner-facing session usable and inspectable. The UI needs mode, coaching intensity, trace class, cost, source constraints, and keep/forget controls without changing provider routing.\n\n## Scope\n\n- Add `/app/learner/llm-study` route using `src/lms/llm/api.py` endpoints.\n- Use existing `LLMSession`, `LearningInteractionSkill`, and `LLMFeedbackEvent` data.\n- Show session mode, coaching intensity, trace class, model identity, cost summary, source/context panel, unverified flags, and trace-control state.\n- Support `study-coach`, `practice`, and read-only display for `transfer` skills where backend allows it.\n\n## Non-Goals\n\n- Changing LLM provider selection or budget caps.\n- Retaining full verbatim transcripts in violation of trace class defaults.\n- Adding autonomous tutoring workflows beyond the existing session endpoint.\n\n## Tasks\n\n- [ ] Implement session start form with mode selector, coaching intensity, source constraints, and assessment-restricted toggle where supported.\n- [ ] Render response text, policy decision, flags, and cost summary from `/llm/sessions`.\n- [ ] Implement keep/forget controls using `/llm/sessions/{session_id}/trace-control`.\n- [ ] Show clear empty/error states for budget-kill-switch failures, source-constraint violations, and forgotten traces.\n- [ ] Write tests in `tests/ui/test_llm_study_surface.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_llm_study_surface.py::test_llm_study_surface_shows_trace_class_cost_and_model` passes.\n- [ ] `tests/ui/test_llm_study_surface.py::test_llm_study_surface_applies_forget_control` passes.\n- [ ] Uncited LLM claims render with an `unverified` flag when returned by the API.\n- [ ] Formative and ephemeral trace handling is visible without exporting hidden transcript bodies.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Surface 2 and `docs/product/early-design-decisions.md` Segments 9 and 10. This is UI polish over the M4/M5 LLM backend; do not alter the core client wrapper in this issue unless a small display field is missing."
+    },
+    {
+      "issue_id": "M6-009",
+      "milestone": "M6",
+      "title": "Build graph design and testing view",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-001"
+      ],
+      "body_markdown": "## Why\n\nAuthors and the personal learner need a visual or adjacency-based graph design surface to test prerequisites, transfer-context edges, competency support, and LLM-proposed drafts. This extends the Inspect/debug surface into usable graph authoring and review.\n\n## Scope\n\n- Add `/app/author/graph` or `/app/graph` routes using `src/lms/graphs/api.py` and `src/lms/llm/authoring_assist.py` proposal data.\n- Render `KnowledgeNode`, `KnowledgeEdge`, edge confidence, edge type, status, and `ownership_scope`.\n- Surface LLM-proposed nodes/edges/prompts from existing M4 authoring-assist paths for human approval.\n- Show graph-performance signals available from existing evidence/mastery data without adding new signal entities.\n\n## Non-Goals\n\n- Adding a new graph database or replacing SQLAlchemy graph models.\n- Auto-approving LLM-proposed graph changes.\n- Adding institutional cross-scope edge merges.\n\n## Tasks\n\n- [ ] Implement node list/detail and edge list/editor with ownership-scope and cross-scope graph-reference indicators.\n- [ ] Implement a compact adjacency or list visualization that works at mobile width.\n- [ ] Implement draft approval/rejection actions for LLM-proposed graph records where backend support exists.\n- [ ] Show evidence/mastery summaries per node using existing Inspect or mastery APIs.\n- [ ] Write tests in `tests/ui/test_graph_design_surface.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_graph_design_surface.py::test_graph_view_edits_nodes_edges_and_scope` passes.\n- [ ] `tests/ui/test_graph_design_surface.py::test_graph_view_shows_llm_proposals_pending_human_approval` passes.\n- [ ] Cross-scope normal edges cannot be created from the UI.\n- [ ] The graph view has an empty state for no nodes and no proposal drafts.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Surface 4 and the current `src/lms/graphs/models.py` ownership-scope constraints. Keep the graph representation simple; correctness and scope enforcement matter more than visual polish."
+    },
+    {
+      "issue_id": "M6-010",
+      "milestone": "M6",
+      "title": "Build capability and gap-analysis UI",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-001",
+        "M5-011",
+        "M5-012",
+        "M5-013",
+        "M5-014"
+      ],
+      "body_markdown": "## Why\n\nM5's personal gap-closing records need a learner-facing surface where the project owner can define a target, see current evidence, inspect gaps, and request maintenance-plan steps. This is the core current-capability UI for M6.\n\n## Scope\n\n- Add `/app/learner/capability` routes consuming `src/lms/capability/api.py`.\n- Support `CapabilityTarget`, `CapabilityEstimate`, `GapAnalysis`, and `MaintenancePlan` list/detail/create flows.\n- Show linked goals, knowledge nodes, competencies, evidence breakdowns, weak/missing evidence, and scheduled next steps.\n- Enforce personal-scope language and reject or hide institutional-scope controls.\n\n## Non-Goals\n\n- Adding certification snapshots, recertification policies, or permanent pass/fail labels.\n- Adding manager approvals for capability targets.\n- Adding new backend capability entities.\n\n## Tasks\n\n- [ ] Implement target creation form with node and competency selection.\n- [ ] Implement estimate recompute action and evidence-breakdown display.\n- [ ] Implement gap-analysis creation and gap item display grouped by missing evidence, weak mastery, stale evidence, support dependence, and transfer need.\n- [ ] Implement maintenance-plan creation with links to review queue and attempt flow.\n- [ ] Write tests in `tests/ui/test_capability_gap_surface.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_capability_gap_surface.py::test_capability_surface_creates_target_estimate_gap_and_plan` passes.\n- [ ] `tests/ui/test_capability_gap_surface.py::test_capability_surface_uses_current_evidence_language` passes.\n- [ ] Institutional-scope target controls are absent or disabled in M6 UI.\n- [ ] Empty states tell the learner what evidence or target setup is missing next.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Surface 7 and `docs/product/early-design-decisions.md` Segment 5. This surface is personal-scope only and should use cautious present-tense evidence language."
+    },
+    {
+      "issue_id": "M6-011",
+      "milestone": "M6",
+      "title": "Build support and admin inspection dashboards",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-001",
+        "M5-012",
+        "M5-014"
+      ],
+      "body_markdown": "## Why\n\nM6 needs a basic support/testing dashboard and a basic admin view without introducing surveillance-heavy or institutional workflow models. The surfaces should inspect learner support signals, user records, permission/label state, and repo/app state within existing personal-scope policy boundaries.\n\n## Scope\n\n- Add `/app/support` and `/app/admin` routes under `src/lms/ui/`.\n- Read existing learner, evidence, feedback action, capability estimate, maintenance plan, auth user, audit event, and health data.\n- Show support signals as reasons and uncertainty, not raw activity rankings.\n- Show admin user management basics using `src/lms/auth/api.py`, audit events from `src/lms/api/audit.py`, and app health from `src/lms/api/health.py`.\n\n## Non-Goals\n\n- Adding new Coach, ManagerView, Notification, or EscalationRule entities.\n- Adding institutional analytics or cross-learner ranking.\n- Adding production-grade role/permission management beyond current auth placeholders.\n\n## Tasks\n\n- [ ] Implement support dashboard list of learners needing support based on existing feedback actions, stale reviews, low-confidence estimates, and maintenance-plan blockers.\n- [ ] Implement support detail page with evidence summary, privacy/sensitivity markers where existing data exposes them, and recommended next action text.\n- [ ] Implement admin page for user list/create links, audit-event inspection, route/label or permission placeholder inspection, and health/repo-state summary.\n- [ ] Add empty states for no support signals, no users, and no audit events.\n- [ ] Write tests in `tests/ui/test_support_admin_surfaces.py`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_support_admin_surfaces.py::test_support_dashboard_shows_reasoned_support_signals_without_rankings` passes.\n- [ ] `tests/ui/test_support_admin_surfaces.py::test_admin_dashboard_shows_users_audit_and_health_state` passes.\n- [ ] No new support, manager, or coaching SQLAlchemy model is added.\n- [ ] The support dashboard copy preserves uncertainty and sensitivity rather than labeling learners.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Surface 8 plus the Milestone 6 admin deliverable. The brief allows a basic manager/support dashboard where policy allows; implement it as a read-only/testing surface over existing personal-scope data."
+    },
+    {
+      "issue_id": "M6-012",
+      "milestone": "M6",
+      "title": "Add HTML snapshot tests and Playwright smoke scaffold",
+      "labels": [
+        "priority:normal",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-002",
+        "M6-003",
+        "M6-004",
+        "M6-005",
+        "M6-006",
+        "M6-007",
+        "M6-008",
+        "M6-009",
+        "M6-010",
+        "M6-011"
+      ],
+      "body_markdown": "## Why\n\nThe prototype will be judged on mobile-friendly usability with sparse demo data. M6 should include rendered-content artifacts for each surface so layout, empty states, and text fit are documented. The cheap-to-add path now is HTML snapshots (FastAPI TestClient renders the templates, write the resulting HTML to disk as the artifact). The harness for richer visual + accessibility testing later (Playwright) is scaffolded but not required in CI yet.\n\n## Scope\n\n- **Required:** HTML snapshot tests for every M6 surface, with artifacts committed under `docs/screenshots/` (e.g., `m6-learner-dashboard.html`, `m6-author-rubrics.html`, etc.).\n- **Required:** scaffold `pytest-playwright` as a project optional-dependency group (e.g., `[project.optional-dependencies] visual` in `pyproject.toml`) plus **one** Playwright smoke test for the learner dashboard at 375px viewport. The smoke test SHOULD be skipped in CI by default (e.g., gated on a `PLAYWRIGHT_AVAILABLE` env var) until a future milestone activates it.\n- Document the screenshot and (deferred) Playwright workflow in `docs/development/web-prototype.md`.\n- Cover learner dashboard, author learning objects, author feedback/cases, review queue, attempt flow, feedback detail, LLM study, graph design, capability/gap, support, and admin surfaces with HTML snapshots.\n\n## Non-Goals\n\n- Activating Playwright as a Gate-required check in this issue. Activation is a later decision (M7 or M8) driven by evidence: JS-rendered surfaces landing, accessibility audits becoming required for M8, or a visual regression slipping past HTML snapshots.\n- Adding Node, a JS toolchain, or a SPA build pipeline.\n- Building a brittle full visual-regression platform.\n- Requiring external browser services in CI for the required HTML-snapshot tests.\n\n## Tasks\n\n- [ ] Add a lightweight HTML snapshot workflow under `tests/ui/` using FastAPI TestClient: render each surface, write the rendered HTML to `docs/screenshots/m6-<surface>.html`, assert the file exists and contains the mobile viewport meta tag.\n- [ ] Seed sparse but representative test data for each surface (one learner, a couple of goals/nodes/prompts, a rubric, a case, a capability target with a partial estimate).\n- [ ] Add `pytest-playwright` to `pyproject.toml` `[project.optional-dependencies]` under a `visual` group; document the activation path in `docs/development/web-prototype.md` (when to enable it, what `PLAYWRIGHT_AVAILABLE=1` does).\n- [ ] Add `tests/ui/test_playwright_smoke.py::test_learner_dashboard_renders_at_mobile_width` that runs only when `PLAYWRIGHT_AVAILABLE` is set; in default CI it skips with a clear message.\n- [ ] Add tests asserting (a) every M6 surface has an HTML snapshot artifact, (b) every surface includes mobile viewport metadata, (c) the Playwright smoke test is importable and skipped-by-default.\n- [ ] Fix layout issues found during snapshot generation, especially text overflow in buttons, cards, and compact panels.\n- [ ] Document the trade-offs in `docs/development/web-prototype.md`: HTML snapshots catch \"renders without crashing\" + viewport metadata + structural smoke; Playwright will be activated when JS-rendered surfaces, accessibility audits, or visual regression evidence justifies it.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_m6_screenshots.py::test_m6_surface_html_snapshot_artifacts_exist` passes.\n- [ ] `tests/ui/test_m6_screenshots.py::test_all_m6_surfaces_include_mobile_viewport` passes.\n- [ ] `tests/ui/test_playwright_smoke.py` exists, is importable, and is skipped in CI by default (the test collection should show one skipped test with a clear \"Playwright harness scaffolded; activate with PLAYWRIGHT_AVAILABLE=1\" reason).\n- [ ] `docs/screenshots/` contains one HTML artifact per M6 surface named consistently (`m6-learner-dashboard.html`, `m6-author-rubrics.html`, etc.).\n- [ ] `pyproject.toml` declares `pytest-playwright` under `[project.optional-dependencies] visual` (or equivalent) so future activation is a one-line dependency install.\n- [ ] `docs/development/web-prototype.md` documents both the HTML-snapshot workflow (required, current) and the Playwright activation path (deferred, scaffolded).\n- [ ] No required test depends on Playwright, browser binaries, or external network access.\n\n## Implementation Notes\n\nSee `docs/product/development-testing-surfaces.md` Design Defaults and the Phase 3 brief's M6 screenshot requirement. The two-stage path (HTML snapshots required now, Playwright harness scaffolded for later activation) means: (a) M6 acceptance work isn't blocked by browser-binary CI setup, (b) the migration to Playwright is additive when evidence justifies it (M8 dyslexic-reading accessibility work, JS-heavy LLM streaming surfaces, or a visual regression that HTML snapshots missed), (c) the HTML snapshots stay useful as fast structural smoke tests even after Playwright becomes the visual-regression source of truth. See Phase 3 convergence report item C for the trade-off analysis."
+    },
+    {
+      "issue_id": "M6-013",
+      "milestone": "M6",
+      "title": "Add end-to-end author-to-learner gate",
+      "labels": [
+        "priority:high",
+        "repo-review-approved",
+        "milestone:M6"
+      ],
+      "depends_on": [
+        "M6-002",
+        "M6-003",
+        "M6-004",
+        "M6-005",
+        "M6-006",
+        "M6-007",
+        "M6-008",
+        "M6-009",
+        "M6-010",
+        "M6-011",
+        "M6-012"
+      ],
+      "body_markdown": "## Why\n\nThe M6 acceptance gate must prove a user can author a small Goal + Node + Prompt + Rubric set and a learner can complete prompts, receive rubric-scored feedback, inspect capability/gap analysis, and request maintenance-plan steps. This issue makes that path executable rather than aspirational.\n\n## Scope\n\n- Add an end-to-end test under `tests/ui/test_m6_acceptance_gate.py` using the app routes and backend APIs already built by M5/M6 issues.\n- Seed or create through UI/API a `LearningGoal`, `KnowledgeNode`, `KnowledgeEdge`, `SourceReference`, `Prompt`, `Rubric`, `RubricCriterion`, `FeedbackTemplate`, and optional `Case` record.\n- Submit a learner attempt, create `RubricScore`, `FeedbackRecord`, `FeedbackAction`, `CapabilityTarget`, `CapabilityEstimate`, `GapAnalysis`, and `MaintenancePlan` records.\n- Verify the learner dashboard, review queue, feedback view, and capability/gap view show the resulting state.\n\n## Non-Goals\n\n- Adding deferred curriculum containers or certification artifacts to satisfy the gate.\n- Depending on a real LLM provider, external browser service, or external database.\n- Claiming learning efficacy from seeded smoke data.\n\n## Tasks\n\n- [ ] Write a single acceptance-gate test with helper fixtures kept inside `tests/ui/test_m6_acceptance_gate.py` or a local fixture module.\n- [ ] Create the authoring side through HTTP routes where practical and direct repository setup only for records not authorable from UI yet.\n- [ ] Run the learner side through attempt, rubric score, feedback, gap-analysis, maintenance-plan, dashboard, review, and feedback pages.\n- [ ] Assert the gate path works at mobile viewport and includes source/provenance visibility.\n- [ ] Document the manual demo path in `docs/handoff/m6-acceptance-gate.md`.\n\n## Acceptance Criteria\n\n- [ ] `tests/ui/test_m6_acceptance_gate.py::test_author_goal_node_prompt_rubric_and_learner_completion_path` passes.\n- [ ] `docs/handoff/m6-acceptance-gate.md` maps each acceptance-gate step to a route, API call, and test assertion.\n- [ ] The gate path includes rubric-scored feedback and a maintenance-plan step generated from gap analysis.\n- [ ] The test uses Goal + Node + Prompt + Rubric language and does not require deferred curriculum or certification entities.\n\n## Implementation Notes\n\nSee `docs/product/project-plan.md` Milestone 6, adapted by the Phase 3 brief to the trimmed Phase 1/M5 entity set. This is the final sequencing point for the M5/M6 queue and should not be started until the individual surfaces and M5 service foundations are in place."
+    }
+  ],
+  "sequencing_notes": "The M5 queue starts with learner profile, scheduling, feedback, rubrics, competencies, capability, LLM-event, and case foundations, then closes with export/import coverage once all runtime models exist. Feedback/rubric work, competency/capability work, case work, and YAML research-review validation can proceed mostly in parallel after their local foundations land. M6 begins with the shared web shell, CSS, routing, and PWA scaffold; each UI surface then consumes existing or M5 APIs, with screenshot documentation and the final author-to-learner gate depending on all surfaces.",
+  "overall_assessment": "This queue is ready to file as an implementation batch for Milestones 5 and 6. The main owner-facing decisions left inside the issues are narrow implementation choices: whether `KnowledgeProfile` is persisted or computed, whether Pico or Tailwind is selected for the prototype shell, and how rich the first screenshot workflow should be. Deferred institutional certification, full simulation, coaching workflow, curriculum containers, and public-learning artifacts are explicitly excluded."
+}
