@@ -135,12 +135,8 @@ def test_knowledge_profile_filters_by_ownership_scope(db_session: Session) -> No
     personal_items = cast(list[dict[str, Any]], personal_profile["items"])
     institutional_items = cast(list[dict[str, Any]], institutional_profile["items"])
 
-    assert [item["knowledge_node_id"] for item in personal_items] == [
-        personal_node.id
-    ]
-    assert [item["knowledge_node_id"] for item in institutional_items] == [
-        institutional_node.id
-    ]
+    assert [item["knowledge_node_id"] for item in personal_items] == [personal_node.id]
+    assert [item["knowledge_node_id"] for item in institutional_items] == [institutional_node.id]
 
 
 def test_knowledge_profile_route_filters_personal_scope_by_default() -> None:
@@ -215,9 +211,7 @@ def test_knowledge_profile_route_filters_personal_scope_by_default() -> None:
 
     assert response.status_code == 200
     assert response.json()["ownership_scope"] == "personal"
-    assert [item["knowledge_node_id"] for item in response.json()["items"]] == [
-        personal_node_id
-    ]
+    assert [item["knowledge_node_id"] for item in response.json()["items"]] == [personal_node_id]
     assert scoped_response.status_code == 200
     assert [item["knowledge_node_id"] for item in scoped_response.json()["items"]] == [
         institutional_node_id

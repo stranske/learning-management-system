@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from lms.evidence.models import EvidenceRecord
 from lms.graphs.models import KNOWLEDGE_TYPES, OWNERSHIP_SCOPES, KnowledgeNode
 from lms.learners.models import GOAL_STATUSES, Learner, LearningGoal
-from lms.mastery.service import mastery_estimates_for_learner
+from lms.mastery.service import mastery_estimates_with_evidence_for_learner
 
 
 def create_learner_for_user(
@@ -157,7 +157,10 @@ def knowledge_profile_for_learner(
     """Return a computed learner knowledge profile for one ownership scope."""
     _require_ownership_scope(ownership_scope)
 
-    estimates = mastery_estimates_for_learner(session, learner_id)
+    estimates, evidence_by_estimate_node = mastery_estimates_with_evidence_for_learner(
+        session,
+        learner_id,
+    )
     if not estimates:
         return {"learner_id": learner_id, "ownership_scope": ownership_scope, "items": []}
 
@@ -174,16 +177,9 @@ def knowledge_profile_for_learner(
     if not nodes:
         return {"learner_id": learner_id, "ownership_scope": ownership_scope, "items": []}
 
-    evidence_by_node: dict[str, list[EvidenceRecord]] = {node_id: [] for node_id in nodes}
-    for record in session.scalars(
-        select(EvidenceRecord)
-        .where(
-            EvidenceRecord.learner_id == learner_id,
-            EvidenceRecord.knowledge_node_id.in_(list(nodes)),
-        )
-        .order_by(EvidenceRecord.knowledge_node_id, EvidenceRecord.observed_at, EvidenceRecord.id)
-    ):
-        evidence_by_node[record.knowledge_node_id].append(record)
+    evidence_by_node: dict[str, list[EvidenceRecord]] = {
+        node_id: evidence_by_estimate_node.get(node_id, []) for node_id in nodes
+    }
 
     items: list[dict[str, object]] = []
     for estimate in estimates:
@@ -213,7 +209,9 @@ def knowledge_profile_for_learner(
                 "generated_at": estimate["generated_at"],
             }
         )
-    items.sort(key=lambda item: (str(item["knowledge_node_title"]).lower(), item["knowledge_node_id"]))
+    items.sort(
+        key=lambda item: (str(item["knowledge_node_title"]).lower(), item["knowledge_node_id"])
+    )
     return {"learner_id": learner_id, "ownership_scope": ownership_scope, "items": items}
 
 
