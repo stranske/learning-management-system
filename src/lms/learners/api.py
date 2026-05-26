@@ -18,11 +18,13 @@ from lms.learners.repository import (
     create_learning_goal,
     get_learner,
     get_learning_goal,
+    knowledge_profile_for_learner,
     list_learning_goals_for_learner,
     update_learning_goal,
 )
 from lms.learners.schemas import (
     GoalStatus,
+    KnowledgeProfileRead,
     LearnerCreate,
     LearnerRead,
     LearningGoalCreate,
@@ -114,6 +116,32 @@ def list_learning_goals_route(
             learner_id=learner_id,
             ownership_scope=ownership_scope,
             status=goal_status,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get("/{learner_id}/knowledge-profile", response_model=KnowledgeProfileRead)
+def read_knowledge_profile_route(
+    learner_id: str,
+    session: SessionDep,
+    _current_user: CurrentUserDep,
+    ownership_scope: Annotated[
+        OwnershipScope,
+        Query(description="Graph ownership scope to summarize."),
+    ] = "personal",
+) -> dict[str, object]:
+    """Return the learner's computed knowledge profile for one graph scope."""
+    if get_learner(session, learner_id=learner_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
+    try:
+        return knowledge_profile_for_learner(
+            session,
+            learner_id=learner_id,
+            ownership_scope=ownership_scope,
         )
     except ValueError as exc:
         raise HTTPException(

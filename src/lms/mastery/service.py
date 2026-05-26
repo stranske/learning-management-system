@@ -20,6 +20,21 @@ def mastery_estimates_for_learner(
     policy: MasteryEstimatorPolicy | None = None,
 ) -> list[dict[str, Any]]:
     """Compute current mastery per knowledge node without persisting a cache."""
+    estimates, _ = mastery_estimates_with_evidence_for_learner(
+        session,
+        learner_id,
+        policy=policy,
+    )
+    return estimates
+
+
+def mastery_estimates_with_evidence_for_learner(
+    session: Session,
+    learner_id: str,
+    *,
+    policy: MasteryEstimatorPolicy | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, list[EvidenceRecord]]]:
+    """Compute mastery and return the grouped evidence used for the estimates."""
     policy = policy or MasteryEstimatorPolicy()
     records = list(
         session.scalars(
@@ -51,4 +66,4 @@ def mastery_estimates_for_learner(
                 "generated_at": generated_at,
             }
         )
-    return estimates
+    return estimates, dict(by_node)

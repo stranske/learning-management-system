@@ -5,8 +5,10 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from lms.evidence.models import EvidenceRecord
 from lms.graphs.models import KNOWLEDGE_TYPES, OWNERSHIP_SCOPES, KnowledgeNode
 from lms.learners.models import GOAL_STATUSES, Learner, LearningGoal
+from lms.mastery.service import mastery_estimates_with_evidence_for_learner
 
 
 def create_learner_for_user(
@@ -146,6 +148,73 @@ def list_learning_goals_for_learner(
     return list(session.scalars(statement))
 
 
+def knowledge_profile_for_learner(
+    session: Session,
+    *,
+    learner_id: str,
+    ownership_scope: str = "personal",
+) -> dict[str, object]:
+    """Return a computed learner knowledge profile for one ownership scope."""
+    _require_ownership_scope(ownership_scope)
+
+    estimates, evidence_by_estimate_node = mastery_estimates_with_evidence_for_learner(
+        session,
+        learner_id,
+    )
+    if not estimates:
+        return {"learner_id": learner_id, "ownership_scope": ownership_scope, "items": []}
+
+    node_ids = [str(estimate["knowledge_node_id"]) for estimate in estimates]
+    nodes = {
+        node.id: node
+        for node in session.scalars(
+            select(KnowledgeNode).where(
+                KnowledgeNode.id.in_(node_ids),
+                KnowledgeNode.ownership_scope == ownership_scope,
+            )
+        )
+    }
+    if not nodes:
+        return {"learner_id": learner_id, "ownership_scope": ownership_scope, "items": []}
+
+    evidence_by_node: dict[str, list[EvidenceRecord]] = {
+        node_id: evidence_by_estimate_node.get(node_id, []) for node_id in nodes
+    }
+
+    items: list[dict[str, object]] = []
+    for estimate in estimates:
+        node_id = str(estimate["knowledge_node_id"])
+        node = nodes.get(node_id)
+        if node is None:
+            continue
+        records = evidence_by_node.get(node_id, [])
+        markers = _support_dependence_markers(records)
+        items.append(
+            {
+                "learner_id": learner_id,
+                "ownership_scope": ownership_scope,
+                "knowledge_node_id": node_id,
+                "knowledge_node_title": node.title,
+                "knowledge_type": node.knowledge_type,
+                "current_estimate": estimate["current_estimate"],
+                "confidence": estimate["confidence"],
+                "evidence_count": estimate["evidence_count"],
+                "last_evidence_id": estimate["last_evidence_id"],
+                "support_dependence_markers": markers,
+                "next_evidence_needed": _next_evidence_needed(
+                    current_estimate=float(estimate["current_estimate"]),
+                    confidence=float(estimate["confidence"]),
+                    markers=markers,
+                ),
+                "generated_at": estimate["generated_at"],
+            }
+        )
+    items.sort(
+        key=lambda item: (str(item["knowledge_node_title"]).lower(), item["knowledge_node_id"])
+    )
+    return {"learner_id": learner_id, "ownership_scope": ownership_scope, "items": items}
+
+
 def _load_goal_target_nodes(
     session: Session,
     *,
@@ -193,3 +262,30 @@ def _require_learning_goal_choices(
 def _require_ownership_scope(scope: str) -> None:
     if scope not in OWNERSHIP_SCOPES:
         raise ValueError(f"unknown ownership scope {scope!r}; expected one of {OWNERSHIP_SCOPES}")
+
+
+def _support_dependence_markers(records: list[EvidenceRecord]) -> list[str]:
+    markers: set[str] = set()
+    for record in records:
+        if record.hint_used:
+            markers.add("hint_used")
+        if record.reference_accessed:
+            markers.add("reference_accessed")
+        if record.support_level != "none":
+            markers.add(f"support_level:{record.support_level}")
+    return sorted(markers)
+
+
+def _next_evidence_needed(
+    *,
+    current_estimate: float,
+    confidence: float,
+    markers: list[str],
+) -> str:
+    if current_estimate < 0.6:
+        return "additional successful evidence"
+    if markers:
+        return "independent transfer evidence"
+    if confidence < 0.7:
+        return "more evidence to raise confidence"
+    return "maintenance evidence"
