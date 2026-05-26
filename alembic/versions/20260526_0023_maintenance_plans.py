@@ -1,7 +1,7 @@
 """Add maintenance plans from gap analyses.
 
 Revision ID: 20260526_0023_maintenance_plans
-Revises: 20260526_0022_gap_analysis_scope_constraint_cleanup
+Revises: 20260526_0022_remediation_triggers
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260526_0023_maintenance_plans"
-down_revision = "20260526_0022_gap_analysis_scope_constraint_cleanup"
+down_revision = "20260526_0022_remediation_triggers"
 branch_labels = None
 depends_on = None
 
@@ -30,7 +30,9 @@ def upgrade() -> None:
         sa.Column(
             "generated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
-        sa.Column("ownership_scope", sa.String(length=32), server_default="personal", nullable=False),
+        sa.Column(
+            "ownership_scope", sa.String(length=32), server_default="personal", nullable=False
+        ),
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
@@ -43,9 +45,7 @@ def upgrade() -> None:
             name=op.f("ck_maintenance_plans_status_valid"),
         ),
         sa.ForeignKeyConstraint(["target_id"], ["capability_targets.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(
-            ["gap_analysis_id"], ["gap_analyses.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["gap_analysis_id"], ["gap_analyses.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["learner_id"], ["learners.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
