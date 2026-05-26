@@ -58,9 +58,13 @@ class LLMSessionRead(BaseModel):
 def _default_client() -> LLMClient:
     provider = FakeProvider(
         responder=lambda _model, prompt: (
-            "Try a retrieval attempt first, then compare it with the linked source."
-            if "retrieval-nudge" in prompt
-            else "Here is a concise explanation tied to the requested learning goal."
+            prompt
+            if "Mode: authoring-assist" in prompt
+            else (
+                "Try a retrieval attempt first, then compare it with the linked source."
+                if "retrieval-nudge" in prompt
+                else "Here is a concise explanation tied to the requested learning goal."
+            )
         )
     )
     config = LLMConfig(
@@ -143,8 +147,8 @@ def authoring_assist_propose_route(
             ),
             learner_id=payload.learner_id,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (SourceConstraintViolation, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     session.commit()
     session.refresh(result.llm_proposal)
     return AuthoringAssistProposeResponse(

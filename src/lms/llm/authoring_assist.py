@@ -112,11 +112,12 @@ def propose_authoring_drafts(
     )
     db_session.add(response.session)
     db_session.flush()
+    generated_text = response.text.strip() or draft.prompt_body
 
     knowledge_node = create_knowledge_node(
         db_session,
         title=draft.related_node_title,
-        description=draft.related_node_description,
+        description=generated_text,
         knowledge_type=draft.related_node_knowledge_type,
         scope=goal.ownership_scope,
         actor_id=actor_id,
@@ -147,7 +148,7 @@ def propose_authoring_drafts(
         intended_cognitive_action=draft.prompt_intended_cognitive_action,
         demand_level=draft.prompt_demand_level,
         expected_answer_form=draft.prompt_expected_answer_form,
-        body=draft.prompt_body,
+        body=generated_text,
         source_reference_ids=[source_reference.id],
         authoring_method="llm-generated",
         authoring_actor=actor_id,

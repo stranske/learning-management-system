@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from fastapi import HTTPException
+from pytest import MonkeyPatch
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -9,6 +11,7 @@ from lms.audit.models import AuditLog
 from lms.auth.models import User
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.repository import create_learner_for_user, create_learning_goal
+from lms.llm import api as llm_api
 from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
@@ -140,6 +143,28 @@ def test_proposal_records_model_and_session_id(db_session: Session) -> None:
     assert result.prompt.llm_model == "fake-authoring-model"
 
 
+def test_proposal_persists_provider_text_as_generated_artifacts(db_session: Session) -> None:
+    """Persisted proposal content must come from the LLM response, not only the input draft."""
+    ids = _seed_proposal_dependencies(db_session)
+    result = propose_authoring_drafts(
+        db_session,
+        client=_build_client(),
+        source_reference_id=ids["source_id"],
+        target_node_id=ids["node_id"],
+        learning_goal_id=ids["goal_id"],
+        actor_id="user:bea",
+        draft=_draft(),
+        learner_id=ids["learner_id"],
+    )
+    db_session.commit()
+
+    generated_body = result.prompt.versions[0].body
+    assert generated_body != _draft().prompt_body
+    assert "Mode: authoring-assist" in generated_body
+    assert "https://example.test/spaced-retrieval" in generated_body
+    assert result.knowledge_node.description == generated_body
+
+
 def test_proposal_records_audit_event(db_session: Session) -> None:
     """Proposals must leave an authoring audit trail for the reviewer."""
     ids = _seed_proposal_dependencies(db_session)
@@ -269,3 +294,95 @@ def test_proposal_trace_and_cost_recorded_through_llm_wrapper(db_session: Sessio
     assert stored.input_tokens > 0
     assert stored.output_tokens > 0
     assert stored.mode == "authoring-assist"
+
+
+def test_authoring_assist_route_uses_source_safe_fake_provider(db_session: Session) -> None:
+    """The HTTP route's default fake provider must satisfy source constraints."""
+    llm_api._default_client.cache_clear()
+    ids = _seed_proposal_dependencies(db_session)
+
+    response = llm_api.authoring_assist_propose_route(
+        llm_api.AuthoringAssistProposeRequest(
+            source_reference_id=ids["source_id"],
+            target_node_id=ids["node_id"],
+            learning_goal_id=ids["goal_id"],
+            actor_id="user:bea",
+            related_node_title="Retrieval interval calibration",
+            related_node_knowledge_type="conceptual",
+            prompt_body="Explain how interval calibration extends retention.",
+            prompt_knowledge_type="conceptual",
+            prompt_intended_cognitive_action="explain",
+            prompt_demand_level="medium",
+            prompt_expected_answer_form="short-text",
+            related_node_description="Adjust gaps between practice.",
+            edge_type="encompassing",
+            learner_id=ids["learner_id"],
+        ),
+        db_session,
+    )
+
+    assert response.llm_model == "fake-learning-policy"
+    assert response.node_status == "draft"
+    assert response.prompt_authoring_method == "llm-generated"
+
+
+def test_authoring_assist_route_validation_errors_are_422(
+    db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    """Repository and source-constraint failures should map to validation errors."""
+    ids = _seed_proposal_dependencies(db_session)
+
+    try:
+        llm_api.authoring_assist_propose_route(
+            llm_api.AuthoringAssistProposeRequest(
+                source_reference_id=ids["source_id"],
+                target_node_id="missing-node",
+                learning_goal_id=ids["goal_id"],
+                actor_id="user:bea",
+                related_node_title="Retrieval interval calibration",
+                related_node_knowledge_type="conceptual",
+                prompt_body="Explain how interval calibration extends retention.",
+                prompt_knowledge_type="conceptual",
+                prompt_intended_cognitive_action="explain",
+                prompt_demand_level="medium",
+                prompt_expected_answer_form="short-text",
+            ),
+            db_session,
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 422
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("expected HTTPException")
+
+    bad_provider = FakeProvider(responder=lambda _model, _prompt: "uncited generated text")
+    bad_client = LLMClient(
+        config=LLMConfig(
+            mode_models={**DEFAULT_MODE_MODELS, "authoring-assist": "fake-authoring-model"},
+            global_daily_cap_micro_usd=1_000_000,
+            default_provider="fake",
+        ),
+        providers={"fake": bad_provider},
+        budget=DailyBudgetTracker(mode_caps_micro_usd={}, global_cap_micro_usd=1_000_000),
+    )
+    monkeypatch.setattr(llm_api, "_default_client", lambda: bad_client)
+    try:
+        llm_api.authoring_assist_propose_route(
+            llm_api.AuthoringAssistProposeRequest(
+                source_reference_id=ids["source_id"],
+                target_node_id=ids["node_id"],
+                learning_goal_id=ids["goal_id"],
+                actor_id="user:bea",
+                related_node_title="Retrieval interval calibration",
+                related_node_knowledge_type="conceptual",
+                prompt_body="Explain how interval calibration extends retention.",
+                prompt_knowledge_type="conceptual",
+                prompt_intended_cognitive_action="explain",
+                prompt_demand_level="medium",
+                prompt_expected_answer_form="short-text",
+            ),
+            db_session,
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 422
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("expected HTTPException")

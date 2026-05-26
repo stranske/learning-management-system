@@ -2,10 +2,9 @@
 
 An ``LLMProposal`` row binds a single :class:`LLMSession` to the draft entities
 it generated (``KnowledgeNode``, ``KnowledgeEdge``, ``Prompt``). The row makes
-the proposal_session_id and llm_model traceable from any produced entity and
-keeps the trust boundary explicit: proposed entities stay draft/llm-generated
-until a human approves them, and the proposal row is the audit anchor for that
-review.
+the llm_session_id and llm_model traceable from any produced entity and keeps
+the trust boundary explicit: proposed entities stay draft/llm-generated until a
+human approves them, and the proposal row is the audit anchor for that review.
 """
 
 from __future__ import annotations
@@ -35,6 +34,7 @@ class LLMProposal(Base):
         ForeignKey("llm_sessions.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
+        unique=True,
     )
     llm_model: Mapped[str] = mapped_column(String(120), nullable=False)
     proposed_by: Mapped[str] = mapped_column(String(255), nullable=False, index=True)

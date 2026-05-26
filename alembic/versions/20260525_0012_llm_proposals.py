@@ -34,6 +34,10 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_llm_proposals")),
+        sa.UniqueConstraint(
+            "llm_session_id",
+            name=op.f("uq_llm_proposals_llm_session_id"),
+        ),
         sa.ForeignKeyConstraint(
             ["llm_session_id"],
             ["llm_sessions.id"],
