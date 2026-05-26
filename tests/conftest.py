@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import lms.audit.models  # noqa: F401  # register Base.metadata
+import lms.capability.models  # noqa: F401  # register Base.metadata
 import lms.competencies.models  # noqa: F401  # register Base.metadata
 import lms.evidence.models  # noqa: F401  # register Base.metadata
 import lms.feedback.models  # noqa: F401  # register Base.metadata
