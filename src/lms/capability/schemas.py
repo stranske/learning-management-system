@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -57,3 +57,29 @@ class CapabilityTargetRead(BaseModel):
     target_competency_ids: list[str]
     created_at: datetime
     updated_at: datetime
+
+
+class CapabilityEstimateRecompute(BaseModel):
+    """Input for recomputing and persisting a capability estimate."""
+
+    target_id: str = Field(min_length=1, max_length=36)
+
+
+class CapabilityEstimateRead(BaseModel):
+    """Serializable persisted capability estimate."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    target_id: str
+    learner_id: str
+    generated_at: datetime
+    estimator_version: str
+    current_score: float
+    confidence: float
+    validity_scope: str
+    evidence_breakdown: dict[str, Any]
+    weak_node_ids: list[str]
+    commentary: str
+    commentary_redaction_class: str
+    created_at: datetime

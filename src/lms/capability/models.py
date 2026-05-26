@@ -1,4 +1,4 @@
-"""SQLAlchemy models for personal capability targets."""
+"""SQLAlchemy models for personal capability targets and estimates."""
 
 from __future__ import annotations
 
@@ -30,6 +30,10 @@ if TYPE_CHECKING:
 
 
 CAPABILITY_TARGET_STATUSES: tuple[str, ...] = ("active", "archived")
+CAPABILITY_ESTIMATE_REDACTION_CLASSES: tuple[str, ...] = (
+    "learner-facing-inferred-mastery",
+    "internal-inferred-mastery",
+)
 
 capability_target_nodes = Table(
     "capability_target_nodes",
@@ -137,3 +141,67 @@ class CapabilityTarget(Base):
         secondary=capability_target_competencies,
         order_by="Competency.id",
     )
+
+
+class CapabilityEstimate(Base):
+    """Persisted point-in-time estimate for a personal capability target."""
+
+    __tablename__ = "capability_estimates"
+    __table_args__ = (
+        CheckConstraint(
+            "current_score >= 0.0 AND current_score <= 1.0",
+            name="current_score_unit_interval",
+        ),
+        CheckConstraint(
+            "confidence >= 0.0 AND confidence <= 1.0",
+            name="confidence_unit_interval",
+        ),
+        CheckConstraint(
+            f"commentary_redaction_class IN ({_sql_values(CAPABILITY_ESTIMATE_REDACTION_CLASSES)})",
+            name="commentary_redaction_class_valid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    target_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("capability_targets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    learner_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("learners.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    estimator_version: Mapped[str] = mapped_column(String(120), nullable=False)
+    current_score: Mapped[float] = mapped_column(Float, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    validity_scope: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_breakdown: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    weak_node_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    commentary: Mapped[str] = mapped_column(Text, nullable=False)
+    commentary_redaction_class: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="learner-facing-inferred-mastery",
+        server_default="learner-facing-inferred-mastery",
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    target: Mapped[CapabilityTarget] = relationship("CapabilityTarget")
+    learner: Mapped[Learner] = relationship("Learner")
