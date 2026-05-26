@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260526_0022_remediation_triggers"
-down_revision = "20260526_0021_gap_analyses"
+down_revision = "20260526_0022_gap_analysis_scope_constraint_cleanup"
 branch_labels = None
 depends_on = None
 
