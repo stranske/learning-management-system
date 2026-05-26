@@ -61,8 +61,9 @@ def create_attempt(
     )
     session.add(attempt)
     session.flush()
+    evidence_record: EvidenceRecord | None = None
     if evidence is not None and _has_scoring_signal(evidence):
-        create_evidence_record(
+        evidence_record = create_evidence_record(
             session,
             learner_id=learner_id,
             knowledge_node_id=evidence["knowledge_node_id"],
@@ -95,6 +96,13 @@ def create_attempt(
             validity_scope=evidence.get("validity_scope"),
             answer_artifact_ref=evidence.get("answer_artifact_ref"),
         )
+    from lms.feedback.repository import promote_attempt_feedback
+
+    promote_attempt_feedback(
+        session,
+        attempt,
+        evidence_record_id=evidence_record.id if evidence_record is not None else None,
+    )
     return attempt
 
 

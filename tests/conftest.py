@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 import lms.audit.models  # noqa: F401  # register Base.metadata
 import lms.evidence.models  # noqa: F401  # register Base.metadata
+import lms.feedback.models  # noqa: F401  # register Base.metadata
 import lms.graphs.models  # noqa: F401  # register Base.metadata
 import lms.learners.models  # noqa: F401  # register Base.metadata
 import lms.llm.models  # noqa: F401  # register Base.metadata
