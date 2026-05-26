@@ -13,6 +13,7 @@ from lms.capability.models import (
     CAPABILITY_TARGET_STATUSES,
     CapabilityEstimate,
     CapabilityTarget,
+    GapAnalysis,
 )
 from lms.competencies.models import Competency, CompetencyEvidence
 from lms.evidence.models import EvidenceRecord
@@ -280,6 +281,61 @@ def list_capability_estimates(
     return list(session.scalars(statement))
 
 
+def create_gap_analysis(session: Session, *, estimate_id: str) -> GapAnalysis:
+    """Persist a target-relative gap analysis from one capability estimate."""
+    estimate = get_capability_estimate(session, estimate_id)
+    if estimate is None:
+        raise ValueError("capability estimate was not found")
+    target = get_capability_target(session, estimate.target_id)
+    if target is None:
+        raise ValueError("capability target was not found")
+    if target.ownership_scope != "personal":
+        raise ValueError("gap analyses only support personal targets")
+    if estimate.learner_id != target.learner_id:
+        raise ValueError("capability estimate learner must match target learner")
+
+    gap_items = _gap_items_for_estimate(target=target, estimate=estimate)
+    recommended_action_types = _recommended_action_types(gap_items)
+    analysis = GapAnalysis(
+        target_id=target.id,
+        estimate_id=estimate.id,
+        learner_id=estimate.learner_id,
+        gap_items=gap_items,
+        severity=_analysis_severity(gap_items),
+        required_evidence=target.required_evidence_types,
+        recommended_action_types=recommended_action_types,
+        ownership_scope=target.ownership_scope,
+    )
+    session.add(analysis)
+    session.flush()
+    return analysis
+
+
+def get_gap_analysis(session: Session, analysis_id: str) -> GapAnalysis | None:
+    """Return one persisted gap analysis by id."""
+    return session.get(GapAnalysis, analysis_id)
+
+
+def list_gap_analyses(
+    session: Session,
+    *,
+    learner_id: str | None = None,
+    target_id: str | None = None,
+    estimate_id: str | None = None,
+    limit: int = 100,
+) -> Sequence[GapAnalysis]:
+    """List persisted gap analyses, newest first."""
+    statement = select(GapAnalysis)
+    if learner_id is not None:
+        statement = statement.where(GapAnalysis.learner_id == learner_id)
+    if target_id is not None:
+        statement = statement.where(GapAnalysis.target_id == target_id)
+    if estimate_id is not None:
+        statement = statement.where(GapAnalysis.estimate_id == estimate_id)
+    statement = statement.order_by(GapAnalysis.generated_at.desc(), GapAnalysis.id).limit(limit)
+    return list(session.scalars(statement))
+
+
 def serialize_capability_target(target: CapabilityTarget) -> dict[str, object]:
     """Return a response-ready capability target payload."""
     return {
@@ -315,6 +371,23 @@ def serialize_capability_estimate(estimate: CapabilityEstimate) -> dict[str, obj
         "commentary": estimate.commentary,
         "commentary_redaction_class": estimate.commentary_redaction_class,
         "created_at": estimate.created_at,
+    }
+
+
+def serialize_gap_analysis(analysis: GapAnalysis) -> dict[str, object]:
+    """Return a response-ready gap analysis payload."""
+    return {
+        "id": analysis.id,
+        "target_id": analysis.target_id,
+        "estimate_id": analysis.estimate_id,
+        "learner_id": analysis.learner_id,
+        "generated_at": analysis.generated_at,
+        "gap_items": analysis.gap_items,
+        "severity": analysis.severity,
+        "required_evidence": analysis.required_evidence,
+        "recommended_action_types": analysis.recommended_action_types,
+        "ownership_scope": analysis.ownership_scope,
+        "created_at": analysis.created_at,
     }
 
 
@@ -571,3 +644,219 @@ def _commentary(*, current_score: float, confidence: float) -> str:
     if current_score >= 0.8:
         return "Current evidence suggests strong progress toward this capability target."
     return "Current evidence suggests more practice is needed for this capability target."
+
+
+def _gap_items_for_estimate(
+    *,
+    target: CapabilityTarget,
+    estimate: CapabilityEstimate,
+) -> list[dict[str, object]]:
+    breakdown = estimate.evidence_breakdown
+    profile_items = {
+        str(item["knowledge_node_id"]): item
+        for item in _list_of_dicts(breakdown.get("knowledge_profile_items"))
+        if "knowledge_node_id" in item
+    }
+    gap_items: list[dict[str, object]] = []
+    for row in _list_of_dicts(breakdown.get("target_node_estimates")):
+        node_id = str(row.get("knowledge_node_id", ""))
+        if not node_id:
+            continue
+        profile_item = profile_items.get(node_id, {})
+        gap_items.extend(
+            _node_gap_items(
+                target=target,
+                row=row,
+                profile_item=profile_item,
+            )
+        )
+    for row in _list_of_dicts(breakdown.get("competency_evidence")):
+        competency_id = str(row.get("competency_id", ""))
+        if not competency_id:
+            continue
+        gap_items.extend(_competency_gap_items(target=target, row=row))
+    return gap_items
+
+
+def _node_gap_items(
+    *,
+    target: CapabilityTarget,
+    row: dict[str, object],
+    profile_item: dict[str, object],
+) -> list[dict[str, object]]:
+    node_id = str(row["knowledge_node_id"])
+    current_estimate = _as_float(row.get("current_estimate", 0.0))
+    confidence = _as_float(row.get("confidence", 0.0))
+    evidence_count = _as_int(row.get("evidence_count", 0))
+    next_evidence_needed = str(row.get("next_evidence_needed", "more evidence"))
+    support_markers = profile_item.get("support_dependence_markers", [])
+    markers = [str(marker) for marker in support_markers if isinstance(marker, str)] if isinstance(
+        support_markers, list
+    ) else []
+    items: list[dict[str, object]] = []
+    if evidence_count == 0:
+        items.append(
+            _gap_item(
+                gap_type="missing_evidence",
+                severity="high",
+                recommended_action_type="collect-initial-evidence",
+                knowledge_node_id=node_id,
+                required_evidence=target.required_evidence_types,
+                rationale="No observed evidence exists for this target node yet.",
+                current_estimate=current_estimate,
+                confidence=confidence,
+            )
+        )
+    if current_estimate < target.confidence_threshold:
+        items.append(
+            _gap_item(
+                gap_type="weak_mastery",
+                severity="high" if current_estimate < 0.5 else "medium",
+                recommended_action_type="remediation-practice",
+                knowledge_node_id=node_id,
+                required_evidence=target.required_evidence_types,
+                rationale="Current evidence is below the target confidence threshold.",
+                current_estimate=current_estimate,
+                confidence=confidence,
+            )
+        )
+    if evidence_count > 0 and confidence < target.confidence_threshold:
+        items.append(
+            _gap_item(
+                gap_type="stale_evidence",
+                severity="medium",
+                recommended_action_type="refresh-evidence",
+                knowledge_node_id=node_id,
+                required_evidence=target.required_evidence_types,
+                rationale="Evidence exists, but confidence is still below the target threshold.",
+                current_estimate=current_estimate,
+                confidence=confidence,
+            )
+        )
+    if markers:
+        items.append(
+            _gap_item(
+                gap_type="support_dependence",
+                severity="medium",
+                recommended_action_type="independent-practice",
+                knowledge_node_id=node_id,
+                required_evidence=["independent evidence"],
+                rationale="Recent evidence relied on support, hints, or references.",
+                current_estimate=current_estimate,
+                confidence=confidence,
+                support_dependence_markers=markers,
+            )
+        )
+    if _needs_transfer_evidence(target.required_evidence_types, next_evidence_needed):
+        items.append(
+            _gap_item(
+                gap_type="transfer_evidence_needed",
+                severity="medium",
+                recommended_action_type="transfer-case",
+                knowledge_node_id=node_id,
+                required_evidence=["transfer-case"],
+                rationale="The target still needs independent transfer evidence.",
+                current_estimate=current_estimate,
+                confidence=confidence,
+            )
+        )
+    return items
+
+
+def _competency_gap_items(
+    *,
+    target: CapabilityTarget,
+    row: dict[str, object],
+) -> list[dict[str, object]]:
+    competency_id = str(row["competency_id"])
+    evidence_count = _as_int(row.get("evidence_count", 0))
+    weighted_score = _as_float(row.get("weighted_score", 0.0))
+    confidence = _as_float(row.get("confidence", 0.0))
+    items: list[dict[str, object]] = []
+    if evidence_count == 0:
+        items.append(
+            _gap_item(
+                gap_type="missing_evidence",
+                severity="high",
+                recommended_action_type="collect-competency-evidence",
+                competency_id=competency_id,
+                required_evidence=target.required_evidence_types,
+                rationale="No learner evidence has been linked to this target competency.",
+                current_estimate=weighted_score,
+                confidence=confidence,
+            )
+        )
+    elif weighted_score < target.confidence_threshold:
+        items.append(
+            _gap_item(
+                gap_type="weak_mastery",
+                severity="high" if weighted_score < 0.5 else "medium",
+                recommended_action_type="remediation-practice",
+                competency_id=competency_id,
+                required_evidence=target.required_evidence_types,
+                rationale="Competency evidence is below the target confidence threshold.",
+                current_estimate=weighted_score,
+                confidence=confidence,
+            )
+        )
+    return items
+
+
+def _gap_item(
+    *,
+    gap_type: str,
+    severity: str,
+    recommended_action_type: str,
+    required_evidence: list[str],
+    rationale: str,
+    current_estimate: float,
+    confidence: float,
+    knowledge_node_id: str | None = None,
+    competency_id: str | None = None,
+    support_dependence_markers: list[str] | None = None,
+) -> dict[str, object]:
+    item: dict[str, object] = {
+        "gap_type": gap_type,
+        "severity": severity,
+        "recommended_action_type": recommended_action_type,
+        "required_evidence": required_evidence,
+        "rationale": rationale,
+        "current_estimate": round(current_estimate, 4),
+        "confidence": round(confidence, 4),
+    }
+    if knowledge_node_id is not None:
+        item["knowledge_node_id"] = knowledge_node_id
+    if competency_id is not None:
+        item["competency_id"] = competency_id
+    if support_dependence_markers:
+        item["support_dependence_markers"] = support_dependence_markers
+    return item
+
+
+def _recommended_action_types(gap_items: list[dict[str, object]]) -> list[str]:
+    action_types = {
+        str(item["recommended_action_type"])
+        for item in gap_items
+        if isinstance(item.get("recommended_action_type"), str)
+    }
+    return sorted(action_types)
+
+
+def _analysis_severity(gap_items: list[dict[str, object]]) -> str:
+    severities = {str(item.get("severity")) for item in gap_items}
+    if "high" in severities:
+        return "high"
+    if "medium" in severities:
+        return "medium"
+    return "low"
+
+
+def _needs_transfer_evidence(required_evidence_types: list[str], next_evidence_needed: str) -> bool:
+    required = {value.lower() for value in required_evidence_types}
+    return "transfer-case" in required or "transfer" in next_evidence_needed.lower()
+
+
+def _list_of_dicts(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]

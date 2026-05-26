@@ -83,3 +83,27 @@ class CapabilityEstimateRead(BaseModel):
     commentary: str
     commentary_redaction_class: str
     created_at: datetime
+
+
+class GapAnalysisCreate(BaseModel):
+    """Input for generating a gap analysis from a persisted estimate."""
+
+    estimate_id: str = Field(min_length=1, max_length=36)
+
+
+class GapAnalysisRead(BaseModel):
+    """Serializable persisted gap analysis."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    target_id: str
+    estimate_id: str
+    learner_id: str
+    generated_at: datetime
+    gap_items: list[dict[str, Any]]
+    severity: str
+    required_evidence: list[str]
+    recommended_action_types: list[str]
+    ownership_scope: str
+    created_at: datetime

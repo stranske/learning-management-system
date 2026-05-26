@@ -10,13 +10,17 @@ from sqlalchemy.orm import Session
 from lms.capability.repository import (
     archive_capability_target,
     create_capability_target,
+    create_gap_analysis,
     get_capability_estimate,
     get_capability_target,
+    get_gap_analysis,
     list_capability_estimates,
     list_capability_targets,
+    list_gap_analyses,
     recompute_capability_estimate,
     serialize_capability_estimate,
     serialize_capability_target,
+    serialize_gap_analysis,
     update_capability_target,
 )
 from lms.capability.schemas import (
@@ -26,6 +30,8 @@ from lms.capability.schemas import (
     CapabilityTargetRead,
     CapabilityTargetStatus,
     CapabilityTargetUpdate,
+    GapAnalysisCreate,
+    GapAnalysisRead,
 )
 from lms.db.session import get_session
 
@@ -187,3 +193,57 @@ def get_capability_estimate_route(estimate_id: str, session: SessionDep) -> dict
             detail="Capability estimate not found.",
         )
     return serialize_capability_estimate(estimate)
+
+
+@router.post(
+    "/gap-analyses",
+    response_model=GapAnalysisRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_gap_analysis_route(
+    payload: GapAnalysisCreate,
+    session: SessionDep,
+) -> dict[str, object]:
+    """Generate and persist a gap analysis from one capability estimate."""
+    try:
+        analysis = create_gap_analysis(session, estimate_id=payload.estimate_id)
+        session.commit()
+        session.refresh(analysis)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    return serialize_gap_analysis(analysis)
+
+
+@router.get("/gap-analyses", response_model=list[GapAnalysisRead])
+def list_gap_analyses_route(
+    session: SessionDep,
+    learner_id: Annotated[str | None, Query(max_length=36)] = None,
+    target_id: Annotated[str | None, Query(max_length=36)] = None,
+    estimate_id: Annotated[str | None, Query(max_length=36)] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[dict[str, object]]:
+    """List persisted gap analyses."""
+    analyses = list_gap_analyses(
+        session,
+        learner_id=learner_id,
+        target_id=target_id,
+        estimate_id=estimate_id,
+        limit=limit,
+    )
+    return [serialize_gap_analysis(analysis) for analysis in analyses]
+
+
+@router.get("/gap-analyses/{analysis_id}", response_model=GapAnalysisRead)
+def get_gap_analysis_route(analysis_id: str, session: SessionDep) -> dict[str, object]:
+    """Return one persisted gap analysis by id."""
+    analysis = get_gap_analysis(session, analysis_id)
+    if analysis is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gap analysis not found.",
+        )
+    return serialize_gap_analysis(analysis)
