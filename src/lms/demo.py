@@ -159,14 +159,15 @@ def build_minimum_demo_smoke_summary() -> DemoSmokeSummary:
         )
         for index, note in enumerate(notes, start=1)
     )
-    coverage_matrix = (
-        ("10 notes", "seeded DemoNote records with stable source locators"),
-        ("30 prompts", "three source-cited prompts per note"),
-        ("attempts and evidence", "one confidence-rated attempt and evidence row per prompt"),
-        ("review queue reason codes", "due-review, remediation, mixed-practice, new-instruction"),
-        ("Inspect mastery data", "one Inspect mastery row per topic"),
-        ("study-coach sessions and cost summary", "one fake-provider formative session per topic"),
+    coverage_evidence = (
+        "seeded DemoNote records with stable source locators",
+        "three source-cited prompts per note",
+        "one confidence-rated attempt and evidence row per prompt",
+        "due-review, remediation, mixed-practice, new-instruction",
+        "one Inspect mastery row per topic",
+        "one fake-provider formative session per topic",
     )
+    coverage_matrix = tuple(zip(DEMO_REQUIREMENTS, coverage_evidence, strict=True))
     return DemoSmokeSummary(
         notes=notes,
         prompts=prompts,

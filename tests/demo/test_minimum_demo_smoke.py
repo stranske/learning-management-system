@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any
 
 import lms.__main__ as lms_main
-from lms.demo import build_minimum_demo_smoke_summary, render_minimum_demo_smoke
+from lms.demo import (
+    DEMO_REQUIREMENTS,
+    build_minimum_demo_smoke_summary,
+    render_minimum_demo_smoke,
+)
 
 
 def test_minimum_demo_smoke_path(monkeypatch: Any, capsys: Any) -> None:
@@ -25,6 +29,9 @@ def test_minimum_demo_smoke_path(monkeypatch: Any, capsys: Any) -> None:
     )
     assert len(summary.inspect_rows) == 10
     assert len(summary.llm_sessions) == 10
+    assert tuple(requirement for requirement, _evidence in summary.coverage_matrix) == (
+        DEMO_REQUIREMENTS
+    )
     assert {session.mode for session in summary.llm_sessions} == {"study-coach"}
     assert {session.trace_class for session in summary.llm_sessions} == {"formative"}
 
