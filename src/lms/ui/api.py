@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from html import escape
 from typing import Annotated
+from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
+from lms.evidence.repository import create_attempt
+from lms.evidence.schemas import AttemptCreate, StructuredFeedback
 from lms.prompts.models import Prompt
 from lms.scheduling.service import DEFAULT_DAILY_CAP, SchedulerSettings, get_review_queue_overview
 
@@ -40,7 +43,7 @@ def learn_surface_route(
             <h2 id="prompt-heading">Prompt</h2>
             <p class="prompt-text">{escape(prompt_body)}</p>
           </section>
-          <form class="attempt-form" method="post" action="/attempts">
+          <form class="attempt-form" method="post" action="/learn/attempts">
             <input type="hidden" name="learner_id" value="{escape(learner_id)}">
             <input type="hidden" name="prompt_id" value="{escape(prompt_id or '')}">
             <label for="response_text">Response</label>
@@ -66,6 +69,45 @@ def learn_surface_route(
           <section aria-labelledby="sources-heading" class="source-panel">
             <h2 id="sources-heading">Source citations after attempt</h2>
             <ul>{''.join(citations) if citations else '<li>No source citations linked.</li>'}</ul>
+          </section>
+        </main>
+        """,
+    )
+
+
+@router.post("/learn/attempts", response_class=HTMLResponse)
+async def submit_learn_attempt_route(request: Request, session: SessionDep) -> str:
+    """Accept the Learn surface form and record an attempt."""
+    raw_form = parse_qs((await request.body()).decode(), keep_blank_values=True)
+    form = {key: values[-1] for key, values in raw_form.items()}
+    payload = AttemptCreate(
+        learner_id=form.get("learner_id", ""),
+        prompt_id=form.get("prompt_id", ""),
+        response_text=form.get("response_text", ""),
+        confidence_rating=_optional_int(form.get("confidence_rating")),
+        reference_accessed=form.get("reference_accessed") == "true",
+        feedback=StructuredFeedback(
+            goal="Record learner attempt",
+            observed_evidence=form.get("response_text", ""),
+            next_action="Review feedback and continue practice.",
+        ),
+    )
+    attempt = create_attempt(session, **payload.model_dump())
+    session.commit()
+    session.refresh(attempt)
+
+    return _page(
+        "Learn",
+        f"""
+        <main class="surface learn-surface">
+          <header>
+            <p class="eyebrow">Attempt recorded</p>
+            <h1>Learn</h1>
+          </header>
+          <section aria-labelledby="feedback-heading">
+            <h2 id="feedback-heading">Feedback and next action</h2>
+            <p>Attempt <strong>{escape(attempt.id)}</strong> was recorded.</p>
+            <p>Review feedback and continue practice.</p>
           </section>
         </main>
         """,
@@ -173,3 +215,9 @@ def _source_citation_items(prompt: Prompt) -> list[str]:
             citation = f"{escape(source.id)}: {escape(source.stable_locator)}"
         items.append(f"<li>{citation}</li>")
     return items
+
+
+def _optional_int(value: str | None) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)

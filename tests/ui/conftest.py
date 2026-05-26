@@ -33,7 +33,12 @@ def api_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, No
         future=True,
     )
     Base.metadata.create_all(engine)
-    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    session_factory = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
 
     def override_get_session() -> Generator[Session, None, None]:
         request_session = session_factory()

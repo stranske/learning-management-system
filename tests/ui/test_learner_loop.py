@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from lms.auth.models import utc_now
+from lms.evidence.models import Attempt
 from lms.prompts.models import Prompt, PromptVersion
 from lms.sources.models import SourceReference
 
@@ -23,11 +25,39 @@ def test_submit_prompt_attempt_with_confidence(
     html = response.text
     assert 'name="confidence_rating"' in html
     assert 'name="reference_accessed"' in html
-    assert 'action="/attempts"' in html
+    assert 'action="/learn/attempts"' in html
     assert "Explain the retrieval practice idea." in html
     assert "Source citations after attempt" in html
     assert "https://example.test/source" in html
     assert 'name="viewport"' in html
+
+
+def test_learn_surface_form_records_attempt(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        _seed_prompt(session, visibility="public", locator="https://example.test/source")
+
+    response = client.post(
+        "/learn/attempts",
+        data={
+            "learner_id": "learner-1",
+            "prompt_id": "prompt-1",
+            "response_text": "Retrieval practice strengthens recall.",
+            "confidence_rating": "4",
+            "reference_accessed": "true",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Attempt recorded" in response.text
+    with session_factory() as session:
+        attempts = session.scalars(select(Attempt).where(Attempt.learner_id == "learner-1")).all()
+    assert len(attempts) == 1
+    assert attempts[0].prompt_id == "prompt-1"
+    assert attempts[0].confidence_rating == 4
+    assert attempts[0].reference_accessed is True
 
 
 def test_learn_surface_hides_local_only_source_locator(
