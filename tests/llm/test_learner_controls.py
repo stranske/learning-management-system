@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from lms.llm.interaction_policy import InteractionContext, decide_interaction_policy
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session, sessionmaker
 
-from .test_study_coach_policy import _client
+from lms.llm.interaction_policy import InteractionContext, decide_interaction_policy
 
 
 def test_quiet_mode_honored_after_policy_reminder() -> None:
@@ -40,29 +41,31 @@ def test_assessment_restricted_session_ignores_nudge_disable() -> None:
     assert decision.disabled_supports == ("hints", "direct-feedback")
 
 
-def test_llm_session_response_includes_controls_model_and_cost() -> None:
-    with _client() as (client, session_factory):
-        response = client.post(
-            "/llm/sessions",
-            json={
-                "learner_id": "learner-1",
-                "mode": "study-coach",
-                "prompt_id": "prompt-1",
-                "user_message": "Can you orient me first?",
-                "coaching_intensity": "quiet",
-            },
-        )
+def test_llm_session_response_includes_controls_model_and_cost(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    response = client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": "learner-1",
+            "mode": "study-coach",
+            "prompt_id": "prompt-1",
+            "user_message": "Can you orient me first?",
+            "coaching_intensity": "quiet",
+        },
+    )
 
-        assert response.status_code == 200
-        body = response.json()
-        assert body["coaching_intensity"] == "quiet"
-        assert body["model"] == "fake-learning-policy"
-        assert body["cost_micro_usd"] == body["cost_summary"]["cost_micro_usd"]
-        assert body["cost_summary"]["input_tokens"] > 0
-        assert body["trace_control_state"] == "default"
-        with session_factory() as session:
-            from lms.llm.models import LLMSession
+    assert response.status_code == 200
+    body = response.json()
+    assert body["coaching_intensity"] == "quiet"
+    assert body["model"] == "fake-learning-policy"
+    assert body["cost_micro_usd"] == body["cost_summary"]["cost_micro_usd"]
+    assert body["cost_summary"]["input_tokens"] > 0
+    assert body["trace_control_state"] == "default"
+    with session_factory() as session:
+        from lms.llm.models import LLMSession
 
-            stored = session.get(LLMSession, body["session_id"])
-        assert stored is not None
-        assert stored.coaching_intensity == "quiet"
+        stored = session.get(LLMSession, body["session_id"])
+    assert stored is not None
+    assert stored.coaching_intensity == "quiet"

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session, sessionmaker
 
 from lms.audit.models import AuditLog
 from lms.evidence.repository import create_attempt
 from lms.llm.models import LLMSession
 from lms.llm.trace_controls import apply_trace_control
-
-from .test_study_coach_policy import _client
 
 
 def _session_row() -> LLMSession:
@@ -93,30 +92,32 @@ def test_keep_marks_formative_trace_for_retention(db_session: Session) -> None:
     assert llm_session.external_export_allowed is True
 
 
-def test_trace_control_endpoint_forgets_session_summary() -> None:
-    with _client() as (client, session_factory):
-        create_response = client.post(
-            "/llm/sessions",
-            json={
-                "learner_id": "learner-1",
-                "mode": "study-coach",
-                "user_message": "Can you explain this?",
-            },
-        )
-        session_id = create_response.json()["session_id"]
+def test_trace_control_endpoint_forgets_session_summary(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    create_response = client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": "learner-1",
+            "mode": "study-coach",
+            "user_message": "Can you explain this?",
+        },
+    )
+    session_id = create_response.json()["session_id"]
 
-        forget_response = client.post(
-            f"/llm/sessions/{session_id}/trace-control",
-            json={"action": "forget", "actor_id": "learner-1"},
-        )
+    forget_response = client.post(
+        f"/llm/sessions/{session_id}/trace-control",
+        json={"action": "forget", "actor_id": "learner-1"},
+    )
 
-        assert forget_response.status_code == 200
-        body = forget_response.json()
-        assert body["trace_control_state"] == "forgotten"
-        assert body["response_summary_retained"] is False
-        assert body["external_export_allowed"] is False
+    assert forget_response.status_code == 200
+    body = forget_response.json()
+    assert body["trace_control_state"] == "forgotten"
+    assert body["response_summary_retained"] is False
+    assert body["external_export_allowed"] is False
 
-        with session_factory() as session:
-            stored = session.get(LLMSession, session_id)
-        assert stored is not None
-        assert stored.response_summary is None
+    with session_factory() as session:
+        stored = session.get(LLMSession, session_id)
+    assert stored is not None
+    assert stored.response_summary is None
