@@ -48,3 +48,18 @@ def test_review_queue_displays_reason_codes(
     assert 'data-action="pause-review"' in html
     assert 'data-action="mark-stale"' in html
     assert 'name="viewport"' in html
+
+
+def test_canonical_review_route_displays_review_shell(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, _session_factory = api_client
+
+    response = client.get("/app/learner/review?learner_id=learner-1&daily_cap=10")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "<h1>Review</h1>" in html
+    assert "Due review queue" in html
+    assert "Review controls" in html
+    assert 'href="/app/learner" aria-current="page"' in html

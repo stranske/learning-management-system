@@ -33,7 +33,11 @@ def render_page(title: str, body: str, *, active_path: str | None = None) -> str
     </nav>
   </header>
 {body}
-  <script src="/service-worker.js" defer></script>
+  <script>
+    if ("serviceWorker" in navigator) {{
+      navigator.serviceWorker.register("/service-worker.js");
+    }}
+  </script>
 </body>
 </html>"""
 

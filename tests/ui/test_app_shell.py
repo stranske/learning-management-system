@@ -19,7 +19,7 @@ def test_app_shell_uses_documented_routes_and_mobile_viewport(
     assert 'href="/static/ui/pico.min.css"' in html
     assert 'href="/static/ui/app.css"' in html
     assert 'href="/manifest.webmanifest"' in html
-    assert 'src="/service-worker.js"' in html
+    assert 'navigator.serviceWorker.register("/service-worker.js")' in html
     assert 'href="/app/learner" aria-current="page"' in html
     assert 'href="/app/author"' in html
     assert 'href="/app/support"' in html

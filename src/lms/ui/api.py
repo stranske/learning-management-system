@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import escape
+from importlib.resources import files
 from typing import Annotated
 from urllib.parse import parse_qs
 
@@ -21,24 +22,21 @@ from lms.ui.shell import render_page, surface_stub
 
 router = APIRouter(tags=["learner-ui"])
 SessionDep = Annotated[Session, Depends(get_session)]
+_STATIC_FILES = files("lms.ui.static")
+_MANIFEST_CONTENT = _STATIC_FILES.joinpath("manifest.webmanifest").read_text()
+_SERVICE_WORKER_CONTENT = _STATIC_FILES.joinpath("service-worker.js").read_text()
 
 
 @router.get("/manifest.webmanifest")
 def manifest_route() -> Response:
     """Serve the PWA manifest from the package static directory."""
-    from importlib.resources import files
-
-    manifest = files("lms.ui.static").joinpath("manifest.webmanifest").read_text()
-    return Response(manifest, media_type="application/manifest+json")
+    return Response(_MANIFEST_CONTENT, media_type="application/manifest+json")
 
 
 @router.get("/service-worker.js")
 def service_worker_route() -> Response:
     """Serve the service worker placeholder from the package static directory."""
-    from importlib.resources import files
-
-    script = files("lms.ui.static").joinpath("service-worker.js").read_text()
-    return Response(script, media_type="application/javascript")
+    return Response(_SERVICE_WORKER_CONTENT, media_type="application/javascript")
 
 
 @router.get("/app/learner", response_class=HTMLResponse)
@@ -91,7 +89,7 @@ def _learn_surface(
           </section>
           <form class="attempt-form" method="post" action="/learn/attempts">
             <input type="hidden" name="learner_id" value="{escape(learner_id)}">
-            <input type="hidden" name="prompt_id" value="{escape(prompt_id or '')}">
+            <input type="hidden" name="prompt_id" value="{escape(prompt_id or "")}">
             <label for="response_text">Response</label>
             <textarea id="response_text" name="response_text" rows="6"></textarea>
             <label for="confidence_rating">Confidence</label>
@@ -114,7 +112,7 @@ def _learn_surface(
           </section>
           <section aria-labelledby="sources-heading" class="source-panel">
             <h2 id="sources-heading">Source citations after attempt</h2>
-            <ul>{''.join(citations) if citations else '<li>No source citations linked.</li>'}</ul>
+            <ul>{"".join(citations) if citations else "<li>No source citations linked.</li>"}</ul>
           </section>
         </main>
         """,
@@ -162,7 +160,7 @@ async def submit_learn_attempt_route(request: Request, session: SessionDep) -> s
           </section>
           <section aria-labelledby="sources-heading" class="source-panel">
             <h2 id="sources-heading">Source citations after attempt</h2>
-            <ul>{''.join(citations) if citations else '<li>No source citations linked.</li>'}</ul>
+            <ul>{"".join(citations) if citations else "<li>No source citations linked.</li>"}</ul>
           </section>
         </main>
         """,
@@ -226,7 +224,7 @@ def _review_surface(*, session: Session, learner_id: str, daily_cap: int) -> str
           </section>
           <section aria-labelledby="queue-heading">
             <h2 id="queue-heading">Reason codes</h2>
-            <ul class="review-queue">{''.join(items)}</ul>
+            <ul class="review-queue">{"".join(items)}</ul>
           </section>
           <section aria-labelledby="controls-heading">
             <h2 id="controls-heading">Review controls</h2>
@@ -320,7 +318,9 @@ def _latest_attempt_summary(session: Session, *, learner_id: str, prompt_id: str
     correctness_label = (
         "pending scoring evidence"
         if correctness is None
-        else "correct" if correctness else "incorrect"
+        else "correct"
+        if correctness
+        else "incorrect"
     )
     return (
         f"Latest evidence: confidence {_confidence_label(attempt.confidence_rating)}; "
