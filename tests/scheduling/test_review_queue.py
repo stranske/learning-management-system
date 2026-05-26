@@ -31,14 +31,20 @@ from lms.evidence.repository import create_attempt, create_evidence_record
 from lms.main import create_app
 from lms.scheduling.models import ReviewQueueItem
 from lms.scheduling.repository import (
+    count_review_queue_for_learner,
     create_review_queue_item,
     list_review_queue_for_learner,
 )
 from lms.scheduling.service import (
     SUCCESS_INTERVALS_DAYS,
+    SchedulerSettings,
     _classify_signal,
     _conservative_signal,
     _success_interval_days,
+    apply_resume_ramp,
+    freeze_due_items_for_pause,
+    get_review_queue_overview,
+    mark_stale_queue_items,
     schedule_from_attempt,
     seed_new_learning_item,
 )
@@ -363,6 +369,18 @@ def test_review_queue_endpoint_returns_items_with_reasons() -> None:
             normalized_score=0.0,
         )
         schedule_from_attempt(session, attempt=attempt, evidence_record=evidence)
+        for index in range(3):
+            create_review_queue_item(
+                session,
+                learner_id="learner-api",
+                knowledge_node_id=f"completed-node-{index}",
+                reason_code="due-review",
+                reason_explanation="completed review",
+                due_at=utc_now() + timedelta(minutes=index),
+                decision_log={"rule": "test-completed"},
+                priority=0.5,
+                status="completed",
+            )
         session.commit()
     finally:
         session.close()
@@ -382,17 +400,37 @@ def test_review_queue_endpoint_returns_items_with_reasons() -> None:
         response = client.get("/learners/learner-api/review-queue")
         assert response.status_code == 200
         payload = response.json()
-        assert len(payload) == 1
-        entry = payload[0]
+        assert payload["learner_id"] == "learner-api"
+        assert payload["backlog_total"] == 1
+        assert payload["returned_count"] == 1
+        assert "obligation score" in payload["backlog_note"]
+        assert len(payload["items"]) == 1
+        entry = payload["items"][0]
         assert entry["reason_code"] == "remediation"
         assert isinstance(entry["reason_explanation"], str)
         assert entry["learner_id"] == "learner-api"
         assert entry["knowledge_node_id"] == "node-api"
         assert entry["status"] == "pending"
 
+        entry_id = entry["id"]
+        with session_factory() as verify_session:
+            stored_entry = verify_session.get(ReviewQueueItem, entry_id)
+            assert stored_entry is not None
+            assert stored_entry.decision_log.get("events") is None
+
         empty = client.get("/learners/no-such-learner/review-queue")
         assert empty.status_code == 200
-        assert empty.json() == []
+        assert empty.json()["items"] == []
+
+        completed = client.get(
+            "/learners/learner-api/review-queue",
+            params={"status": "completed", "limit": 2},
+        )
+        assert completed.status_code == 200
+        completed_payload = completed.json()
+        assert completed_payload["backlog_total"] == 3
+        assert completed_payload["returned_count"] == 2
+        assert len(completed_payload["items"]) == 2
     finally:
         client.close()
         Base.metadata.drop_all(engine)
@@ -551,6 +589,128 @@ def test_list_review_queue_returns_all_statuses_when_status_is_none(
     assert {i.id for i in all_items} == {item_a.id, item_b.id}
     assert len(pending_only) == 1
     assert pending_only[0].id == item_b.id
+
+
+def test_daily_cap_limits_returned_queue_items(db_session: Session) -> None:
+    """The queue overview returns only today's capped load while reporting total backlog."""
+    fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
+    created = [
+        seed_new_learning_item(
+            db_session,
+            learner_id="learner-cap",
+            knowledge_node_id=f"node-{index}",
+            now=fixed_now + timedelta(minutes=index),
+        )
+        for index in range(4)
+    ]
+    db_session.commit()
+
+    overview = get_review_queue_overview(
+        db_session,
+        learner_id="learner-cap",
+        settings=SchedulerSettings(daily_cap=2),
+        now=fixed_now,
+    )
+
+    assert overview.backlog_total == 4
+    assert overview.daily_cap == 2
+    assert [item.id for item in overview.items] == [created[0].id, created[1].id]
+    assert "informational" in overview.backlog_note
+    assert "obligation score" in overview.backlog_note
+
+
+def test_filtered_review_queue_backlog_total_counts_beyond_limit(
+    db_session: Session,
+) -> None:
+    """Filtered queue responses count all matching rows, not only the page returned."""
+    fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
+    for index in range(3):
+        seed_new_learning_item(
+            db_session,
+            learner_id="learner-completed",
+            knowledge_node_id=f"node-{index}",
+            now=fixed_now + timedelta(minutes=index),
+        ).status = "completed"
+    db_session.commit()
+
+    assert (
+        count_review_queue_for_learner(
+            db_session,
+            learner_id="learner-completed",
+            status="completed",
+        )
+        == 3
+    )
+
+
+def test_pause_freezes_due_times_and_resume_ramps_items(db_session: Session) -> None:
+    """Pause mode defers due items and resume ramp spreads the backlog."""
+    fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
+    pause_until = fixed_now + timedelta(days=7)
+    items = [
+        seed_new_learning_item(
+            db_session,
+            learner_id="learner-pause",
+            knowledge_node_id=f"node-{index}",
+            now=fixed_now - timedelta(days=index + 1),
+        )
+        for index in range(4)
+    ]
+
+    frozen = freeze_due_items_for_pause(
+        db_session,
+        learner_id="learner-pause",
+        pause_until=pause_until,
+        now=fixed_now,
+    )
+    assert frozen == 4
+    assert {item.due_at for item in items} == {pause_until}
+    assert all(item.decision_log["events"][-1]["rule"] == "pause-freeze" for item in items)
+
+    resume_now = pause_until + timedelta(days=1)
+    changed = apply_resume_ramp(
+        db_session,
+        learner_id="learner-pause",
+        daily_cap=2,
+        now=resume_now,
+    )
+
+    assert changed == 4
+    due_dates = [item.due_at for item in items]
+    assert due_dates.count(resume_now) == 2
+    assert due_dates.count(resume_now + timedelta(days=1)) == 2
+    assert all(item.decision_log["events"][-1]["rule"] == "resume-ramp" for item in items)
+
+
+def test_stale_item_can_be_retired_or_reengaged(db_session: Session) -> None:
+    """Very old pending items are marked stale for explicit retire/re-engage decisions."""
+    fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
+    stale = seed_new_learning_item(
+        db_session,
+        learner_id="learner-stale",
+        knowledge_node_id="node-old",
+        now=fixed_now - timedelta(days=90),
+    )
+    fresh = seed_new_learning_item(
+        db_session,
+        learner_id="learner-stale",
+        knowledge_node_id="node-fresh",
+        now=fixed_now - timedelta(days=2),
+    )
+
+    count = mark_stale_queue_items(
+        db_session,
+        learner_id="learner-stale",
+        stale_after_days=45,
+        now=fixed_now,
+    )
+
+    assert count == 1
+    assert stale.reason_code == "stale"
+    assert stale.priority == 0.3
+    assert "Re-engage it, retire it, or adjust the learning goal" in stale.reason_explanation
+    assert stale.decision_log["events"][-1]["rule"] == "mark-stale"
+    assert fresh.reason_code == "new-learning"
 
 
 def test_decision_log_includes_fsrs_rating_for_successful_retrieval(db_session: Session) -> None:

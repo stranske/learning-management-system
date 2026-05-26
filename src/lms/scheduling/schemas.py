@@ -36,3 +36,14 @@ class ReviewQueueItemRead(BaseModel):
     decision_log: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+
+
+class ReviewQueueResponse(BaseModel):
+    """Review queue response with sustainable-use metadata."""
+
+    learner_id: str
+    daily_cap: int = Field(ge=1)
+    backlog_total: int = Field(ge=0)
+    returned_count: int = Field(ge=0)
+    backlog_note: str
+    items: list[ReviewQueueItemRead]

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from lms.scheduling.models import ReviewQueueItem
@@ -61,3 +61,20 @@ def list_review_queue_for_learner(
         ReviewQueueItem.id,
     ).limit(limit)
     return list(session.scalars(statement))
+
+
+def count_review_queue_for_learner(
+    session: Session,
+    *,
+    learner_id: str,
+    status: str | None = "pending",
+) -> int:
+    """Count queue items for a learner, optionally filtered by status."""
+    statement = (
+        select(func.count())
+        .select_from(ReviewQueueItem)
+        .where(ReviewQueueItem.learner_id == learner_id)
+    )
+    if status is not None:
+        statement = statement.where(ReviewQueueItem.status == status)
+    return int(session.scalar(statement) or 0)
