@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from lms.db.session import session_scope
+from lms.export_import import ExportImportError, export_jsonl, export_to_path, import_jsonl
 from lms.importers.csv_graph import CsvGraphImportError, import_csv_graph
 from lms.importers.markdown import import_markdown_notes
 from lms.research_registry import ResearchRegistryError, load_registry
@@ -95,6 +98,55 @@ def main() -> None:
         default="system:csv-graph-importer",
         help="actor id recorded in audit events created by the import",
     )
+    export_parser = subparsers.add_parser(
+        "export",
+        help="export v1 LMS records as typed JSONL",
+    )
+    export_parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="JSONL output file; stdout is used when omitted",
+    )
+    export_parser.add_argument(
+        "--include-llm-traces",
+        choices=("evidence-grade-only", "all"),
+        default="evidence-grade-only",
+        help="which LLM session records to include",
+    )
+    export_parser.add_argument(
+        "--include-source-content",
+        choices=("public-only", "all"),
+        default="public-only",
+        help="source body inclusion policy; local-only content is omitted by default",
+    )
+    export_parser.add_argument(
+        "--include-pii",
+        choices=("never", "all"),
+        default="never",
+        help="PII inclusion policy",
+    )
+    export_parser.add_argument(
+        "--yes-i-mean-it",
+        action="store_true",
+        help="required with any redaction option set to all",
+    )
+    v1_import_parser = subparsers.add_parser(
+        "import",
+        help="validate or apply a typed JSONL LMS import",
+    )
+    v1_import_parser.add_argument("path", type=Path, help="JSONL file to import")
+    apply_group = v1_import_parser.add_mutually_exclusive_group(required=True)
+    apply_group.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate without writing records",
+    )
+    apply_group.add_argument(
+        "--apply",
+        action="store_true",
+        help="write records after dry-run validation passes",
+    )
 
     args = parser.parse_args()
     if args.command == "validate-research-registry":
@@ -169,6 +221,41 @@ def main() -> None:
             f"edges={csv_summary.edges} "
             f"source_references={csv_summary.source_references}"
         )
+        return
+    if args.command == "export":
+        try:
+            with session_scope() as session:
+                if args.out is None:
+                    for line in export_jsonl(
+                        session,
+                        include_llm_traces=args.include_llm_traces,
+                        include_source_content=args.include_source_content,
+                        include_pii=args.include_pii,
+                        confirm_all=args.yes_i_mean_it,
+                    ):
+                        print(line)
+                else:
+                    count = export_to_path(
+                        session,
+                        args.out,
+                        include_llm_traces=args.include_llm_traces,
+                        include_source_content=args.include_source_content,
+                        include_pii=args.include_pii,
+                        confirm_all=args.yes_i_mean_it,
+                    )
+                    print(f"export complete: records={count} out={args.out}")
+        except ExportImportError as exc:
+            raise SystemExit(f"export failed: {exc}") from exc
+        return
+    if args.command == "import":
+        try:
+            with session_scope() as session:
+                summary = import_jsonl(session, args.path, dry_run=args.dry_run)
+        except (ExportImportError, SQLAlchemyError) as exc:
+            raise SystemExit(f"import failed: {exc}") from exc
+        mode = "dry run" if summary.dry_run else "apply"
+        counts = " ".join(f"{key}={value}" for key, value in sorted(summary.counts.items()))
+        print(f"import {mode} complete: {counts}")
         return
 
     _run_dev_server()

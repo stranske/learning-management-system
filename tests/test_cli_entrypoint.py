@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 import lms.__main__ as lms_main
 from lms.importers.csv_graph import CsvGraphImportError
@@ -185,4 +186,26 @@ def test_import_graph_exits_with_message_on_import_error(monkeypatch: Any, tmp_p
     monkeypatch.setattr("sys.argv", ["lms", "import-graph", str(csv_path)])
 
     with pytest.raises(SystemExit, match="CSV graph import failed: unknown prerequisite"):
+        lms_main.main()
+
+
+def test_import_exits_with_message_on_database_error(monkeypatch: Any, tmp_path: Path) -> None:
+    path = tmp_path / "import.jsonl"
+    path.write_text("", encoding="utf-8")
+
+    class _FakeSessionContext:
+        def __enter__(self) -> object:
+            return object()
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    def fake_import_jsonl(session: object, path: Path, *, dry_run: bool) -> object:
+        raise SQLAlchemyError("constraint failed")
+
+    monkeypatch.setattr(lms_main, "session_scope", lambda: _FakeSessionContext())
+    monkeypatch.setattr(lms_main, "import_jsonl", fake_import_jsonl)
+    monkeypatch.setattr("sys.argv", ["lms", "import", str(path), "--apply"])
+
+    with pytest.raises(SystemExit, match="import failed: constraint failed"):
         lms_main.main()
