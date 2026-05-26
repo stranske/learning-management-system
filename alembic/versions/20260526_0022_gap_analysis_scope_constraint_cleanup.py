@@ -21,7 +21,7 @@ def upgrade() -> None:
     if bind.dialect.name == "sqlite":
         with op.batch_alter_table("gap_analyses") as batch_op:
             batch_op.drop_constraint(
-                "ck_gap_analyses_ownership_scope_valid",
+                op.f("ck_gap_analyses_ownership_scope_valid"),
                 type_="check",
             )
         return
@@ -42,7 +42,7 @@ def downgrade() -> None:
     if bind.dialect.name == "sqlite":
         with op.batch_alter_table("gap_analyses") as batch_op:
             batch_op.create_check_constraint(
-                constraint.name,
+                op.f(constraint.name),
                 constraint.sqltext,
             )
         return
