@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from lms.auth.models import utc_now
 from lms.evidence.models import Attempt
+from lms.evidence.repository import create_attempt
 from lms.prompts.models import Prompt, PromptVersion
 from lms.sources.models import SourceReference
 
@@ -27,6 +28,7 @@ def test_submit_prompt_attempt_with_confidence(
     assert 'name="reference_accessed"' in html
     assert 'action="/learn/attempts"' in html
     assert "Explain the retrieval practice idea." in html
+    assert "Provenance: human-authored; author author-1; reviewer reviewer-1." in html
     assert "Source citations after attempt" in html
     assert "https://example.test/source" in html
     assert 'name="viewport"' in html
@@ -51,13 +53,50 @@ def test_learn_surface_form_records_attempt(
     )
 
     assert response.status_code == 200
-    assert "Attempt recorded" in response.text
+    html = response.text
+    assert "Attempt recorded" in html
+    assert "Confidence: 4/5" in html
+    assert "Correctness: pending scoring evidence." in html
+    assert "Source citations after attempt" in html
+    assert "https://example.test/source" in html
     with session_factory() as session:
         attempts = session.scalars(select(Attempt).where(Attempt.learner_id == "learner-1")).all()
     assert len(attempts) == 1
     assert attempts[0].prompt_id == "prompt-1"
     assert attempts[0].confidence_rating == 4
     assert attempts[0].reference_accessed is True
+
+
+def test_learn_surface_shows_confidence_against_scoring_evidence(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        _seed_prompt(session, visibility="public", locator="https://example.test/source")
+        create_attempt(
+            session,
+            learner_id="learner-1",
+            prompt_id="prompt-1",
+            response_text="Retrieval practice strengthens recall.",
+            confidence_rating=5,
+            reference_accessed=False,
+            feedback={
+                "goal": "Record learner attempt",
+                "observed_evidence": "Retrieval practice strengthens recall.",
+                "next_action": "Continue.",
+            },
+            evidence={
+                "knowledge_node_id": "node-1",
+                "correctness": True,
+                "normalized_score": 1.0,
+            },
+        )
+        session.commit()
+
+    response = client.get("/learn?learner_id=learner-1&prompt_id=prompt-1")
+
+    assert response.status_code == 200
+    assert "Latest evidence: confidence 5/5; correctness correct." in response.text
 
 
 def test_learn_surface_hides_local_only_source_locator(
