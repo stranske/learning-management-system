@@ -69,3 +69,28 @@ class LearningGoalRead(BaseModel):
     target_nodes: list[KnowledgeNodeRead]
     created_at: datetime
     updated_at: datetime
+
+
+class KnowledgeProfileItem(BaseModel):
+    """One learner-state summary row for a knowledge node."""
+
+    learner_id: str
+    ownership_scope: OwnershipScope
+    knowledge_node_id: str
+    knowledge_node_title: str
+    knowledge_type: KnowledgeType
+    current_estimate: float
+    confidence: float
+    evidence_count: int
+    last_evidence_id: str
+    support_dependence_markers: list[str]
+    next_evidence_needed: str
+    generated_at: datetime
+
+
+class KnowledgeProfileRead(BaseModel):
+    """Computed learner knowledge profile scoped to one graph ownership domain."""
+
+    learner_id: str
+    ownership_scope: OwnershipScope
+    items: list[KnowledgeProfileItem]

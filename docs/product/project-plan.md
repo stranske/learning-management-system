@@ -675,7 +675,9 @@ Core records:
 - `Learner`
 - `LearnerProfile`
 - `Enrollment`
-- `KnowledgeProfile`
+- `KnowledgeProfile` — implemented in v1 as a computed learner profile view over
+  `EvidenceRecord`, `KnowledgeNode.ownership_scope`, and the on-demand mastery estimator,
+  not as a persisted mastery cache.
 - `MasteryEstimate`
 - `EvidenceRecord`
 - `LearningGoal`
@@ -1226,7 +1228,7 @@ Moved out of Phase 1:
 
 Add:
 
-- `KnowledgeProfile`
+- `KnowledgeProfile` computed API view (`GET /learners/{learner_id}/knowledge-profile`)
 - `ReviewSchedule`
 - `ReviewPolicy`
 - `SchedulerDecision`
