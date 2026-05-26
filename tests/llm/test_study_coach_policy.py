@@ -89,6 +89,53 @@ def test_high_confidence_wrong_attempt_triggers_calibration_nudge() -> None:
     assert decision.learning_risk == "miscalibrated-confidence"
 
 
+def test_passive_rereading_gets_retrieval_activation() -> None:
+    decision = decide_interaction_policy(
+        InteractionContext(
+            mode="study-coach",
+            learner_id="learner-1",
+            prompt_id="prompt-1",
+            user_message="Can you read it again please?",
+        )
+    )
+
+    assert decision.response_style == "retrieval-activation"
+    assert decision.behavior == "passive-rereading"
+    assert decision.direct_answer_allowed is False
+
+
+def test_rapid_guessing_triggers_pace_control() -> None:
+    decision = decide_interaction_policy(
+        InteractionContext(
+            mode="practice",
+            learner_id="learner-1",
+            prompt_id="prompt-1",
+            user_message="Next.",
+            recent_incorrect_streak=2,
+            recent_attempt_latency_seconds=8,
+        )
+    )
+
+    assert decision.response_style == "pace-control"
+    assert decision.behavior == "rapid-guessing"
+    assert decision.direct_answer_allowed is False
+
+
+def test_attempt_avoidance_requires_attempt_first() -> None:
+    decision = decide_interaction_policy(
+        InteractionContext(
+            mode="study-coach",
+            learner_id="learner-1",
+            prompt_id="prompt-1",
+            user_message="Can you do it for me without trying?",
+        )
+    )
+
+    assert decision.response_style == "attempt-first"
+    assert decision.behavior == "avoidance-of-attempts"
+    assert decision.direct_answer_allowed is False
+
+
 def test_assessment_restriction_disables_hints_and_direct_answers() -> None:
     decision = decide_interaction_policy(
         InteractionContext(

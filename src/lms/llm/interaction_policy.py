@@ -21,6 +21,18 @@ ORIENTATION_TERMS = (
     "orient",
     "teach me",
 )
+PASSIVE_REREADING_TERMS = (
+    "read it again",
+    "reread",
+    "repeat that",
+    "again please",
+)
+ATTEMPT_AVOIDANCE_TERMS = (
+    "do it for me",
+    "i don't want to try",
+    "skip the attempt",
+    "without trying",
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +50,8 @@ class InteractionContext:
     hint_count: int = 0
     confidence_rating: int | None = None
     recent_attempt_correct: bool | None = None
+    recent_incorrect_streak: int = 0
+    recent_attempt_latency_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +80,13 @@ def decide_interaction_policy(context: InteractionContext) -> PolicyDecision:
         and context.recent_attempt_correct is False
     )
     overusing_hints = context.hint_count >= 2
+    passive_rereading = any(term in message for term in PASSIVE_REREADING_TERMS)
+    attempt_avoidance = any(term in message for term in ATTEMPT_AVOIDANCE_TERMS)
+    rapid_guessing = (
+        context.recent_incorrect_streak >= 2
+        and context.recent_attempt_latency_seconds is not None
+        and context.recent_attempt_latency_seconds <= 15
+    )
 
     disabled_supports: tuple[str, ...] = ()
     if context.assessment_restricted:
@@ -93,12 +114,45 @@ def decide_interaction_policy(context: InteractionContext) -> PolicyDecision:
             source_constraints=context.source_constraints,
         )
 
+    if passive_rereading:
+        return PolicyDecision(
+            behavior="passive-rereading",
+            learning_risk="illusion-of-competence",
+            next_action="Move from rereading to retrieval with one specific recall prompt.",
+            response_style="retrieval-activation",
+            direct_answer_allowed=False,
+            disabled_supports=disabled_supports,
+            source_constraints=context.source_constraints,
+        )
+
     if weak_high_confidence:
         return PolicyDecision(
             behavior="high-confidence-with-weak-evidence",
             learning_risk="miscalibrated-confidence",
             next_action="Ask for evidence, counterexample, or a confidence check.",
             response_style="calibration-nudge",
+            direct_answer_allowed=False,
+            disabled_supports=disabled_supports,
+            source_constraints=context.source_constraints,
+        )
+
+    if rapid_guessing:
+        return PolicyDecision(
+            behavior="rapid-guessing",
+            learning_risk="shallow-processing",
+            next_action="Slow the pace and require a brief reasoning step before answering.",
+            response_style="pace-control",
+            direct_answer_allowed=False,
+            disabled_supports=disabled_supports,
+            source_constraints=context.source_constraints,
+        )
+
+    if attempt_avoidance:
+        return PolicyDecision(
+            behavior="avoidance-of-attempts",
+            learning_risk="no-retrieval-evidence",
+            next_action="Require a minimal learner attempt before additional coaching.",
+            response_style="attempt-first",
             direct_answer_allowed=False,
             disabled_supports=disabled_supports,
             source_constraints=context.source_constraints,
