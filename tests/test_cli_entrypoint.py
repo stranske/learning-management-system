@@ -189,6 +189,87 @@ def test_import_graph_exits_with_message_on_import_error(monkeypatch: Any, tmp_p
         lms_main.main()
 
 
+def test_authoring_assist_propose_calls_service_and_prints_summary(
+    monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """authoring-assist propose routes through propose_authoring_drafts and prints ids."""
+
+    class _FakeLLMProposal:
+        id = "proposal-1"
+        llm_model = "fake-authoring-model"
+
+    class _FakeKnowledgeNode:
+        id = "node-1"
+
+    class _FakePrompt:
+        id = "prompt-1"
+
+    class _FakeResult:
+        llm_proposal = _FakeLLMProposal()
+        knowledge_node = _FakeKnowledgeNode()
+        knowledge_edge = None
+        prompt = _FakePrompt()
+
+    calls: list[dict[str, object]] = []
+
+    def fake_propose(session: object, *, client: object, **kwargs: object) -> _FakeResult:
+        calls.append(kwargs)
+        return _FakeResult()
+
+    class _FakeSessionContext:
+        def __enter__(self) -> object:
+            return object()
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            pass
+
+    monkeypatch.setattr(lms_main, "session_scope", lambda: _FakeSessionContext())
+    monkeypatch.setattr(lms_main, "propose_authoring_drafts", fake_propose)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "lms",
+            "authoring-assist",
+            "propose",
+            "--source-reference",
+            "src-1",
+            "--target-node",
+            "node-1",
+            "--learning-goal",
+            "goal-1",
+            "--actor-id",
+            "user:alice",
+            "--related-node-title",
+            "Test Node",
+            "--related-node-knowledge-type",
+            "conceptual",
+            "--prompt-body",
+            "Explain X",
+            "--prompt-knowledge-type",
+            "conceptual",
+            "--prompt-cognitive-action",
+            "explain",
+            "--prompt-demand-level",
+            "medium",
+            "--prompt-answer-form",
+            "short-text",
+        ],
+    )
+
+    lms_main.main()
+
+    assert len(calls) == 1
+    assert calls[0]["source_reference_id"] == "src-1"
+    assert calls[0]["target_node_id"] == "node-1"
+    assert calls[0]["learning_goal_id"] == "goal-1"
+    assert calls[0]["actor_id"] == "user:alice"
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("authoring-assist proposal complete:")
+    assert "proposal=proposal-1" in out
+    assert "node=node-1" in out
+    assert "prompt=prompt-1" in out
+
+
 def test_import_exits_with_message_on_database_error(monkeypatch: Any, tmp_path: Path) -> None:
     path = tmp_path / "import.jsonl"
     path.write_text("", encoding="utf-8")

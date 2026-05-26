@@ -5,11 +5,12 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
+from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
 from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig
@@ -57,9 +58,13 @@ class LLMSessionRead(BaseModel):
 def _default_client() -> LLMClient:
     provider = FakeProvider(
         responder=lambda _model, prompt: (
-            "Try a retrieval attempt first, then compare it with the linked source."
-            if "retrieval-nudge" in prompt
-            else "Here is a concise explanation tied to the requested learning goal."
+            prompt
+            if "Mode: authoring-assist" in prompt
+            else (
+                "Try a retrieval attempt first, then compare it with the linked source."
+                if "retrieval-nudge" in prompt
+                else "Here is a concise explanation tied to the requested learning goal."
+            )
         )
     )
     config = LLMConfig(
@@ -74,6 +79,89 @@ def _default_client() -> LLMClient:
             mode_caps_micro_usd={},
             global_cap_micro_usd=1_000_000,
         ),
+    )
+
+
+class AuthoringAssistProposeRequest(BaseModel):
+    """Request body for an authoring-assist proposal call."""
+
+    source_reference_id: str = Field(min_length=1, max_length=36)
+    target_node_id: str = Field(min_length=1, max_length=36)
+    learning_goal_id: str = Field(min_length=1, max_length=36)
+    actor_id: str = Field(min_length=1, max_length=255)
+    related_node_title: str = Field(min_length=1, max_length=255)
+    related_node_knowledge_type: str = Field(min_length=1, max_length=32)
+    prompt_body: str = Field(min_length=1)
+    prompt_knowledge_type: str = Field(min_length=1, max_length=32)
+    prompt_intended_cognitive_action: str = Field(min_length=1, max_length=32)
+    prompt_demand_level: str = Field(min_length=1, max_length=32)
+    prompt_expected_answer_form: str = Field(min_length=1, max_length=32)
+    related_node_description: str | None = None
+    edge_type: str | None = Field(default=None, max_length=32)
+    learner_id: str | None = Field(default=None, max_length=36)
+
+
+class AuthoringAssistProposeResponse(BaseModel):
+    """Persisted proposal identifiers returned to the caller."""
+
+    llm_proposal_id: str
+    llm_session_id: str
+    llm_model: str
+    knowledge_node_id: str
+    knowledge_edge_id: str | None
+    prompt_id: str
+    node_status: str
+    node_provenance: str
+    prompt_status: str
+    prompt_authoring_method: str
+
+
+@router.post(
+    "/authoring-assist/propose",
+    response_model=AuthoringAssistProposeResponse,
+)
+def authoring_assist_propose_route(
+    payload: AuthoringAssistProposeRequest,
+    session: SessionDep,
+) -> AuthoringAssistProposeResponse:
+    """Create draft authoring-assist proposals routed through the LLM wrapper."""
+    client = _default_client()
+    try:
+        result = propose_authoring_drafts(
+            session,
+            client=client,
+            source_reference_id=payload.source_reference_id,
+            target_node_id=payload.target_node_id,
+            learning_goal_id=payload.learning_goal_id,
+            actor_id=payload.actor_id,
+            draft=ProposalDraft(
+                related_node_title=payload.related_node_title,
+                related_node_knowledge_type=payload.related_node_knowledge_type,
+                prompt_body=payload.prompt_body,
+                prompt_knowledge_type=payload.prompt_knowledge_type,
+                prompt_intended_cognitive_action=payload.prompt_intended_cognitive_action,
+                prompt_demand_level=payload.prompt_demand_level,
+                prompt_expected_answer_form=payload.prompt_expected_answer_form,
+                related_node_description=payload.related_node_description,
+                edge_type=payload.edge_type,
+            ),
+            learner_id=payload.learner_id,
+        )
+    except (SourceConstraintViolation, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    session.commit()
+    session.refresh(result.llm_proposal)
+    return AuthoringAssistProposeResponse(
+        llm_proposal_id=result.llm_proposal.id,
+        llm_session_id=result.llm_session.id,
+        llm_model=result.llm_proposal.llm_model,
+        knowledge_node_id=result.knowledge_node.id,
+        knowledge_edge_id=result.knowledge_edge.id if result.knowledge_edge is not None else None,
+        prompt_id=result.prompt.id,
+        node_status=result.knowledge_node.status,
+        node_provenance=result.knowledge_node.provenance,
+        prompt_status=result.prompt.status,
+        prompt_authoring_method=result.prompt.authoring_method,
     )
 
 

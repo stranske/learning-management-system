@@ -169,6 +169,24 @@ def version_prompt(
     return prompt
 
 
+def require_publishable_prompt(prompt: Prompt) -> Prompt:
+    """Return the prompt only if it can be surfaced to learners.
+
+    The scheduler and any other learner-facing delivery path must call this
+    before exposing a prompt: it refuses draft / in-review / archived prompts
+    so LLM-generated proposals cannot reach a learner before a human reviewer
+    approves them. The check is intentionally minimal — the trust boundary is
+    the ``status`` column, set to ``published`` only through
+    :func:`publish_prompt`.
+    """
+    if prompt.status != "published":
+        raise ValueError(
+            f"prompt {prompt.id!r} is not publishable for scheduler use: "
+            f"status={prompt.status!r}, authoring_method={prompt.authoring_method!r}"
+        )
+    return prompt
+
+
 def publish_prompt(
     session: Session,
     prompt: Prompt,
