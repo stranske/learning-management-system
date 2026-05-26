@@ -19,13 +19,20 @@ from sqlalchemy.orm import Session
 
 from lms.auth.models import utc_now
 from lms.evidence.models import Attempt, EvidenceRecord
+from lms.graphs.models import KnowledgeNode
 from lms.scheduling.fsrs_adapter import FSRSRating, evidence_to_fsrs_rating
 from lms.scheduling.models import ReviewQueueItem
-from lms.scheduling.repository import create_review_queue_item
+from lms.scheduling.repository import (
+    create_review_queue_item,
+    create_review_schedule,
+    create_scheduler_decision,
+    get_or_create_review_policy,
+)
 
 DEFAULT_DAILY_CAP = 25
 DEFAULT_RESUME_DAILY_CAP = 10
 DEFAULT_STALE_AFTER_DAYS = 45
+SCHEDULER_POLICY_VERSION = "v1"
 
 SUCCESS_INTERVALS_DAYS: tuple[int, ...] = (1, 3, 7, 14, 28)
 LOW_CONFIDENCE_INTERVAL_DAYS = 1
@@ -411,6 +418,70 @@ def _decide(
     )
 
 
+def _knowledge_node_metadata(
+    session: Session,
+    *,
+    knowledge_node_id: str,
+    fallback_knowledge_type: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Return knowledge type and ownership scope when a graph node exists."""
+    node = session.get(KnowledgeNode, knowledge_node_id)
+    if node is None:
+        return fallback_knowledge_type, None
+    return node.knowledge_type, node.ownership_scope
+
+
+def _record_schedule_and_decision(
+    session: Session,
+    *,
+    item: ReviewQueueItem,
+    policy_settings: dict[str, Any],
+    decision_log: dict[str, Any],
+    knowledge_type: str | None,
+    ownership_scope: str | None,
+    support_level: str | None,
+) -> None:
+    """Persist durable policy, schedule, and decision rows for a queue item."""
+    policy = get_or_create_review_policy(
+        session,
+        reason_code=item.reason_code,
+        policy_version=SCHEDULER_POLICY_VERSION,
+        name=f"Scheduler {SCHEDULER_POLICY_VERSION} {item.reason_code}",
+        knowledge_type=knowledge_type,
+        ownership_scope=ownership_scope,
+        settings=policy_settings,
+    )
+    schedule = create_review_schedule(
+        session,
+        learner_id=item.learner_id,
+        knowledge_node_id=item.knowledge_node_id,
+        review_policy_id=policy.id,
+        review_queue_item_id=item.id,
+        reason_code=item.reason_code,
+        due_at=item.due_at,
+        policy_version=policy.policy_version,
+        knowledge_type=knowledge_type,
+        ownership_scope=ownership_scope,
+        source_evidence_record_id=item.source_evidence_record_id,
+    )
+    create_scheduler_decision(
+        session,
+        learner_id=item.learner_id,
+        knowledge_node_id=item.knowledge_node_id,
+        review_policy_id=policy.id,
+        review_schedule_id=schedule.id,
+        review_queue_item_id=item.id,
+        source_evidence_record_id=item.source_evidence_record_id,
+        reason_code=item.reason_code,
+        decision_rationale=item.reason_explanation,
+        policy_version=policy.policy_version,
+        knowledge_type=knowledge_type,
+        ownership_scope=ownership_scope,
+        support_level=support_level,
+        decision_log=decision_log,
+    )
+
+
 def schedule_from_attempt(
     session: Session,
     *,
@@ -487,7 +558,12 @@ def schedule_from_attempt(
             "priority": decision.priority,
         },
     }
-    return create_review_queue_item(
+    knowledge_type, ownership_scope = _knowledge_node_metadata(
+        session,
+        knowledge_node_id=evidence_record.knowledge_node_id,
+        fallback_knowledge_type=evidence_record.knowledge_type,
+    )
+    item = create_review_queue_item(
         session,
         learner_id=attempt.learner_id,
         knowledge_node_id=evidence_record.knowledge_node_id,
@@ -499,6 +575,22 @@ def schedule_from_attempt(
         source_evidence_record_id=evidence_record.id,
         decision_log=decision_log,
     )
+    _record_schedule_and_decision(
+        session,
+        item=item,
+        policy_settings={
+            "rule": decision.rule,
+            "success_intervals_days": list(SUCCESS_INTERVALS_DAYS),
+            "low_confidence_interval_days": LOW_CONFIDENCE_INTERVAL_DAYS,
+            "success_score_threshold": SUCCESS_SCORE_THRESHOLD,
+            "failure_score_threshold": FAILURE_SCORE_THRESHOLD,
+        },
+        decision_log=decision_log,
+        knowledge_type=knowledge_type,
+        ownership_scope=ownership_scope,
+        support_level=support_level,
+    )
+    return item
 
 
 def seed_new_learning_item(
@@ -530,7 +622,11 @@ def seed_new_learning_item(
             "priority": priority,
         },
     }
-    return create_review_queue_item(
+    knowledge_type, ownership_scope = _knowledge_node_metadata(
+        session,
+        knowledge_node_id=knowledge_node_id,
+    )
+    item = create_review_queue_item(
         session,
         learner_id=learner_id,
         knowledge_node_id=knowledge_node_id,
@@ -540,3 +636,16 @@ def seed_new_learning_item(
         priority=priority,
         decision_log=decision_log,
     )
+    _record_schedule_and_decision(
+        session,
+        item=item,
+        policy_settings={
+            "rule": "seed-new-learning",
+            "default_priority": priority,
+        },
+        decision_log=decision_log,
+        knowledge_type=knowledge_type,
+        ownership_scope=ownership_scope,
+        support_level=None,
+    )
+    return item
