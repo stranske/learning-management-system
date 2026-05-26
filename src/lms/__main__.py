@@ -11,6 +11,11 @@ from lms.db.session import session_scope
 from lms.export_import import ExportImportError, export_jsonl, export_to_path, import_jsonl
 from lms.importers.csv_graph import CsvGraphImportError, import_csv_graph
 from lms.importers.markdown import import_markdown_notes
+from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
+from lms.llm.budgets import DailyBudgetTracker
+from lms.llm.client import LLMClient
+from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig
+from lms.llm.providers import FakeProvider
 from lms.research_registry import ResearchRegistryError, load_registry
 from lms.sources.repository import scan_source_references
 
@@ -49,6 +54,90 @@ def main() -> None:
         "--actor-id",
         default="system:drift-scan",
         help="actor id recorded in audit events created by the scan",
+    )
+    authoring_assist_parser = subparsers.add_parser(
+        "authoring-assist",
+        help="LLM-assisted authoring operations",
+    )
+    authoring_assist_subparsers = authoring_assist_parser.add_subparsers(
+        dest="authoring_assist_command"
+    )
+    propose_parser = authoring_assist_subparsers.add_parser(
+        "propose",
+        help="create a draft node, edge, and prompt from a source reference",
+    )
+    propose_parser.add_argument(
+        "--source-reference",
+        required=True,
+        metavar="ID",
+        help="stable id of the SourceReference to anchor the proposal",
+    )
+    propose_parser.add_argument(
+        "--target-node",
+        required=True,
+        metavar="ID",
+        help="published KnowledgeNode id to link the proposed node to",
+    )
+    propose_parser.add_argument(
+        "--learning-goal",
+        required=True,
+        metavar="ID",
+        help="LearningGoal id that determines the ownership scope",
+    )
+    propose_parser.add_argument(
+        "--actor-id",
+        required=True,
+        help="actor id recorded in audit events",
+    )
+    propose_parser.add_argument(
+        "--related-node-title",
+        required=True,
+        help="title for the proposed KnowledgeNode",
+    )
+    propose_parser.add_argument(
+        "--related-node-knowledge-type",
+        required=True,
+        help="knowledge type for the proposed node (e.g. conceptual)",
+    )
+    propose_parser.add_argument(
+        "--prompt-body",
+        required=True,
+        help="body text for the proposed Prompt",
+    )
+    propose_parser.add_argument(
+        "--prompt-knowledge-type",
+        required=True,
+        help="knowledge type for the proposed prompt",
+    )
+    propose_parser.add_argument(
+        "--prompt-cognitive-action",
+        required=True,
+        help="intended cognitive action (e.g. explain, recall)",
+    )
+    propose_parser.add_argument(
+        "--prompt-demand-level",
+        required=True,
+        help="demand level (e.g. low, medium, high)",
+    )
+    propose_parser.add_argument(
+        "--prompt-answer-form",
+        required=True,
+        help="expected answer form (e.g. short-text)",
+    )
+    propose_parser.add_argument(
+        "--related-node-description",
+        default=None,
+        help="optional description for the proposed node",
+    )
+    propose_parser.add_argument(
+        "--edge-type",
+        default=None,
+        help="optional edge type linking the proposed node to the target",
+    )
+    propose_parser.add_argument(
+        "--learner-id",
+        default=None,
+        help="optional learner id for LLMSession tracking",
     )
     import_parser = subparsers.add_parser(
         "import-notes",
@@ -179,6 +268,48 @@ def main() -> None:
             )
             return
         parser.error("source-references requires a subcommand")
+    if args.command == "authoring-assist":
+        if args.authoring_assist_command == "propose":
+            client = LLMClient(
+                config=LLMConfig(
+                    mode_models={**DEFAULT_MODE_MODELS, "authoring-assist": "fake-authoring-model"},
+                    global_daily_cap_micro_usd=1_000_000,
+                    default_provider="fake",
+                ),
+                providers={"fake": FakeProvider()},
+                budget=DailyBudgetTracker(mode_caps_micro_usd={}, global_cap_micro_usd=1_000_000),
+            )
+            draft = ProposalDraft(
+                related_node_title=args.related_node_title,
+                related_node_knowledge_type=args.related_node_knowledge_type,
+                related_node_description=args.related_node_description,
+                prompt_body=args.prompt_body,
+                prompt_knowledge_type=args.prompt_knowledge_type,
+                prompt_intended_cognitive_action=args.prompt_cognitive_action,
+                prompt_demand_level=args.prompt_demand_level,
+                prompt_expected_answer_form=args.prompt_answer_form,
+                edge_type=args.edge_type,
+            )
+            with session_scope() as session:
+                result = propose_authoring_drafts(
+                    session,
+                    client=client,
+                    source_reference_id=args.source_reference,
+                    target_node_id=args.target_node,
+                    learning_goal_id=args.learning_goal,
+                    actor_id=args.actor_id,
+                    draft=draft,
+                    learner_id=args.learner_id,
+                )
+                print(
+                    "authoring-assist proposal complete: "
+                    f"proposal={result.llm_proposal.id} "
+                    f"node={result.knowledge_node.id} "
+                    f"prompt={result.prompt.id} "
+                    f"model={result.llm_proposal.llm_model}"
+                )
+            return
+        authoring_assist_parser.error("authoring-assist requires a subcommand")
     if args.command == "import-notes":
         if args.dry_run:
             import_summary = import_markdown_notes(
