@@ -16,6 +16,7 @@ from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
 from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig
+from lms.llm.eval_sets import EvalSetError, load_eval_set, replay_eval_set
 from lms.llm.providers import FakeProvider
 from lms.research_registry import ResearchRegistryError, load_registry
 from lms.sources.repository import scan_source_references
@@ -140,6 +141,26 @@ def main() -> None:
         default=None,
         help="optional learner id for LLMSession tracking",
     )
+    llm_parser = subparsers.add_parser(
+        "llm",
+        help="LLM client operations (eval replays, etc.)",
+    )
+    llm_subparsers = llm_parser.add_subparsers(dest="llm_command")
+    replay_eval_parser = llm_subparsers.add_parser(
+        "replay-eval",
+        help="validate a gold-set JSONL file and (optionally) replay it",
+    )
+    replay_eval_parser.add_argument(
+        "path",
+        type=Path,
+        help="path to the JSONL gold set (e.g. docs/llm/eval-sets/study-coach-v1.jsonl)",
+    )
+    replay_eval_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate schema and print a per-scenario summary without provider calls",
+    )
+
     import_parser = subparsers.add_parser(
         "import-notes",
         help="import Markdown notes into draft knowledge graph records",
@@ -320,6 +341,42 @@ def main() -> None:
                 )
             return
         authoring_assist_parser.error("authoring-assist requires a subcommand")
+    if args.command == "llm":
+        if args.llm_command == "replay-eval":
+            try:
+                entries = load_eval_set(args.path)
+            except EvalSetError as exc:
+                raise SystemExit(f"replay-eval validation failed: {exc}") from exc
+            scenario_counts: dict[str, int] = {}
+            for entry in entries:
+                scenario_counts[entry.scenario] = scenario_counts.get(entry.scenario, 0) + 1
+            print(f"eval set: {args.path}")
+            print(f"entries: {len(entries)}")
+            for scenario in sorted(scenario_counts):
+                print(f"  {scenario}: {scenario_counts[scenario]}")
+            if args.dry_run:
+                print("dry run: no provider calls issued")
+                return
+            client = LLMClient(
+                config=LLMConfig(
+                    mode_models=dict(DEFAULT_MODE_MODELS),
+                    global_daily_cap_micro_usd=1_000_000,
+                    default_provider="fake",
+                ),
+                providers={"fake": FakeProvider()},
+                budget=DailyBudgetTracker(mode_caps_micro_usd={}, global_cap_micro_usd=1_000_000),
+            )
+            outcomes = replay_eval_set(client, entries)
+            passed = sum(1 for outcome in outcomes if outcome.passed)
+            print(f"replayed: {len(outcomes)} entries, {passed} passed")
+            for outcome in outcomes:
+                status = "PASS" if outcome.passed else "MISS"
+                missing = (
+                    f" missing={list(outcome.missing_labels)}" if outcome.missing_labels else ""
+                )
+                print(f"  [{status}] {outcome.entry.entry_id} {outcome.entry.scenario}{missing}")
+            return
+        llm_parser.error("llm requires a subcommand")
     if args.command == "import-notes":
         if args.dry_run:
             import_summary = import_markdown_notes(
