@@ -1,0 +1,58 @@
+.app-header {
+  border-bottom: 1px solid #d9e2ec;
+  background: #fff;
+  padding: 0.75rem 1rem;
+}
+.surface {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+.eyebrow {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: #52606d;
+}
+h1 {
+  font-size: 1.8rem;
+  margin: 0.2rem 0 1rem;
+}
+h2 {
+  font-size: 1rem;
+  margin-top: 1.25rem;
+}
+.check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.source-panel li,
+.queue-item {
+  margin: 0.45rem 0;
+  overflow-wrap: anywhere;
+}
+.queue-item span,
+.queue-item small {
+  display: block;
+}
+.empty-state {
+  border: 1px dashed #bcccdc;
+  border-radius: 0.25rem;
+  background: #fff;
+  padding: 1rem;
+}
+@media (max-width: 520px) {
+  .app-header {
+    padding: 0.75rem;
+  }
+  .app-header nav {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .surface {
+    padding: 0.75rem;
+  }
+  h1 {
+    font-size: 1.45rem;
+  }
+}

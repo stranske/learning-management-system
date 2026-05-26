@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from html import escape
+from importlib.resources import files
 from typing import Annotated
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,9 +18,35 @@ from lms.evidence.repository import create_attempt
 from lms.evidence.schemas import AttemptCreate, StructuredFeedback
 from lms.prompts.models import Prompt
 from lms.scheduling.service import DEFAULT_DAILY_CAP, SchedulerSettings, get_review_queue_overview
+from lms.ui.shell import render_page, surface_stub
 
 router = APIRouter(tags=["learner-ui"])
 SessionDep = Annotated[Session, Depends(get_session)]
+_STATIC_FILES = files("lms.ui.static")
+_MANIFEST_CONTENT = _STATIC_FILES.joinpath("manifest.webmanifest").read_text()
+_SERVICE_WORKER_CONTENT = _STATIC_FILES.joinpath("service-worker.js").read_text()
+
+
+@router.get("/manifest.webmanifest")
+def manifest_route() -> Response:
+    """Serve the PWA manifest from the package static directory."""
+    return Response(_MANIFEST_CONTENT, media_type="application/manifest+json")
+
+
+@router.get("/service-worker.js")
+def service_worker_route() -> Response:
+    """Serve the service worker placeholder from the package static directory."""
+    return Response(_SERVICE_WORKER_CONTENT, media_type="application/javascript")
+
+
+@router.get("/app/learner", response_class=HTMLResponse)
+def learner_app_route(
+    session: SessionDep,
+    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+) -> str:
+    """Return the canonical learner app route."""
+    return _learn_surface(session=session, learner_id=learner_id, prompt_id=prompt_id)
 
 
 @router.get("/learn", response_class=HTMLResponse)
@@ -27,6 +54,16 @@ def learn_surface_route(
     session: SessionDep,
     learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
     prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+) -> str:
+    """Return the legacy Learn route for compatibility."""
+    return _learn_surface(session=session, learner_id=learner_id, prompt_id=prompt_id)
+
+
+def _learn_surface(
+    *,
+    session: Session,
+    learner_id: str,
+    prompt_id: str | None,
 ) -> str:
     """Return a mobile-friendly Learn surface wired to the attempt API."""
     prompt = session.get(Prompt, prompt_id) if prompt_id is not None else None
@@ -37,7 +74,7 @@ def learn_surface_route(
     )
     attempt_summary = _latest_attempt_summary(session, learner_id=learner_id, prompt_id=prompt_id)
 
-    return _page(
+    return render_page(
         "Learn",
         f"""
         <main class="surface learn-surface">
@@ -52,7 +89,7 @@ def learn_surface_route(
           </section>
           <form class="attempt-form" method="post" action="/learn/attempts">
             <input type="hidden" name="learner_id" value="{escape(learner_id)}">
-            <input type="hidden" name="prompt_id" value="{escape(prompt_id or '')}">
+            <input type="hidden" name="prompt_id" value="{escape(prompt_id or "")}">
             <label for="response_text">Response</label>
             <textarea id="response_text" name="response_text" rows="6"></textarea>
             <label for="confidence_rating">Confidence</label>
@@ -75,10 +112,11 @@ def learn_surface_route(
           </section>
           <section aria-labelledby="sources-heading" class="source-panel">
             <h2 id="sources-heading">Source citations after attempt</h2>
-            <ul>{''.join(citations) if citations else '<li>No source citations linked.</li>'}</ul>
+            <ul>{"".join(citations) if citations else "<li>No source citations linked.</li>"}</ul>
           </section>
         </main>
         """,
+        active_path="/app/learner",
     )
 
 
@@ -105,7 +143,7 @@ async def submit_learn_attempt_route(request: Request, session: SessionDep) -> s
     prompt = session.get(Prompt, attempt.prompt_id)
     citations = _source_citation_items(prompt) if prompt is not None else []
 
-    return _page(
+    return render_page(
         "Learn",
         f"""
         <main class="surface learn-surface">
@@ -122,11 +160,22 @@ async def submit_learn_attempt_route(request: Request, session: SessionDep) -> s
           </section>
           <section aria-labelledby="sources-heading" class="source-panel">
             <h2 id="sources-heading">Source citations after attempt</h2>
-            <ul>{''.join(citations) if citations else '<li>No source citations linked.</li>'}</ul>
+            <ul>{"".join(citations) if citations else "<li>No source citations linked.</li>"}</ul>
           </section>
         </main>
         """,
+        active_path="/app/learner",
     )
+
+
+@router.get("/app/learner/review", response_class=HTMLResponse)
+def learner_review_app_route(
+    session: SessionDep,
+    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    daily_cap: Annotated[int, Query(ge=1, le=100)] = DEFAULT_DAILY_CAP,
+) -> str:
+    """Return the canonical learner review route."""
+    return _review_surface(session=session, learner_id=learner_id, daily_cap=daily_cap)
 
 
 @router.get("/review", response_class=HTMLResponse)
@@ -135,6 +184,11 @@ def review_surface_route(
     learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
     daily_cap: Annotated[int, Query(ge=1, le=100)] = DEFAULT_DAILY_CAP,
 ) -> str:
+    """Return the legacy Review route for compatibility."""
+    return _review_surface(session=session, learner_id=learner_id, daily_cap=daily_cap)
+
+
+def _review_surface(*, session: Session, learner_id: str, daily_cap: int) -> str:
     """Return a mobile-friendly Review surface with scheduler reason codes."""
     overview = get_review_queue_overview(
         session,
@@ -154,7 +208,7 @@ def review_surface_route(
     if not items:
         items.append("<li class='queue-item empty'>No due review items.</li>")
 
-    return _page(
+    return render_page(
         "Review",
         f"""
         <main class="surface review-surface">
@@ -170,7 +224,7 @@ def review_surface_route(
           </section>
           <section aria-labelledby="queue-heading">
             <h2 id="queue-heading">Reason codes</h2>
-            <ul class="review-queue">{''.join(items)}</ul>
+            <ul class="review-queue">{"".join(items)}</ul>
           </section>
           <section aria-labelledby="controls-heading">
             <h2 id="controls-heading">Review controls</h2>
@@ -180,36 +234,38 @@ def review_surface_route(
           </section>
         </main>
         """,
+        active_path="/app/learner",
     )
 
 
-def _page(title: str, body: str) -> str:
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LMS {escape(title)}</title>
-  <style>
-    body {{ font-family: system-ui, sans-serif; margin: 0; color: #17202a; background: #f7f8fb; }}
-    .surface {{ max-width: 760px; margin: 0 auto; padding: 1rem; }}
-    .eyebrow {{ font-size: .8rem; text-transform: uppercase; color: #52606d; }}
-    h1 {{ font-size: 1.8rem; margin: .2rem 0 1rem; }}
-    h2 {{ font-size: 1rem; margin-top: 1.25rem; }}
-    form, section {{ display: grid; gap: .7rem; }}
-    textarea, select, button {{ font: inherit; min-height: 2.75rem; }}
-    textarea, select {{ width: 100%; box-sizing: border-box; }}
-    button {{ border: 1px solid #1f6feb; background: #1f6feb; color: white; padding: .65rem .9rem; }}
-    .check {{ display: flex; gap: .5rem; align-items: center; }}
-    .source-panel li, .queue-item {{ margin: .45rem 0; overflow-wrap: anywhere; }}
-    .queue-item span, .queue-item small {{ display: block; }}
-    @media (max-width: 520px) {{ .surface {{ padding: .75rem; }} h1 {{ font-size: 1.45rem; }} }}
-  </style>
-</head>
-<body>
-{body}
-</body>
-</html>"""
+@router.get("/app/author", response_class=HTMLResponse)
+def author_app_route() -> str:
+    """Return the author app route shell."""
+    return surface_stub(
+        "Author",
+        "Authoring surfaces will use this route for goals, graphs, prompts, rubrics, and cases.",
+        active_path="/app/author",
+    )
+
+
+@router.get("/app/support", response_class=HTMLResponse)
+def support_app_route() -> str:
+    """Return the support app route shell."""
+    return surface_stub(
+        "Support",
+        "Support inspection surfaces will use this route for learner-safe troubleshooting.",
+        active_path="/app/support",
+    )
+
+
+@router.get("/app/admin", response_class=HTMLResponse)
+def admin_app_route() -> str:
+    """Return the admin app route shell."""
+    return surface_stub(
+        "Admin",
+        "Admin inspection surfaces will use this route for local prototype operations.",
+        active_path="/app/admin",
+    )
 
 
 def _prompt_body(prompt: Prompt) -> str:
@@ -262,7 +318,9 @@ def _latest_attempt_summary(session: Session, *, learner_id: str, prompt_id: str
     correctness_label = (
         "pending scoring evidence"
         if correctness is None
-        else "correct" if correctness else "incorrect"
+        else "correct"
+        if correctness
+        else "incorrect"
     )
     return (
         f"Latest evidence: confidence {_confidence_label(attempt.confidence_rating)}; "

@@ -56,6 +56,9 @@ Repository = "https://github.com/stranske/learning-management-system"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"lms.ui.static" = ["*.css", "*.js", "*.webmanifest", "icons/*.svg"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --cov=lms --cov=my_project --cov-report=term-missing --cov-report=xml"
