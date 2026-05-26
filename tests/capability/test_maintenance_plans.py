@@ -17,7 +17,7 @@ from lms.capability.repository import (
 from lms.evidence.repository import create_evidence_record
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.repository import create_learner_for_user
-from lms.scheduling.models import ReviewSchedule, SchedulerDecision
+from lms.scheduling.models import ReviewPolicy, ReviewSchedule, SchedulerDecision
 
 
 def _gap_analysis_fixture(db_session: Session) -> tuple[str, str]:
@@ -72,9 +72,7 @@ def test_maintenance_plan_turns_gap_items_into_scheduler_steps(db_session: Sessi
     assert plan.status == "active"
     assert plan.ownership_scope == "personal"
     assert plan.schedule_ids
-    remediation_steps = [
-        step for step in plan.plan_steps if step["reason_code"] == "remediation"
-    ]
+    remediation_steps = [step for step in plan.plan_steps if step["reason_code"] == "remediation"]
     assert remediation_steps
     remediation_step = remediation_steps[0]
     assert remediation_step["knowledge_node_id"] == node_id
@@ -91,6 +89,11 @@ def test_maintenance_plan_turns_gap_items_into_scheduler_steps(db_session: Sessi
     assert decision.reason_code == "remediation"
     assert decision.review_schedule_id == remediation_step["review_schedule_id"]
     assert decision.decision_log["gap_analysis_id"] == analysis_id
+    assert decision.decision_log["maintenance_plan_id"] == plan.id
+
+    policy = db_session.get(ReviewPolicy, decision.review_policy_id)
+    assert policy is not None
+    assert policy.settings == {"source": "gap-analysis"}
 
     schedule = db_session.scalar(
         select(ReviewSchedule).where(ReviewSchedule.id == remediation_step["review_schedule_id"])

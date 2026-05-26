@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 PersonalOwnershipScope = Literal["personal"]
 CapabilityTargetStatus = Literal["active", "archived"]
+MaintenancePlanStatus = Literal["active", "completed", "archived"]
 
 
 class CapabilityTargetCreate(BaseModel):
@@ -124,7 +125,7 @@ class MaintenancePlanRead(BaseModel):
     target_id: str
     gap_analysis_id: str
     learner_id: str
-    status: str
+    status: MaintenancePlanStatus
     plan_steps: list[dict[str, Any]]
     schedule_ids: list[str]
     rationale: str

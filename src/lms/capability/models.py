@@ -302,9 +302,7 @@ class MaintenancePlan(Base):
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="active", server_default="active", index=True
     )
-    plan_steps: Mapped[list[dict[str, object]]] = mapped_column(
-        JSON, nullable=False, default=list
-    )
+    plan_steps: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False, default=list)
     schedule_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
     generated_at: Mapped[datetime] = mapped_column(

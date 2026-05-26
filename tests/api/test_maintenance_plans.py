@@ -86,6 +86,11 @@ def test_create_maintenance_plan_from_gap_analysis(db_session: Session) -> None:
     assert list_response.status_code == 200
     assert [item["id"] for item in list_response.json()] == [payload["id"]]
 
+    invalid_status_response = client.get(
+        "/capability/maintenance-plans", params={"status": "unsupported"}
+    )
+    assert invalid_status_response.status_code == 422
+
     detail_response = client.get(f"/capability/maintenance-plans/{payload['id']}")
     assert detail_response.status_code == 200
     assert detail_response.json()["id"] == payload["id"]

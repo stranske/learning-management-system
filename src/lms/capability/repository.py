@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from lms.auth.models import utc_now
 from lms.capability.models import (
     CAPABILITY_TARGET_STATUSES,
+    MAINTENANCE_PLAN_STATUSES,
     CapabilityEstimate,
     CapabilityTarget,
     GapAnalysis,
@@ -391,7 +392,7 @@ def create_maintenance_plan(
                 reason_code=reason_code,
                 policy_version=policy_version,
                 name=f"Maintenance plan {reason_code}",
-                settings={"source": "gap-analysis", "plan_id": plan.id},
+                settings={"source": "gap-analysis"},
                 ownership_scope=analysis.ownership_scope,
             )
             decision_log = {
@@ -470,10 +471,11 @@ def list_maintenance_plans(
     if gap_analysis_id is not None:
         statement = statement.where(MaintenancePlan.gap_analysis_id == gap_analysis_id)
     if status is not None:
+        _require_maintenance_plan_status(status)
         statement = statement.where(MaintenancePlan.status == status)
-    statement = statement.order_by(
-        MaintenancePlan.generated_at.desc(), MaintenancePlan.id
-    ).limit(limit)
+    statement = statement.order_by(MaintenancePlan.generated_at.desc(), MaintenancePlan.id).limit(
+        limit
+    )
     return list(session.scalars(statement))
 
 
@@ -559,6 +561,14 @@ def _require_status(status: str) -> None:
         raise ValueError(
             f"unknown capability target status {status!r}; expected one of "
             f"{CAPABILITY_TARGET_STATUSES}"
+        )
+
+
+def _require_maintenance_plan_status(status: str) -> None:
+    if status not in MAINTENANCE_PLAN_STATUSES:
+        raise ValueError(
+            f"unknown maintenance plan status {status!r}; expected one of "
+            f"{MAINTENANCE_PLAN_STATUSES}"
         )
 
 
@@ -848,9 +858,11 @@ def _node_gap_items(
     evidence_count = _as_int(row.get("evidence_count", 0))
     next_evidence_needed = str(row.get("next_evidence_needed", "more evidence"))
     support_markers = profile_item.get("support_dependence_markers", [])
-    markers = [str(marker) for marker in support_markers if isinstance(marker, str)] if isinstance(
-        support_markers, list
-    ) else []
+    markers = (
+        [str(marker) for marker in support_markers if isinstance(marker, str)]
+        if isinstance(support_markers, list)
+        else []
+    )
     items: list[dict[str, object]] = []
     if evidence_count == 0:
         items.append(

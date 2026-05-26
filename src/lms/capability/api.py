@@ -38,6 +38,7 @@ from lms.capability.schemas import (
     GapAnalysisRead,
     MaintenancePlanCreate,
     MaintenancePlanRead,
+    MaintenancePlanStatus,
 )
 from lms.db.session import get_session
 
@@ -285,7 +286,7 @@ def list_maintenance_plans_route(
     target_id: Annotated[str | None, Query(max_length=36)] = None,
     gap_analysis_id: Annotated[str | None, Query(max_length=36)] = None,
     plan_status: Annotated[
-        str | None,
+        MaintenancePlanStatus | None,
         Query(alias="status", description="Filter by maintenance plan status."),
     ] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
