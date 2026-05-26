@@ -8,6 +8,7 @@ from pathlib import Path
 from sqlalchemy.exc import SQLAlchemyError
 
 from lms.db.session import session_scope
+from lms.demo import build_minimum_demo_smoke_summary, render_minimum_demo_smoke
 from lms.export_import import ExportImportError, export_jsonl, export_to_path, import_jsonl
 from lms.importers.csv_graph import CsvGraphImportError, import_csv_graph
 from lms.importers.markdown import import_markdown_notes
@@ -236,6 +237,15 @@ def main() -> None:
         action="store_true",
         help="write records after dry-run validation passes",
     )
+    demo_parser = subparsers.add_parser(
+        "demo",
+        help="run Minimum Demo smoke utilities",
+    )
+    demo_subparsers = demo_parser.add_subparsers(dest="demo_command")
+    demo_subparsers.add_parser(
+        "smoke",
+        help="exercise the M4 Minimum Demo path with CI-safe fake-provider data",
+    )
 
     args = parser.parse_args()
     if args.command == "validate-research-registry":
@@ -388,6 +398,11 @@ def main() -> None:
         counts = " ".join(f"{key}={value}" for key, value in sorted(summary.counts.items()))
         print(f"import {mode} complete: {counts}")
         return
+    if args.command == "demo":
+        if args.demo_command == "smoke":
+            print(render_minimum_demo_smoke(build_minimum_demo_smoke_summary()))
+            return
+        parser.error("demo requires a subcommand")
 
     _run_dev_server()
 
