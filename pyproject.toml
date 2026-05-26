@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=82.0.1", "wheel"]
+requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -58,11 +58,11 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --cov=src --cov-report=term-missing --cov-report=xml"
+addopts = "-v --cov=lms --cov=my_project --cov-report=term-missing --cov-report=xml"
 pythonpath = ["src"]
 
 [tool.coverage.run]
-source = ["src"]
+source = ["lms", "my_project"]
 branch = true
 
 [tool.coverage.report]

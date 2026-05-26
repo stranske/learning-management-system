@@ -40,14 +40,14 @@ Tasks
 - [x] Configure pyproject.toml with all tools
 - [x] Verify ruff check passes
 - [x] Verify mypy check passes
-- [ ] Verify pytest passes with >80% coverage
+- [x] Verify pytest passes with >80% coverage
 
 Acceptance criteria
 - [ ] Package can be installed with pip install -e .
 - [ ] Running pytest shows all tests passing
 - [x] Running ruff check shows no issues
-- [ ] Running mypy shows no errors
-- [ ] Coverage report shows >80% coverage
+- [x] Running mypy shows no errors
+- [x] Coverage report shows >80% coverage
 
 Implementation notes
 - Use modern pyproject.toml format (no setup.py)
