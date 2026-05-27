@@ -246,11 +246,12 @@ def _review_surface(*, session: Session, learner_id: str, daily_cap: int) -> str
     items = [
         (
             "<li class='queue-item'>"
-            f"<strong>{escape(item.reason_code)} - {escape(_queue_status_label(item.status))}</strong>"
+            f"<strong>{escape(item.reason_code)} - "
+            f"{escape(_queue_status_label(item.status, item.reason_code))}</strong>"
             f"<span>{escape(item.reason_explanation)}</span>"
             f"<small>Due {escape(_date_label(item.due_at))}; "
             f"node {escape(item.knowledge_node_id)}; priority {item.priority:.2f}</small>"
-            f"{_attempt_link(item.source_attempt_id)}"
+            f"{_attempt_link(session, item.source_attempt_id, learner_id=item.learner_id)}"
             "</li>"
         )
         for item in overview.items
@@ -354,21 +355,27 @@ def _review_policy_item(policy: ReviewPolicy) -> str:
     )
 
 
-def _attempt_link(attempt_id: str | None) -> str:
+def _attempt_link(session: Session, attempt_id: str | None, *, learner_id: str) -> str:
     if attempt_id is None:
         return ""
-    return f'<a href="/app/learner?attempt_id={escape(attempt_id)}">Open attempt</a>'
+    attempt = session.get(Attempt, attempt_id)
+    if attempt is None:
+        return ""
+    return (
+        f'<a href="/app/learner?learner_id={escape(learner_id)}'
+        f'&amp;prompt_id={escape(attempt.prompt_id)}">Open attempt</a>'
+    )
 
 
 def _optional_detail(label: str, value: str | None) -> str:
     return f"; {escape(label)} {escape(value)}" if value else ""
 
 
-def _queue_status_label(status: str) -> str:
+def _queue_status_label(status: str, reason_code: str) -> str:
+    if reason_code == "blocked-prerequisite":
+        return "blocked"
     if status == "pending":
         return "available"
-    if status == "blocked":
-        return "blocked"
     return status
 
 
