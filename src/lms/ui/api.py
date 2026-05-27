@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from html import escape
 from importlib.resources import files
 from typing import Annotated
@@ -16,8 +17,26 @@ from lms.db.session import get_session
 from lms.evidence.models import Attempt
 from lms.evidence.repository import create_attempt
 from lms.evidence.schemas import AttemptCreate, StructuredFeedback
-from lms.prompts.models import Prompt
+from lms.graphs.models import (
+    EDGE_STATUSES,
+    EDGE_TYPES,
+    KNOWLEDGE_TYPES,
+    NODE_STATUSES,
+    KnowledgeNode,
+)
+from lms.graphs.repository import (
+    create_knowledge_edge,
+    create_knowledge_node,
+    list_knowledge_edges,
+    list_knowledge_nodes,
+)
+from lms.learners.models import GOAL_STATUSES
+from lms.learners.repository import create_learning_goal, list_learning_goals_for_learner
+from lms.prompts.models import ANSWER_FORMS, COGNITIVE_ACTIONS, DEMAND_LEVELS, Prompt
+from lms.prompts.repository import create_prompt, list_prompts
 from lms.scheduling.service import DEFAULT_DAILY_CAP, SchedulerSettings, get_review_queue_overview
+from lms.sources.models import SourceReference
+from lms.sources.repository import list_source_references
 from lms.ui.shell import render_page, surface_stub
 
 router = APIRouter(tags=["learner-ui"])
@@ -240,11 +259,210 @@ def _review_surface(*, session: Session, learner_id: str, daily_cap: int) -> str
 
 @router.get("/app/author", response_class=HTMLResponse)
 def author_app_route() -> str:
-    """Return the author app route shell."""
-    return surface_stub(
+    """Return the author app index route."""
+    return render_page(
         "Author",
-        "Authoring surfaces will use this route for goals, graphs, prompts, rubrics, and cases.",
+        """
+        <main class="surface author-surface">
+          <header>
+            <p class="eyebrow">Author workspace</p>
+            <h1>Author</h1>
+          </header>
+          <section class="empty-state" aria-labelledby="author-start-heading">
+            <h2 id="author-start-heading">Learning objects</h2>
+            <p>Create goals, graph nodes, edges, and prompts for the trimmed prototype path.</p>
+            <nav aria-label="Author tools">
+              <a href="/app/author/goals">Goals</a>
+              <a href="/app/author/knowledge">Knowledge graph</a>
+              <a href="/app/author/prompts">Prompts</a>
+            </nav>
+          </section>
+        </main>
+        """,
         active_path="/app/author",
+    )
+
+
+@router.get("/app/author/goals", response_class=HTMLResponse)
+def author_goals_route(
+    session: SessionDep,
+    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    ownership_scope: Annotated[str, Query()] = "personal",
+) -> str:
+    """Return goal authoring forms and current goals."""
+    return _author_goals_surface(
+        session=session,
+        learner_id=learner_id,
+        ownership_scope=ownership_scope,
+        message=None,
+        error=None,
+    )
+
+
+@router.post("/app/author/goals", response_class=HTMLResponse)
+async def create_author_goal_route(request: Request, session: SessionDep) -> str:
+    """Create a learning goal from the author form."""
+    form = await _read_form(request)
+    learner_id = form.get("learner_id", "")
+    ownership_scope = form.get("ownership_scope", "personal")
+    try:
+        create_learning_goal(
+            session,
+            learner_id=learner_id,
+            title=form.get("title", ""),
+            knowledge_type=form.get("knowledge_type", "conceptual"),
+            target_node_ids=_split_ids(form.get("target_node_ids", "")),
+            ownership_scope=ownership_scope,
+            status=form.get("status", "active"),
+        )
+        session.commit()
+    except ValueError as exc:
+        session.rollback()
+        return _author_goals_surface(
+            session=session,
+            learner_id=learner_id,
+            ownership_scope=ownership_scope,
+            message=None,
+            error=str(exc),
+        )
+    return _author_goals_surface(
+        session=session,
+        learner_id=learner_id,
+        ownership_scope=ownership_scope,
+        message="Goal saved.",
+        error=None,
+    )
+
+
+@router.get("/app/author/knowledge", response_class=HTMLResponse)
+def author_knowledge_route(
+    session: SessionDep,
+    ownership_scope: Annotated[str, Query()] = "personal",
+) -> str:
+    """Return knowledge node and edge authoring forms."""
+    return _author_knowledge_surface(
+        session=session,
+        ownership_scope=ownership_scope,
+        message=None,
+        error=None,
+    )
+
+
+@router.post("/app/author/knowledge/nodes", response_class=HTMLResponse)
+async def create_author_node_route(request: Request, session: SessionDep) -> str:
+    """Create a knowledge node from the author form."""
+    form = await _read_form(request)
+    ownership_scope = form.get("ownership_scope", "personal")
+    try:
+        create_knowledge_node(
+            session,
+            title=form.get("title", ""),
+            description=form.get("description") or None,
+            knowledge_type=form.get("knowledge_type", "conceptual"),
+            scope=ownership_scope,
+            status=form.get("status", "draft"),
+            actor_id=form.get("actor_id", "author-ui"),
+            source_reference_id=form.get("source_reference_id") or None,
+        )
+        session.commit()
+    except ValueError as exc:
+        session.rollback()
+        return _author_knowledge_surface(
+            session=session,
+            ownership_scope=ownership_scope,
+            message=None,
+            error=str(exc),
+        )
+    return _author_knowledge_surface(
+        session=session,
+        ownership_scope=ownership_scope,
+        message="Knowledge node saved.",
+        error=None,
+    )
+
+
+@router.post("/app/author/knowledge/edges", response_class=HTMLResponse)
+async def create_author_edge_route(request: Request, session: SessionDep) -> str:
+    """Create a knowledge edge from the author form."""
+    form = await _read_form(request)
+    ownership_scope = form.get("ownership_scope", "personal")
+    try:
+        create_knowledge_edge(
+            session,
+            source_node_id=form.get("source_node_id", ""),
+            target_node_id=form.get("target_node_id", ""),
+            edge_type=form.get("edge_type", "prerequisite"),
+            scope=ownership_scope,
+            target_scope=form.get("target_scope") or ownership_scope,
+            is_graph_reference=form.get("is_graph_reference") == "true",
+            confidence=_optional_float(form.get("confidence")),
+            status=form.get("status", "draft"),
+            actor_id=form.get("actor_id", "author-ui"),
+        )
+        session.commit()
+    except ValueError as exc:
+        session.rollback()
+        return _author_knowledge_surface(
+            session=session,
+            ownership_scope=ownership_scope,
+            message=None,
+            error=str(exc),
+        )
+    return _author_knowledge_surface(
+        session=session,
+        ownership_scope=ownership_scope,
+        message="Knowledge edge saved.",
+        error=None,
+    )
+
+
+@router.get("/app/author/prompts", response_class=HTMLResponse)
+def author_prompts_route(
+    session: SessionDep,
+    ownership_scope: Annotated[str, Query()] = "personal",
+) -> str:
+    """Return prompt authoring forms and current prompts."""
+    return _author_prompts_surface(
+        session=session,
+        ownership_scope=ownership_scope,
+        message=None,
+        error=None,
+    )
+
+
+@router.post("/app/author/prompts", response_class=HTMLResponse)
+async def create_author_prompt_route(request: Request, session: SessionDep) -> str:
+    """Create a prompt from the author form."""
+    form = await _read_form(request)
+    ownership_scope = form.get("ownership_scope", "personal")
+    try:
+        create_prompt(
+            session,
+            target_node_id=form.get("target_node_id", ""),
+            learning_goal_id=form.get("learning_goal_id", ""),
+            knowledge_type=form.get("knowledge_type", "conceptual"),
+            intended_cognitive_action=form.get("intended_cognitive_action", "explain"),
+            demand_level=form.get("demand_level", "medium"),
+            expected_answer_form=form.get("expected_answer_form", "short-text"),
+            body=form.get("body", ""),
+            source_reference_ids=_split_ids(form.get("source_reference_ids", "")),
+            authoring_method="human-authored",
+            authoring_actor=form.get("authoring_actor", "author-ui"),
+        )
+        session.commit()
+    except ValueError as exc:
+        session.rollback()
+        return _author_prompts_surface(
+            session=session,
+            ownership_scope=ownership_scope,
+            message=None,
+            error=str(exc),
+        )
+    return _author_prompts_surface(
+        session=session,
+        ownership_scope=ownership_scope,
+        message="Prompt saved as draft.",
+        error=None,
     )
 
 
@@ -318,7 +536,9 @@ def _latest_attempt_summary(session: Session, *, learner_id: str, prompt_id: str
     correctness_label = (
         "pending scoring evidence"
         if correctness is None
-        else "correct" if correctness else "incorrect"
+        else "correct"
+        if correctness
+        else "incorrect"
     )
     return (
         f"Latest evidence: confidence {_confidence_label(attempt.confidence_rating)}; "
@@ -334,3 +554,267 @@ def _optional_int(value: str | None) -> int | None:
     if value is None or value == "":
         return None
     return int(value)
+
+
+async def _read_form(request: Request) -> dict[str, str]:
+    raw_form = parse_qs((await request.body()).decode(), keep_blank_values=True)
+    return {key: values[-1] for key, values in raw_form.items()}
+
+
+def _author_goals_surface(
+    *,
+    session: Session,
+    learner_id: str,
+    ownership_scope: str,
+    message: str | None,
+    error: str | None,
+) -> str:
+    goals = list_learning_goals_for_learner(
+        session,
+        learner_id=learner_id,
+        ownership_scope=ownership_scope,
+    )
+    nodes = list_knowledge_nodes(session, scope=ownership_scope)
+    goal_items = [
+        (
+            "<li>"
+            f"<strong>{escape(goal.title)}</strong>"
+            f"<span>{escape(goal.status)}; {escape(goal.knowledge_type)}; "
+            f"{len(goal.target_nodes)} target nodes</span>"
+            "</li>"
+        )
+        for goal in goals
+    ] or ["<li class='empty'>No goals yet.</li>"]
+
+    return render_page(
+        "Author Goals",
+        f"""
+        <main class="surface author-surface">
+          {_notice(message, error)}
+          <header>
+            <p class="eyebrow">Author</p>
+            <h1>Goals</h1>
+          </header>
+          <form method="post" action="/app/author/goals">
+            <input type="hidden" name="learner_id" value="{escape(learner_id)}">
+            {_select("ownership_scope", ("personal", "institutional"), ownership_scope)}
+            <label for="goal-title">Goal title</label>
+            <input id="goal-title" name="title" required>
+            {_select("knowledge_type", KNOWLEDGE_TYPES, "conceptual")}
+            {_select("status", GOAL_STATUSES, "active")}
+            <label for="target-node-ids">Target node ids</label>
+            <input id="target-node-ids" name="target_node_ids"
+              aria-describedby="available-nodes">
+            <small id="available-nodes">{escape(_node_hint(nodes))}</small>
+            <button type="submit">Save goal</button>
+          </form>
+          <section aria-labelledby="goal-list-heading">
+            <h2 id="goal-list-heading">Current goals</h2>
+            <ul>{"".join(goal_items)}</ul>
+          </section>
+        </main>
+        """,
+        active_path="/app/author",
+    )
+
+
+def _author_knowledge_surface(
+    *,
+    session: Session,
+    ownership_scope: str,
+    message: str | None,
+    error: str | None,
+) -> str:
+    nodes = list_knowledge_nodes(session, scope=ownership_scope)
+    edges = list_knowledge_edges(session, scope=ownership_scope)
+    node_items = [
+        (
+            "<li>"
+            f"<strong>{escape(node.title)}</strong>"
+            f"<span>{escape(node.status)}; {escape(node.knowledge_type)}; "
+            f"{escape(node.ownership_scope)}; id {escape(node.id)}</span>"
+            "</li>"
+        )
+        for node in nodes
+    ] or ["<li class='empty'>No knowledge nodes yet.</li>"]
+    edge_items = [
+        (
+            "<li>"
+            f"<strong>{escape(edge.edge_type)}</strong>"
+            f"<span>{escape(edge.source_node_id)} to {escape(edge.target_node_id)}; "
+            f"{escape(edge.status)}; confidence {_confidence_value(edge.confidence)}</span>"
+            "</li>"
+        )
+        for edge in edges
+    ] or ["<li class='empty'>No knowledge edges yet.</li>"]
+
+    return render_page(
+        "Author Knowledge",
+        f"""
+        <main class="surface author-surface">
+          {_notice(message, error)}
+          <header>
+            <p class="eyebrow">Author</p>
+            <h1>Knowledge graph</h1>
+          </header>
+          <section aria-labelledby="node-form-heading">
+            <h2 id="node-form-heading">Node</h2>
+            <form method="post" action="/app/author/knowledge/nodes">
+              <input type="hidden" name="actor_id" value="author-ui">
+              {_select("ownership_scope", ("personal", "institutional"), ownership_scope)}
+              <label for="node-title">Title</label>
+              <input id="node-title" name="title" required>
+              <label for="node-description">Description</label>
+              <textarea id="node-description" name="description" rows="3"></textarea>
+              {_select("knowledge_type", KNOWLEDGE_TYPES, "conceptual")}
+              {_select("status", NODE_STATUSES, "draft")}
+              <label for="source-reference-id">Source reference id</label>
+              <input id="source-reference-id" name="source_reference_id">
+              <button type="submit">Save node</button>
+            </form>
+          </section>
+          <section aria-labelledby="edge-form-heading">
+            <h2 id="edge-form-heading">Edge</h2>
+            <form method="post" action="/app/author/knowledge/edges">
+              <input type="hidden" name="actor_id" value="author-ui">
+              {_select("ownership_scope", ("personal", "institutional"), ownership_scope)}
+              <label for="source-node-id">Source node id</label>
+              <input id="source-node-id" name="source_node_id" required>
+              <label for="target-node-id">Target node id</label>
+              <input id="target-node-id" name="target_node_id" required>
+              {_select("target_scope", ("personal", "institutional"), ownership_scope)}
+              {_select("edge_type", EDGE_TYPES, "prerequisite")}
+              {_select("status", EDGE_STATUSES, "draft")}
+              <label for="confidence">Confidence</label>
+              <input id="confidence" name="confidence" inputmode="decimal">
+              <label class="check">
+                <input type="checkbox" name="is_graph_reference" value="true">
+                Allow explicit cross-scope graph reference
+              </label>
+              <button type="submit">Save edge</button>
+            </form>
+          </section>
+          <section aria-labelledby="node-list-heading">
+            <h2 id="node-list-heading">Nodes</h2>
+            <ul>{"".join(node_items)}</ul>
+          </section>
+          <section aria-labelledby="edge-list-heading">
+            <h2 id="edge-list-heading">Edges</h2>
+            <ul>{"".join(edge_items)}</ul>
+          </section>
+        </main>
+        """,
+        active_path="/app/author",
+    )
+
+
+def _author_prompts_surface(
+    *,
+    session: Session,
+    ownership_scope: str,
+    message: str | None,
+    error: str | None,
+) -> str:
+    nodes = list_knowledge_nodes(session, scope=ownership_scope, status="published")
+    sources = list_source_references(session)
+    prompts = list_prompts(session)
+    prompt_items = [
+        (
+            "<li>"
+            f"<strong>{escape(_prompt_body(prompt))}</strong>"
+            f"<span>{escape(prompt.status)}; {escape(prompt.demand_level)}; "
+            f"{escape(prompt.intended_cognitive_action)}; "
+            f"provenance {escape(_prompt_provenance(prompt))}</span>"
+            "</li>"
+        )
+        for prompt in prompts
+    ] or ["<li class='empty'>No prompts yet.</li>"]
+
+    return render_page(
+        "Author Prompts",
+        f"""
+        <main class="surface author-surface">
+          {_notice(message, error)}
+          <header>
+            <p class="eyebrow">Author</p>
+            <h1>Prompts</h1>
+          </header>
+          <form method="post" action="/app/author/prompts">
+            {_select("ownership_scope", ("personal", "institutional"), ownership_scope)}
+            <label for="learning-goal-id">Learning goal id</label>
+            <input id="learning-goal-id" name="learning_goal_id" required>
+            <label for="target-node-id">Published target node id</label>
+            <input id="target-node-id" name="target_node_id" required
+              aria-describedby="published-node-hint">
+            <small id="published-node-hint">{escape(_node_hint(nodes))}</small>
+            {_select("knowledge_type", KNOWLEDGE_TYPES, "conceptual")}
+            {_select("intended_cognitive_action", COGNITIVE_ACTIONS, "explain")}
+            {_select("demand_level", DEMAND_LEVELS, "medium")}
+            {_select("expected_answer_form", ANSWER_FORMS, "short-text")}
+            <label for="source-reference-ids">Source reference ids</label>
+            <input id="source-reference-ids" name="source_reference_ids" required
+              aria-describedby="source-reference-hint">
+            <small id="source-reference-hint">{escape(_source_hint(sources))}</small>
+            <label for="authoring-actor">Authoring actor</label>
+            <input id="authoring-actor" name="authoring_actor" value="author-ui" required>
+            <label for="prompt-body">Prompt body</label>
+            <textarea id="prompt-body" name="body" rows="5" required></textarea>
+            <button type="submit">Save prompt</button>
+          </form>
+          <section aria-labelledby="prompt-list-heading">
+            <h2 id="prompt-list-heading">Current prompts</h2>
+            <ul>{"".join(prompt_items)}</ul>
+          </section>
+        </main>
+        """,
+        active_path="/app/author",
+    )
+
+
+def _notice(message: str | None, error: str | None) -> str:
+    if error is not None:
+        return f"<p role='alert' class='validation-error'>{escape(error)}</p>"
+    if message is not None:
+        return f"<p class='success'>{escape(message)}</p>"
+    return ""
+
+
+def _select(name: str, choices: tuple[str, ...], selected: str) -> str:
+    label = name.replace("_", " ")
+    options = [
+        f'<option value="{escape(choice)}"'
+        f"{' selected' if choice == selected else ''}>{escape(choice)}</option>"
+        for choice in choices
+    ]
+    return (
+        f'<label for="{escape(name)}">{escape(label)}</label>'
+        f'<select id="{escape(name)}" name="{escape(name)}">{"".join(options)}</select>'
+    )
+
+
+def _split_ids(value: str) -> list[str]:
+    return [part.strip() for part in value.replace("\n", ",").split(",") if part.strip()]
+
+
+def _optional_float(value: str | None) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
+def _confidence_value(value: float | None) -> str:
+    return "not recorded" if value is None else f"{value:.2f}"
+
+
+def _node_hint(nodes: Sequence[KnowledgeNode]) -> str:
+    if not nodes:
+        return "No nodes are available in this scope."
+    return ", ".join(f"{node.title} ({node.id})" for node in nodes)
+
+
+def _source_hint(sources: Sequence[SourceReference]) -> str:
+    if not sources:
+        return "No source references are available."
+    return ", ".join(
+        f"{source.stable_locator} ({source.id}, drift {source.drift_status})" for source in sources
+    )

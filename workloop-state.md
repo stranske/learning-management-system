@@ -1,5 +1,23 @@
 # Workloop State
 
+## 2026-05-27T05:12Z - opener materialized issue #110 authoring UI
+
+- Automation: `pd-workloop-resume` (codex opener lane).
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#110](https://github.com/stranske/learning-management-system/issues/110) `Build authoring UI for goals, graph, and prompts`.
+- Branch: `codex/issue-110-authoring-ui`.
+- Implementation:
+  - Added author index links plus `/app/author/goals`, `/app/author/knowledge`, and `/app/author/prompts` HTML routes.
+  - Wired form posts to existing learner, graph, source, and prompt repository helpers.
+  - Preserved ownership-scope controls, published-node prompt gating, source drift/provenance display, and cross-scope edge validation feedback.
+  - Added `tests/ui/test_author_learning_objects.py` for create goal/node/edge/prompt flow and cross-scope normal-edge rejection.
+- Validation:
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run pytest tests/ui/test_author_learning_objects.py tests/ui/test_app_shell.py -q --no-cov` -> 4 passed.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run ruff check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run ruff format --check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run mypy src/lms/ui tests/ui/test_author_learning_objects.py` -> passed; existing pyproject unused-section note only.
+- Next action: push branch, open ready-for-review PR, then let keepalive own CI/check follow-up.
+
 ## 2026-05-27T04:20Z - opener recovered PR #145 Alembic double-head
 
 - Automation: `pd-workloop-resume` (codex opener lane).
