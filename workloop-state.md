@@ -1,5 +1,27 @@
 # Workloop State
 
+## 2026-05-27T05:28:53Z - closer addressed PR #159 review threads
+
+- Automation: `imi-merge-verify-closer` (codex closer lane).
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#110](https://github.com/stranske/learning-management-system/issues/110) `Build authoring UI for goals, graph, and prompts`.
+- Branch/PR: `codex/issue-110-authoring-ui`, [#159](https://github.com/stranske/learning-management-system/pull/159).
+- Batch context before this complex lane:
+  - Closed #106 after merged PR #145 had a durable Provider Comparison Report with OpenAI PASS 84% and Anthropic PASS 82%.
+  - Merged `stranske/Manager-Database#1076` at `b47fd6a`, applied `verify:compare`, and reopened #1075 for verifier sequencing.
+  - Closed duplicate LMS PR #160 so #159 remains the canonical issue #110 PR.
+- Review-thread fixes on #159:
+  - Added prefixed select element ids for the author knowledge node and edge forms (`node-*` and `edge-*`) so labels no longer target duplicate `ownership_scope` / `status` ids.
+  - Stopped trusting browser-submitted `actor_id` / `authoring_actor` values for author UI creates; node/edge audit events and prompts now use server-owned `author-ui`.
+  - Redacted local-only source stable locators from the author prompt source hint, matching learner citation visibility.
+  - Added regression tests for unique select ids, server-owned actor identity, prompt provenance, and local-only source redaction.
+- Validation:
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run pytest tests/ui/test_author_learning_objects.py -q --no-cov` -> 5 passed.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run ruff check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run ruff format --check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed after formatting.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run mypy src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed; existing pyproject unused-section note only.
+- Next action: push the review-thread fix commit to #159, post evidence, resolve the three Copilot review threads, then wait for rerun checks before merge.
+
 ## 2026-05-27T05:12Z - opener materialized issue #110 authoring UI
 
 - Automation: `pd-workloop-resume` (codex opener lane).

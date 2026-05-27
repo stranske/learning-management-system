@@ -361,8 +361,9 @@ async def create_author_node_route(request: Request, session: SessionDep) -> str
             knowledge_type=form.get("knowledge_type", "conceptual"),
             scope=ownership_scope,
             status=form.get("status", "draft"),
-            actor_id=form.get("actor_id", "author-ui"),
+            actor_id="author-ui",
             source_reference_id=form.get("source_reference_id") or None,
+            source_subsystem="author-ui",
         )
         session.commit()
     except ValueError as exc:
@@ -397,7 +398,8 @@ async def create_author_edge_route(request: Request, session: SessionDep) -> str
             is_graph_reference=form.get("is_graph_reference") == "true",
             confidence=_optional_float(form.get("confidence")),
             status=form.get("status", "draft"),
-            actor_id=form.get("actor_id", "author-ui"),
+            actor_id="author-ui",
+            source_subsystem="author-ui",
         )
         session.commit()
     except ValueError as exc:
@@ -447,7 +449,7 @@ async def create_author_prompt_route(request: Request, session: SessionDep) -> s
             body=form.get("body", ""),
             source_reference_ids=_split_ids(form.get("source_reference_ids", "")),
             authoring_method="human-authored",
-            authoring_actor=form.get("authoring_actor", "author-ui"),
+            authoring_actor="author-ui",
         )
         session.commit()
     except ValueError as exc:
@@ -660,14 +662,13 @@ def _author_knowledge_surface(
           <section aria-labelledby="node-form-heading">
             <h2 id="node-form-heading">Node</h2>
             <form method="post" action="/app/author/knowledge/nodes">
-              <input type="hidden" name="actor_id" value="author-ui">
-              {_select("ownership_scope", ("personal", "institutional"), ownership_scope)}
+              {_select("ownership_scope", ("personal", "institutional"), ownership_scope, id_prefix="node")}
               <label for="node-title">Title</label>
               <input id="node-title" name="title" required>
               <label for="node-description">Description</label>
               <textarea id="node-description" name="description" rows="3"></textarea>
-              {_select("knowledge_type", KNOWLEDGE_TYPES, "conceptual")}
-              {_select("status", NODE_STATUSES, "draft")}
+              {_select("knowledge_type", KNOWLEDGE_TYPES, "conceptual", id_prefix="node")}
+              {_select("status", NODE_STATUSES, "draft", id_prefix="node")}
               <label for="source-reference-id">Source reference id</label>
               <input id="source-reference-id" name="source_reference_id">
               <button type="submit">Save node</button>
@@ -676,15 +677,14 @@ def _author_knowledge_surface(
           <section aria-labelledby="edge-form-heading">
             <h2 id="edge-form-heading">Edge</h2>
             <form method="post" action="/app/author/knowledge/edges">
-              <input type="hidden" name="actor_id" value="author-ui">
-              {_select("ownership_scope", ("personal", "institutional"), ownership_scope)}
+              {_select("ownership_scope", ("personal", "institutional"), ownership_scope, id_prefix="edge")}
               <label for="source-node-id">Source node id</label>
               <input id="source-node-id" name="source_node_id" required>
               <label for="target-node-id">Target node id</label>
               <input id="target-node-id" name="target_node_id" required>
-              {_select("target_scope", ("personal", "institutional"), ownership_scope)}
-              {_select("edge_type", EDGE_TYPES, "prerequisite")}
-              {_select("status", EDGE_STATUSES, "draft")}
+              {_select("target_scope", ("personal", "institutional"), ownership_scope, id_prefix="edge")}
+              {_select("edge_type", EDGE_TYPES, "prerequisite", id_prefix="edge")}
+              {_select("status", EDGE_STATUSES, "draft", id_prefix="edge")}
               <label for="confidence">Confidence</label>
               <input id="confidence" name="confidence" inputmode="decimal">
               <label class="check">
@@ -755,8 +755,6 @@ def _author_prompts_surface(
             <input id="source-reference-ids" name="source_reference_ids" required
               aria-describedby="source-reference-hint">
             <small id="source-reference-hint">{escape(_source_hint(sources))}</small>
-            <label for="authoring-actor">Authoring actor</label>
-            <input id="authoring-actor" name="authoring_actor" value="author-ui" required>
             <label for="prompt-body">Prompt body</label>
             <textarea id="prompt-body" name="body" rows="5" required></textarea>
             <button type="submit">Save prompt</button>
@@ -779,16 +777,23 @@ def _notice(message: str | None, error: str | None) -> str:
     return ""
 
 
-def _select(name: str, choices: tuple[str, ...], selected: str) -> str:
+def _select(
+    name: str,
+    choices: tuple[str, ...],
+    selected: str,
+    *,
+    id_prefix: str | None = None,
+) -> str:
     label = name.replace("_", " ")
+    field_id = f"{id_prefix}-{name}" if id_prefix is not None else name
     options = [
         f'<option value="{escape(choice)}"'
         f"{' selected' if choice == selected else ''}>{escape(choice)}</option>"
         for choice in choices
     ]
     return (
-        f'<label for="{escape(name)}">{escape(label)}</label>'
-        f'<select id="{escape(name)}" name="{escape(name)}">{"".join(options)}</select>'
+        f'<label for="{escape(field_id)}">{escape(label)}</label>'
+        f'<select id="{escape(field_id)}" name="{escape(name)}">{"".join(options)}</select>'
     )
 
 
@@ -816,5 +821,12 @@ def _source_hint(sources: Sequence[SourceReference]) -> str:
     if not sources:
         return "No source references are available."
     return ", ".join(
-        f"{source.stable_locator} ({source.id}, drift {source.drift_status})" for source in sources
+        f"{_author_source_label(source)} ({source.id}, drift {source.drift_status})"
+        for source in sources
     )
+
+
+def _author_source_label(source: SourceReference) -> str:
+    if source.source_visibility == "local-only":
+        return f"local-only source hidden; {source.hash_algorithm}={source.content_hash}"
+    return source.stable_locator

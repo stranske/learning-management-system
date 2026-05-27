@@ -5,11 +5,13 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
+from lms.audit.models import AuditLog
 from lms.auth.models import User
 from lms.graphs.models import KnowledgeNode
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.models import LearningGoal
 from lms.learners.repository import create_learner_for_user
+from lms.prompts.models import Prompt, PromptVersion
 from lms.sources.repository import create_source_reference
 
 
@@ -83,15 +85,24 @@ def test_author_can_create_goal_node_edge_and_prompt_from_ui(
             "demand_level": "medium",
             "expected_answer_form": "short-text",
             "source_reference_ids": source_id,
-            "authoring_actor": "test-author",
+            "authoring_actor": "spoofed-browser-author",
             "body": "Explain why spaced retrieval helps memory.",
         },
     )
     assert prompt_response.status_code == 200
     assert "Prompt saved as draft." in prompt_response.text
     assert "Explain why spaced retrieval helps memory." in prompt_response.text
-    assert "provenance Provenance: human-authored; author test-author" in prompt_response.text
+    assert "provenance Provenance: human-authored; author author-ui" in prompt_response.text
     assert "drift current" in client.get("/app/author/prompts").text
+
+    with session_factory() as session:
+        prompt = (
+            session.query(Prompt)
+            .join(PromptVersion)
+            .filter(PromptVersion.body == "Explain why spaced retrieval helps memory.")
+            .one()
+        )
+        assert prompt.authoring_actor == "author-ui"
 
 
 def test_author_ui_blocks_cross_scope_normal_edge(
@@ -134,3 +145,79 @@ def test_author_ui_blocks_cross_scope_normal_edge(
 
     assert response.status_code == 200
     assert "cross-scope edges require is_graph_reference=True" in response.text
+
+
+def test_author_knowledge_form_uses_unique_select_ids(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, _ = api_client
+
+    response = client.get("/app/author/knowledge")
+
+    assert response.status_code == 200
+    assert 'id="node-ownership_scope"' in response.text
+    assert 'id="edge-ownership_scope"' in response.text
+    assert 'id="node-status"' in response.text
+    assert 'id="edge-status"' in response.text
+    assert 'id="ownership_scope"' not in response.text
+    assert 'id="status"' not in response.text
+
+
+def test_author_ui_derives_actor_identity_server_side(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        source = create_source_reference(
+            session,
+            source_type="internal-note",
+            stable_locator="demo://source/actor",
+            content="actor source",
+            actor_id="test-author",
+        )
+        session.commit()
+        source_id = source.id
+
+    response = client.post(
+        "/app/author/knowledge/nodes",
+        data={
+            "title": "Server actor node",
+            "description": "Actor comes from the server.",
+            "knowledge_type": "conceptual",
+            "ownership_scope": "personal",
+            "status": "published",
+            "source_reference_id": source_id,
+            "actor_id": "spoofed-browser-user",
+        },
+    )
+
+    assert response.status_code == 200
+    with session_factory() as session:
+        node = session.query(KnowledgeNode).filter_by(title="Server actor node").one()
+        audit = (
+            session.query(AuditLog).filter_by(entity_type="KnowledgeNode", entity_id=node.id).one()
+        )
+        assert audit.actor_id == "author-ui"
+        assert audit.source_subsystem == "author-ui"
+
+
+def test_author_prompt_hint_redacts_local_only_sources(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        create_source_reference(
+            session,
+            source_type="internal-note",
+            stable_locator="file:///private/local-note.md",
+            content="local secret source",
+            actor_id="test-author",
+            source_visibility="local-only",
+        )
+        session.commit()
+
+    response = client.get("/app/author/prompts")
+
+    assert response.status_code == 200
+    assert "file:///private/local-note.md" not in response.text
+    assert "local-only source hidden" in response.text
