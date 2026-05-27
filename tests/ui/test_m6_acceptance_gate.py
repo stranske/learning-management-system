@@ -25,6 +25,11 @@ def _hidden_value(html: str, name: str) -> str:
     return match.group(1)
 
 
+def _assert_mobile_viewport(html: str) -> None:
+    assert 'name="viewport"' in html
+    assert "width=device-width" in html
+
+
 def test_author_goal_node_prompt_rubric_and_learner_completion_path(
     api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
@@ -186,6 +191,7 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
         f"/app/learner/attempts?learner_id={learner_id}&prompt_id={prompt_id}"
     )
     assert attempt_start.status_code == 200
+    _assert_mobile_viewport(attempt_start.text)
     assert "Your task" in attempt_start.text
     assert (
         "Provenance: human-authored; author author-ui; reviewer author-reviewer"
@@ -288,6 +294,7 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
     capability_view = client.get(f"/app/learner/capability/targets/{target_id}")
 
     assert dashboard.status_code == 200
+    _assert_mobile_viewport(dashboard.text)
     assert "Explain retrieval practice with evidence" in dashboard.text
     assert "Revise the attempt using rubric feedback" in dashboard.text
     assert "Explain retrieval spacing with evidence" in dashboard.text

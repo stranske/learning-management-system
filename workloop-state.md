@@ -1,5 +1,16 @@
 # Workloop State
 
+## 2026-05-27T13:32Z - codex closer addressed PR #173 review threads
+
+- Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#121](https://github.com/stranske/learning-management-system/issues/121) / [#173](https://github.com/stranske/learning-management-system/pull/173), branch `codex/issue-121-author-learner-gate`.
+- Batch context: closed #120 after PR #172 posted a durable Provider Comparison Report with OpenAI PASS 92% and Anthropic PASS 78%; emitted `issue_closed`, recorded the batch sweep, and reset the relay chain once. Workflows #2159 remained scoped-blocked.
+- Review audit: #173 was CLEAN/MERGEABLE with Gate/Python CI green, but had three unresolved Copilot threads and stale automation `agent:needs-attention`/`needs-human` labels caused by repeated no-output keepalive failures. The docs table thread was already satisfied on current head: `docs/handoff/m6-acceptance-gate.md` uses a normal single-pipe Markdown table.
+- Review fixes: added `_assert_mobile_viewport` to the M6 acceptance-gate test and asserted mobile viewport metadata on both the learner attempt page and learner dashboard, directly addressing the two test threads.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-173 uv run pytest tests/ui/test_m6_acceptance_gate.py::test_author_goal_node_prompt_rubric_and_learner_completion_path -q --no-cov` -> 1 passed; `uv run ruff check tests/ui/test_m6_acceptance_gate.py` -> passed; `uv run ruff format --check tests/ui/test_m6_acceptance_gate.py` -> passed. Markdown formatting was not run because Ruff requires preview mode for Markdown.
+- Next action: push the review-fix commit, post evidence, resolve the three Copilot threads, remove stale `agent:needs-attention`/`needs-human`, and wait for fresh CI before merge.
+
 ## 2026-05-27T13:18Z - codex opener materialized issue #121 M6 acceptance gate
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
