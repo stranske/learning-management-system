@@ -1,5 +1,16 @@
 # Workloop State
 
+## 2026-05-27T07:06Z - opener materialized issue #115 feedback/hint/revision UI
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#115](https://github.com/stranske/learning-management-system/issues/115) `Build feedback, hint, and revision UI` (priority:normal, repo-review-approved, milestone:M6).
+- Branch: `codex/issue-115-feedback-hint-revision-ui` (worktree `~/.codex/automations/pd-workloop-resume/worktrees/lms-issue-115`).
+- Implementation: added isolated learner feedback UI router `src/lms/ui/feedback.py` and registered it in `src/lms/main.py`; routes include feedback list/detail, hint reveal, model-answer reveal, and revision submit from the feedback detail page. The surface uses existing `FeedbackRecord`, `FeedbackAction`, `Hint`, `ModelAnswer`, `RubricScore`, and `RevisionRequest` repository APIs and keeps model-answer body hidden until explicit reveal.
+- Tests: `tests/ui/test_feedback_surface.py` covers goal/gap/next-action/rubric breakdown rendering, hint reveal without model-answer exposure, and submitting a revision request from the feedback view.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-resume uv run pytest tests/ui/ -q --no-cov` -> 20 passed; `uv run ruff check src/lms/ui/feedback.py src/lms/main.py tests/ui/test_feedback_surface.py` -> passed; `uv run ruff format --check ...` -> passed; `uv run mypy src/lms/ui/feedback.py src/lms/main.py tests/ui/test_feedback_surface.py` -> passed with the existing pyproject unused-section note only.
+- Next action: push branch, open ready-for-review PR with `agent:codex`, `agents:keepalive`, and `autofix`, then let Gate/keepalive take over.
+
 ## 2026-05-27T06:02:40Z - codex closer rebased PR #161 after #159 merge
 
 - Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
