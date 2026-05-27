@@ -1,5 +1,35 @@
 # Workloop State
 
+## 2026-05-27T08:33Z - codex closer resolved PR #165 merge conflicts
+
+- Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#115](https://github.com/stranske/learning-management-system/issues/115) / [#165](https://github.com/stranske/learning-management-system/pull/165) `Build feedback, hint, and revision UI`.
+- Branch: `codex/issue-115-feedback-hint-revision-ui`; worktree `~/.codex/automations/imi-merge-verify-closer/worktrees/lms-pr165-conflict`.
+- Batch context: merged #164/#114, applied `verify:compare`, emitted `pr_merged` and `verify_label_applied`, and reopened #114 for verifier sequencing. Other supported repos had no open PR cleanup lanes; LMS verifier debts #162/#112 and #163/#113 remain for later disposition.
+- Complex lane trigger: #165 was non-draft, in-scope, zero unresolved review threads, but `mergeable=CONFLICTING` after #164 merged to `main`.
+- Conflict resolution: merged `origin/main` (`797b717`) into PR head `d9acbc8`; kept both UI routers in `src/lms/main.py` (`attempt_flow_router` from #114 and `learner_feedback_ui_router` from #115), accepted the main-side UI/API/CSS/test additions, and preserved both sides of the append-only `workloop-state.md` history.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-165 uv run pytest tests/ui/ -q --no-cov` -> 36 passed; `uv run ruff check` on merged UI/test files -> passed; `uv run ruff format --check` -> 8 files already formatted after formatting `src/lms/ui/api.py`; `uv run mypy src/lms/main.py src/lms/ui/feedback.py src/lms/ui/attempts.py tests/ui/test_feedback_surface.py tests/ui/test_activity_attempt_flow.py` -> success with existing pyproject unused-section note only.
+- Next action: push the merge commit to #165, remove stale `agent:retry` if appropriate, then wait for fresh GitHub checks before merging/applying `verify:compare`.
+
+## 2026-05-27T07:08Z - codex opener advanced PR #165 feedback UI
+
+- Automation: `pd-workloop-resume` opener lane from the neutral Code workspace. ACTION A succeeded; cap/discovery found raw opener cap below 5. Existing opener-owned LMS PRs #162/#163/#164 were draining with fresh workflow evidence and no repairable infra stall. Liveness selected LMS #115 as the next normal-priority candidate after #112-#114; branch/PR `codex/issue-115-feedback-hint-revision-ui` / #165 already existed by the time this lane reached materialization, linked to #115, non-draft, and correctly labeled (`agent:codex`, `agents:keepalive`, `autofix`, `agent:retry`, `repo-review-approved`, `priority:normal`, `milestone:M6`), so this round treated it as concurrent productive materialization rather than opening a duplicate PR.
+- Local worktree: `~/.codex/automations/pd-workloop-resume/worktrees/lms-issue-115`.
+- Advanced the existing PR branch with focused cleanup to the learner feedback UI/tests: typed the feedback UI panel helpers with concrete feedback model types and tightened `tests/ui/test_feedback_surface.py` around goal/gap/next-action/rubric rendering, hint reveal without model-answer exposure, and revision submission. No workflow or infrastructure files changed.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-lms115 uv run pytest tests/ui/ -q --no-cov` -> 20 passed; `uv run ruff check src/lms/ui/feedback.py src/lms/main.py tests/ui/test_feedback_surface.py` -> pass; `uv run ruff format --check ...` -> pass; `uv run mypy src/lms/ui/feedback.py src/lms/main.py tests/ui/test_feedback_surface.py` -> pass (existing pyproject unused-section note only).
+- Next action: push the cleanup commit to PR #165 and leave it to Gate/keepalive; do not open a duplicate #115 PR. Post-push review should re-open #165 after async checks settle and handle any branch-local deterministic failure.
+
+## 2026-05-27T07:06Z - opener materialized issue #115 feedback/hint/revision UI
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#115](https://github.com/stranske/learning-management-system/issues/115) `Build feedback, hint, and revision UI` (priority:normal, repo-review-approved, milestone:M6).
+- Branch: `codex/issue-115-feedback-hint-revision-ui` (worktree `~/.codex/automations/pd-workloop-resume/worktrees/lms-issue-115`).
+- Implementation: added isolated learner feedback UI router `src/lms/ui/feedback.py` and registered it in `src/lms/main.py`; routes include feedback list/detail, hint reveal, model-answer reveal, and revision submit from the feedback detail page. The surface uses existing `FeedbackRecord`, `FeedbackAction`, `Hint`, `ModelAnswer`, `RubricScore`, and `RevisionRequest` repository APIs and keeps model-answer body hidden until explicit reveal. Follow-up cleanup kept navigation on current-main routes (`/learn`, `/app/learner/review`, `/app/learner`) so this PR does not depend on sibling in-flight #113/#114 routes.
+- Tests: `tests/ui/test_feedback_surface.py` covers goal/gap/next-action/rubric breakdown rendering, hint reveal without model-answer exposure, and submitting a revision request from the feedback view.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-resume uv run pytest tests/ui/ -q --no-cov` -> 20 passed in the prior materialization commit; this round revalidated `UV_CACHE_DIR=/tmp/uv-cache-pd-workloop-lms-115 uv run pytest tests/ui/test_feedback_surface.py tests/ui/test_author_feedback_cases.py tests/ui/test_app_shell.py -q --no-cov` -> 8 passed; after route-link cleanup, `uv run pytest tests/ui/test_feedback_surface.py -q --no-cov` -> 3 passed; `uv run ruff check src/lms/ui/feedback.py tests/ui/test_feedback_surface.py src/lms/main.py` -> passed; `uv run ruff format --check ...` -> passed; `uv run mypy src/lms/ui/feedback.py src/lms/main.py tests/ui/test_feedback_surface.py` -> passed with the existing pyproject unused-section note only.
+- Next action: push branch, open ready-for-review PR with `agent:codex`, `agents:keepalive`, and `autofix`, then let Gate/keepalive take over.
 ## 2026-05-27T08:05Z - codex closer resolved PR #164 review threads
 
 - Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
