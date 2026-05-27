@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import lms.audit.models  # noqa: F401
+import lms.cases.models  # noqa: F401
 import lms.evidence.models  # noqa: F401
+import lms.feedback.models  # noqa: F401
 import lms.graphs.models  # noqa: F401
 import lms.learners.models  # noqa: F401
 import lms.llm.models  # noqa: F401

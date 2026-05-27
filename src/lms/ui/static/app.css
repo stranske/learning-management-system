@@ -41,6 +41,35 @@ h2 {
   background: #fff;
   padding: 1rem;
 }
+.subnav {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0 0 1rem;
+}
+.subnav a {
+  border: 1px solid #bcccdc;
+  border-radius: 0.25rem;
+  padding: 0.35rem 0.55rem;
+  text-decoration: none;
+}
+.author-list {
+  padding-left: 1rem;
+}
+.author-list li {
+  margin: 0.6rem 0;
+  overflow-wrap: anywhere;
+}
+.author-list span,
+.author-list small {
+  display: block;
+}
+.notice,
+.preview {
+  border-left: 0.25rem solid #2f80ed;
+  background: #f5f9ff;
+  padding: 0.75rem;
+}
 @media (max-width: 520px) {
   .app-header {
     padding: 0.75rem;

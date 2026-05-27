@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from html import escape
 from importlib.resources import files
+from json import JSONDecodeError, loads
 from typing import Annotated
 from urllib.parse import parse_qs
 
@@ -13,10 +14,19 @@ from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from lms.cases.repository import add_decision_point, create_case, get_case, list_cases
 from lms.db.session import get_session
 from lms.evidence.models import Attempt
 from lms.evidence.repository import create_attempt
 from lms.evidence.schemas import AttemptCreate, StructuredFeedback
+from lms.feedback.repository import (
+    create_feedback_template,
+    create_rubric,
+    get_feedback_template,
+    list_feedback_templates,
+    list_rubrics,
+    render_feedback_template,
+)
 from lms.graphs.models import (
     EDGE_STATUSES,
     EDGE_TYPES,
@@ -37,7 +47,7 @@ from lms.prompts.repository import create_prompt, list_prompts
 from lms.scheduling.service import DEFAULT_DAILY_CAP, SchedulerSettings, get_review_queue_overview
 from lms.sources.models import SourceReference
 from lms.sources.repository import list_source_references
-from lms.ui.shell import render_page, surface_stub
+from lms.ui.shell import empty_state, render_page, surface_stub
 
 router = APIRouter(tags=["learner-ui"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -269,12 +279,15 @@ def author_app_route() -> str:
             <h1>Author</h1>
           </header>
           <section class="empty-state" aria-labelledby="author-start-heading">
-            <h2 id="author-start-heading">Learning objects</h2>
-            <p>Create goals, graph nodes, edges, and prompts for the trimmed prototype path.</p>
+            <h2 id="author-start-heading">Authoring tools</h2>
+            <p>Create learning objects, feedback instruments, and transfer cases.</p>
             <nav aria-label="Author tools">
               <a href="/app/author/goals">Goals</a>
               <a href="/app/author/knowledge">Knowledge graph</a>
               <a href="/app/author/prompts">Prompts</a>
+              <a href="/app/author/rubrics">Rubrics</a>
+              <a href="/app/author/feedback-templates">Feedback templates</a>
+              <a href="/app/author/cases">Cases</a>
             </nav>
           </section>
         </main>
@@ -466,6 +479,145 @@ async def create_author_prompt_route(request: Request, session: SessionDep) -> s
         message="Prompt saved as draft.",
         error=None,
     )
+
+
+@router.get("/app/author/rubrics", response_class=HTMLResponse)
+def author_rubrics_route(session: SessionDep) -> str:
+    """Return rubric authoring forms backed by durable rubric repositories."""
+    return _author_rubrics_page(session)
+
+
+@router.post("/app/author/rubrics", response_class=HTMLResponse)
+async def create_author_rubric_route(request: Request, session: SessionDep) -> str:
+    """Create a rubric with one initial criterion from the authoring surface."""
+    form = _form_dict(await request.body())
+    notice = "Rubric created."
+    try:
+        create_rubric(
+            session,
+            title=_required_text(form, "title"),
+            description=_optional_text(form.get("description")),
+            ownership_scope=_required_text(form, "ownership_scope"),
+            status=_required_text(form, "status"),
+            authoring_actor=_required_text(form, "authoring_actor"),
+            prompt_id=_optional_text(form.get("prompt_id")),
+            knowledge_node_id=_optional_text(form.get("knowledge_node_id")),
+            criteria=[
+                {
+                    "criterion_order": _required_int(form, "criterion_order"),
+                    "description": _required_text(form, "criterion_description"),
+                    "max_points": _required_float(form, "max_points"),
+                    "validity_scope": _optional_text(form.get("validity_scope")),
+                    "performance_levels": _json_object(form.get("performance_levels")),
+                }
+            ],
+        )
+        session.commit()
+    except (ValueError, JSONDecodeError) as exc:
+        session.rollback()
+        notice = str(exc)
+    return _author_rubrics_page(session, notice=notice)
+
+
+@router.get("/app/author/feedback-templates", response_class=HTMLResponse)
+def author_feedback_templates_route(session: SessionDep) -> str:
+    """Return feedback template authoring and preview controls."""
+    return _author_templates_page(session)
+
+
+@router.post("/app/author/feedback-templates", response_class=HTMLResponse)
+async def create_author_feedback_template_route(request: Request, session: SessionDep) -> str:
+    """Create a reusable feedback template from the authoring surface."""
+    form = _form_dict(await request.body())
+    notice = "Feedback template created."
+    try:
+        create_feedback_template(
+            session,
+            name=_required_text(form, "name"),
+            template_body=_required_text(form, "template_body"),
+            placeholder_schema={"required": _csv_values(form.get("required_placeholders", ""))},
+            feedback_level=_required_text(form, "feedback_level"),
+            action_type=_required_text(form, "action_type"),
+            ownership_scope=_required_text(form, "ownership_scope"),
+            status=_required_text(form, "status"),
+            authoring_actor=_required_text(form, "authoring_actor"),
+        )
+        session.commit()
+    except ValueError as exc:
+        session.rollback()
+        notice = str(exc)
+    return _author_templates_page(session, notice=notice)
+
+
+@router.post("/app/author/feedback-templates/preview", response_class=HTMLResponse)
+async def preview_author_feedback_template_route(request: Request, session: SessionDep) -> str:
+    """Render a feedback template preview using supplied placeholder values."""
+    form = _form_dict(await request.body())
+    notice = ""
+    preview = ""
+    try:
+        template = get_feedback_template(session, _required_text(form, "template_id"))
+        if template is None:
+            raise ValueError("feedback template was not found")
+        preview = render_feedback_template(template, _json_object(form.get("values_json")))
+        notice = "Preview rendered."
+    except (ValueError, JSONDecodeError) as exc:
+        notice = str(exc)
+    return _author_templates_page(session, notice=notice, preview=preview)
+
+
+@router.get("/app/author/cases", response_class=HTMLResponse)
+def author_cases_route(session: SessionDep) -> str:
+    """Return transfer case authoring controls."""
+    return _author_cases_page(session)
+
+
+@router.post("/app/author/cases", response_class=HTMLResponse)
+async def create_author_case_route(request: Request, session: SessionDep) -> str:
+    """Create a transfer case shell with nested step/evidence/decision data."""
+    form = _form_dict(await request.body())
+    notice = "Case created."
+    try:
+        case = create_case(
+            session,
+            title=_required_text(form, "title"),
+            description=_optional_text(form.get("description")),
+            ownership_scope=_required_text(form, "ownership_scope"),
+            rubric_id=_optional_text(form.get("rubric_id")),
+            knowledge_node_id=_optional_text(form.get("knowledge_node_id")),
+            status=_required_text(form, "status"),
+            steps=[
+                {
+                    "step_order": _required_int(form, "step_order"),
+                    "title": _required_text(form, "step_title"),
+                    "prompt": _required_text(form, "step_prompt"),
+                    "expected_work_product": _optional_text(form.get("expected_work_product")),
+                }
+            ],
+            evidence_packets=[
+                {
+                    "title": _required_text(form, "evidence_title"),
+                    "summary": _optional_text(form.get("evidence_summary")),
+                    "packet_metadata": _json_object(form.get("packet_metadata")),
+                }
+            ],
+        )
+        session.flush()
+        case = get_case(session, case.id) or case
+        add_decision_point(
+            session,
+            case_step_id=case.steps[0].id,
+            title=_required_text(form, "decision_title"),
+            prompt=_required_text(form, "decision_prompt"),
+            decision_type=_required_text(form, "decision_type"),
+            evidence_packet_id=case.evidence_packets[0].id,
+            options=_json_list(form.get("decision_options")),
+        )
+        session.commit()
+    except (ValueError, JSONDecodeError) as exc:
+        session.rollback()
+        notice = str(exc)
+    return _author_cases_page(session, notice=notice)
 
 
 @router.get("/app/support", response_class=HTMLResponse)
@@ -769,7 +921,261 @@ def _author_prompts_surface(
     )
 
 
-def _notice(message: str | None, error: str | None) -> str:
+def _author_rubrics_page(session: Session, *, notice: str | None = None) -> str:
+    rubrics = list_rubrics(session)
+    items = [
+        (
+            "<li>"
+            f"<strong>{escape(rubric.title)}</strong>"
+            f"<span>{escape(rubric.ownership_scope)} scope; {escape(rubric.status)}; "
+            f"{len(rubric.criteria)} criteria</span>"
+            f"<small>Linked prompt: {escape(rubric.prompt_id or 'none')} | "
+            f"source node: {escape(rubric.knowledge_node_id or 'none')}</small>"
+            "</li>"
+        )
+        for rubric in rubrics
+    ]
+    return render_page(
+        "Author rubrics",
+        f"""
+        <main class="surface author-surface">
+          {_author_header("Rubrics")}
+          {_notice(notice)}
+          <form method="post" action="/app/author/rubrics">
+            <label for="title">Rubric title</label>
+            <input id="title" name="title" required>
+            <label for="description">Description</label>
+            <textarea id="description" name="description" rows="2"></textarea>
+            {_scope_status_actor_fields()}
+            <label for="prompt_id">Linked prompt</label>
+            <input id="prompt_id" name="prompt_id">
+            <label for="knowledge_node_id">Linked source node</label>
+            <input id="knowledge_node_id" name="knowledge_node_id">
+            <fieldset>
+              <legend>Criterion</legend>
+              <label for="criterion_order">Order</label>
+              <input id="criterion_order" name="criterion_order" type="number" min="1" value="1" required>
+              <label for="criterion_description">Description</label>
+              <textarea id="criterion_description" name="criterion_description" rows="3" required></textarea>
+              <label for="max_points">Max points</label>
+              <input id="max_points" name="max_points" type="number" min="0.1" step="0.1" value="4" required>
+              <label for="validity_scope">Validity scope</label>
+              <input id="validity_scope" name="validity_scope">
+              <label for="performance_levels">Performance levels JSON</label>
+              <textarea id="performance_levels" name="performance_levels" rows="3">{{"meets": "Complete and sourced"}}</textarea>
+            </fieldset>
+            <button type="submit">Create rubric</button>
+          </form>
+          <section aria-labelledby="rubrics-list-heading">
+            <h2 id="rubrics-list-heading">Rubric library</h2>
+            {"<ul class='author-list'>" + "".join(items) + "</ul>" if items else empty_state("No rubrics", "Create the first rubric to make prompt and case scoring selectable.")}
+          </section>
+        </main>
+        """,
+        active_path="/app/author",
+    )
+
+
+def _author_templates_page(
+    session: Session, *, notice: str | None = None, preview: str = ""
+) -> str:
+    templates = list_feedback_templates(session)
+    items = [
+        (
+            "<li>"
+            f"<strong>{escape(template.name)}</strong>"
+            f"<span>{escape(template.ownership_scope)} scope; {escape(template.status)}; "
+            f"{escape(template.feedback_level)} feedback</span>"
+            f"<small>ID {escape(template.id)} | placeholders "
+            f"{escape(', '.join(template.placeholder_schema.get('required', [])) or 'none')}</small>"
+            "</li>"
+        )
+        for template in templates
+    ]
+    options = "".join(
+        f'<option value="{escape(template.id)}">{escape(template.name)}</option>'
+        for template in templates
+    )
+    return render_page(
+        "Author feedback templates",
+        f"""
+        <main class="surface author-surface">
+          {_author_header("Feedback templates")}
+          {_notice(notice)}
+          <form method="post" action="/app/author/feedback-templates">
+            <label for="name">Template name</label>
+            <input id="name" name="name" required>
+            <label for="template_body">Template body</label>
+            <textarea id="template_body" name="template_body" rows="4" required>Focus next on {{next_action}} because {{gap}}.</textarea>
+            <label for="required_placeholders">Required placeholders</label>
+            <input id="required_placeholders" name="required_placeholders" value="gap,next_action">
+            <label for="feedback_level">Feedback level</label>
+            <select id="feedback_level" name="feedback_level">
+              <option value="coaching">coaching</option>
+              <option value="remediation">remediation</option>
+              <option value="review">review</option>
+            </select>
+            <label for="action_type">Action type</label>
+            <select id="action_type" name="action_type">
+              <option value="retry">retry</option>
+              <option value="revision">revision</option>
+              <option value="prerequisite-remediation">prerequisite-remediation</option>
+            </select>
+            {_scope_status_actor_fields()}
+            <button type="submit">Create template</button>
+          </form>
+          <form method="post" action="/app/author/feedback-templates/preview">
+            <label for="template_id">Template preview</label>
+            <select id="template_id" name="template_id" required>{options}</select>
+            <label for="values_json">Placeholder values JSON</label>
+            <textarea id="values_json" name="values_json" rows="3">{{"gap": "cite the source", "next_action": "revise the evidence paragraph"}}</textarea>
+            <button type="submit">Render preview</button>
+          </form>
+          {_preview(preview)}
+          <section aria-labelledby="templates-list-heading">
+            <h2 id="templates-list-heading">Template library</h2>
+            {"<ul class='author-list'>" + "".join(items) + "</ul>" if items else empty_state("No feedback templates", "Create a template before testing placeholder rendering.")}
+          </section>
+        </main>
+        """,
+        active_path="/app/author",
+    )
+
+
+def _author_cases_page(session: Session, *, notice: str | None = None) -> str:
+    cases = list_cases(session)
+    rubrics = list_rubrics(session)
+    rubric_options = '<option value="">None</option>' + "".join(
+        f'<option value="{escape(rubric.id)}">{escape(rubric.title)}</option>'
+        for rubric in rubrics
+    )
+    items = [
+        (
+            "<li>"
+            f"<strong>{escape(case.title)}</strong>"
+            f"<span>{escape(case.ownership_scope)} scope; {escape(case.status)}; "
+            f"{len(case.steps)} steps; {len(case.evidence_packets)} evidence packets</span>"
+            f"<small>Rubric: {escape(case.rubric_id or 'none')} | "
+            f"source node: {escape(case.knowledge_node_id or 'none')}</small>"
+            "</li>"
+        )
+        for case in cases
+    ]
+    return render_page(
+        "Author cases",
+        f"""
+        <main class="surface author-surface">
+          {_author_header("Cases")}
+          {_notice(notice)}
+          <form method="post" action="/app/author/cases">
+            <label for="case-title">Case title</label>
+            <input id="case-title" name="title" required>
+            <label for="case-description">Description</label>
+            <textarea id="case-description" name="description" rows="2"></textarea>
+            {_scope_status_actor_fields(include_actor=False)}
+            <label for="rubric_id">Linked rubric</label>
+            <select id="rubric_id" name="rubric_id">{rubric_options}</select>
+            <label for="case-node">Linked source node</label>
+            <input id="case-node" name="knowledge_node_id">
+            <fieldset>
+              <legend>Step</legend>
+              <label for="step_order">Order</label>
+              <input id="step_order" name="step_order" type="number" min="1" value="1" required>
+              <label for="step_title">Step title</label>
+              <input id="step_title" name="step_title" required>
+              <label for="step_prompt">Step prompt</label>
+              <textarea id="step_prompt" name="step_prompt" rows="3" required></textarea>
+              <label for="expected_work_product">Expected work product</label>
+              <input id="expected_work_product" name="expected_work_product" placeholder="memo, rationale, or analysis">
+            </fieldset>
+            <fieldset>
+              <legend>Evidence packet</legend>
+              <label for="evidence_title">Evidence title</label>
+              <input id="evidence_title" name="evidence_title" required>
+              <label for="evidence_summary">Evidence summary</label>
+              <textarea id="evidence_summary" name="evidence_summary" rows="2"></textarea>
+              <label for="packet_metadata">Packet metadata JSON</label>
+              <textarea id="packet_metadata" name="packet_metadata" rows="2">{{"source": "author"}}</textarea>
+            </fieldset>
+            <fieldset>
+              <legend>Decision point</legend>
+              <label for="decision_title">Decision title</label>
+              <input id="decision_title" name="decision_title" required>
+              <label for="decision_prompt">Decision prompt</label>
+              <textarea id="decision_prompt" name="decision_prompt" rows="2" required></textarea>
+              <label for="decision_type">Decision type</label>
+              <select id="decision_type" name="decision_type">
+                <option value="single-choice">single-choice</option>
+                <option value="free-response">free-response</option>
+                <option value="evidence-selection">evidence-selection</option>
+              </select>
+              <label for="decision_options">Decision options JSON</label>
+              <textarea id="decision_options" name="decision_options" rows="2">[{{"label": "Approve", "value": "approve"}}]</textarea>
+            </fieldset>
+            <button type="submit">Create case</button>
+          </form>
+          <section aria-labelledby="cases-list-heading">
+            <h2 id="cases-list-heading">Case library</h2>
+            {"<ul class='author-list'>" + "".join(items) + "</ul>" if items else empty_state("No cases", "Create the first case shell with a step, evidence packet, and decision point.")}
+          </section>
+        </main>
+        """,
+        active_path="/app/author",
+    )
+
+
+def _author_header(title: str) -> str:
+    return f"""
+      <header>
+        <p class="eyebrow">Authoring workspace</p>
+        <h1>{escape(title)}</h1>
+      </header>
+      <nav class="subnav" aria-label="Authoring tools">
+        <a href="/app/author/goals">Goals</a>
+        <a href="/app/author/knowledge">Knowledge graph</a>
+        <a href="/app/author/prompts">Prompts</a>
+        <a href="/app/author/rubrics">Rubrics</a>
+        <a href="/app/author/feedback-templates">Feedback templates</a>
+        <a href="/app/author/cases">Cases</a>
+      </nav>
+    """
+
+
+def _scope_status_actor_fields(*, include_actor: bool = True) -> str:
+    actor = (
+        """
+        <label for="authoring_actor">Authoring actor</label>
+        <input id="authoring_actor" name="authoring_actor" value="author-1" required>
+        """
+        if include_actor
+        else ""
+    )
+    return f"""
+      <label for="ownership_scope">Ownership scope</label>
+      <select id="ownership_scope" name="ownership_scope">
+        <option value="personal">personal</option>
+        <option value="institutional">institutional</option>
+      </select>
+      <label for="status">Status</label>
+      <select id="status" name="status">
+        <option value="draft">draft</option>
+        <option value="published">published</option>
+      </select>
+      {actor}
+    """
+
+
+def _preview(preview: str) -> str:
+    if not preview:
+        return ""
+    return (
+        '<section class="preview" aria-label="Template preview">'
+        f"<h2>Preview</h2><p>{escape(preview)}</p>"
+        "</section>"
+    )
+
+
+def _notice(message: str | None, error: str | None = None) -> str:
     if error is not None:
         return f"<p role='alert' class='validation-error'>{escape(error)}</p>"
     if message is not None:
@@ -830,3 +1236,60 @@ def _author_source_label(source: SourceReference) -> str:
     if source.source_visibility == "local-only":
         return f"local-only source hidden; {source.hash_algorithm}={source.content_hash}"
     return source.stable_locator
+
+
+def _form_dict(body: bytes) -> dict[str, str]:
+    raw_form = parse_qs(body.decode(), keep_blank_values=True)
+    return {key: values[-1] for key, values in raw_form.items()}
+
+
+def _required_text(form: dict[str, str], key: str) -> str:
+    value = _optional_text(form.get(key))
+    if value is None:
+        raise ValueError(f"{key} is required")
+    return value
+
+
+def _optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _required_int(form: dict[str, str], key: str) -> int:
+    try:
+        return int(_required_text(form, key))
+    except ValueError as exc:
+        raise ValueError(f"{key} must be an integer") from exc
+
+
+def _required_float(form: dict[str, str], key: str) -> float:
+    try:
+        return float(_required_text(form, key))
+    except ValueError as exc:
+        raise ValueError(f"{key} must be a number") from exc
+
+
+def _json_object(value: str | None) -> dict[str, object]:
+    text = _optional_text(value)
+    if text is None:
+        return {}
+    parsed = loads(text)
+    if not isinstance(parsed, dict):
+        raise ValueError("JSON value must be an object")
+    return parsed
+
+
+def _json_list(value: str | None) -> list[dict[str, object]]:
+    text = _optional_text(value)
+    if text is None:
+        return []
+    parsed = loads(text)
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        raise ValueError("JSON value must be a list of objects")
+    return parsed
+
+
+def _csv_values(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
