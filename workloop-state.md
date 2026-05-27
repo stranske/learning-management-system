@@ -1,5 +1,16 @@
 # Workloop State
 
+## 2026-05-27T13:18Z - codex opener materialized issue #121 M6 acceptance gate
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#121](https://github.com/stranske/learning-management-system/issues/121), branch `codex/issue-121-author-learner-gate`.
+- Selection context: live cap-health showed 0 opener-owned open PRs after #172 merged. Cleared the stale scoped blocker for #121 because the final prerequisite (#120 / PR #172) is merged to `main`; #120 remains open only for post-merge verifier sequencing.
+- Implementation: added `tests/ui/test_m6_acceptance_gate.py`, an executable author-to-learner route gate that creates the authoring objects, publishes a prompt, submits a learner attempt, records rubric-scored feedback, creates a capability target, generates a gap analysis and maintenance plan, then verifies the learner dashboard, review queue, feedback, and capability views all show the same path.
+- Documentation: added `docs/handoff/m6-acceptance-gate.md` mapping each gate step to the route/API and assertion used for manual/demo handoff.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-lms121 uv run pytest tests/ui/test_m6_acceptance_gate.py::test_author_goal_node_prompt_rubric_and_learner_completion_path -q --no-cov` -> 1 passed; `uv run pytest tests/ui/test_m6_acceptance_gate.py tests/ui/test_m6_screenshots.py tests/ui/test_capability_gap_surface.py tests/ui/test_author_learning_objects.py -q --no-cov` -> 15 passed; `uv run ruff check tests/ui/test_m6_acceptance_gate.py` -> passed; `uv run ruff format --check tests/ui/test_m6_acceptance_gate.py` -> passed.
+- Next action: commit, push, open ready-for-review PR with `agent:codex`, `agents:keepalive`, and `autofix`; keepalive owns CI/review follow-up after PR creation.
+
 ## 2026-05-27T11:35Z - codex closer addressed PR #172 review threads
 
 - Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
