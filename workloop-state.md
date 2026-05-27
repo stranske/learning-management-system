@@ -6,6 +6,7 @@
 - Source repo: `stranske/learning-management-system`.
 - Source issue: [#110](https://github.com/stranske/learning-management-system/issues/110) `Build authoring UI for goals, graph, and prompts`.
 - Branch: `codex/issue-110-authoring-ui`.
+- PR: [#159](https://github.com/stranske/learning-management-system/pull/159) `Issue #110: Build author learning object UI`.
 - Implementation:
   - Added author index links plus `/app/author/goals`, `/app/author/knowledge`, and `/app/author/prompts` HTML routes.
   - Wired form posts to existing learner, graph, source, and prompt repository helpers.
@@ -16,7 +17,14 @@
   - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run ruff check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed.
   - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run ruff format --check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed.
   - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run mypy src/lms/ui tests/ui/test_author_learning_objects.py` -> passed; existing pyproject unused-section note only.
-- Next action: push branch, open ready-for-review PR, then let keepalive own CI/check follow-up.
+- Post-open state:
+  - Opened PR #159 as ready-for-review, non-draft, linked with `Closes #110`.
+  - Labels applied: `agent:codex`, `agents:keepalive`, `autofix`, `agent:retry`, `repo-review-approved`, `priority:normal`, `milestone:M6`.
+  - `opener-repair-infra-stalls.py` added `agent:retry` and dispatched Gate Followups after cap-health initially reported `needs-dispatch-evidence`.
+  - Fresh cap-health classified PR #159 as `draining` with an active Gate run after the repair. Direct `gh pr checks` showed some earlier checks cancelled by the rerun, with the current Gate still queued/running.
+- Fleet drain note:
+  - Manager-Database PR #1076 briefly appeared as `runner-failed` in cap-health, but direct PR checks showed Gate, Postgres integration, ruff, mypy, Python 3.12, Python 3.13, and merge state all green/clean on head `81f9a7c`.
+- Next action: keepalive owns CI/check follow-up for PR #159; closer can drain Manager-Database #1076 when it next sweeps ready PRs.
 
 ## 2026-05-27T04:20Z - opener recovered PR #145 Alembic double-head
 
