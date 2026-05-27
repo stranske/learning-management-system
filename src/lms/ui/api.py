@@ -1027,9 +1027,7 @@ def _latest_attempt_summary(session: Session, *, learner_id: str, prompt_id: str
     correctness_label = (
         "pending scoring evidence"
         if correctness is None
-        else "correct"
-        if correctness
-        else "incorrect"
+        else "correct" if correctness else "incorrect"
     )
     return (
         f"Latest evidence: confidence {_confidence_label(attempt.confidence_rating)}; "
