@@ -25,7 +25,7 @@
           </header>
           <section aria-labelledby="nodes-heading">
             <h2 id="nodes-heading">Nodes</h2>
-            <article class="graph-node" data-node-id="0f25e674-076f-4f29-bf6d-e7a6f388c0b6"><h3>Explain spacing effects</h3><p>conceptual · personal · published · manual</p><p>A representative published node for demo snapshots.</p><p data-signal="evidence-summary">1 evidence records · mastery pending</p></article>
+            <article class="graph-node" data-node-id="snapshot-id"><h3>Explain spacing effects</h3><p>conceptual · personal · published · manual</p><p>A representative published node for demo snapshots.</p><p data-signal="evidence-summary">1 evidence records · mastery pending</p></article>
             <form method="post" action="/app/author/graph/nodes" data-action="create-node">
               <input type="hidden" name="ownership_scope" value="personal">
               <label>Title <input name="title" required></label>
@@ -52,8 +52,8 @@
             <p class="empty-state">No graph edges yet.</p>
             <form method="post" action="/app/author/graph/edges" data-action="create-edge">
               <input type="hidden" name="ownership_scope" value="personal">
-              <label>Source <select name="source_node_id"><option value="0f25e674-076f-4f29-bf6d-e7a6f388c0b6">Explain spacing effects</option></select></label>
-              <label>Target <select name="target_node_id"><option value="0f25e674-076f-4f29-bf6d-e7a6f388c0b6">Explain spacing effects</option></select></label>
+              <label>Source <select name="source_node_id"><option value="snapshot-id">Explain spacing effects</option></select></label>
+              <label>Target <select name="target_node_id"><option value="snapshot-id">Explain spacing effects</option></select></label>
               <label>Type
                 <select name="edge_type">
                   <option value="prerequisite">prerequisite</option>
@@ -64,9 +64,7 @@
               </label>
               <label>Target scope
                 <select name="target_scope">
-                  <option value="personal">personal</option>
-                  <option value="personal">personal</option>
-                  <option value="institutional">institutional</option>
+                  <option value="personal" selected>personal</option><option value="institutional">institutional</option>
                 </select>
               </label>
               <label>Confidence <input name="confidence" inputmode="decimal" placeholder="0.0-1.0"></label>

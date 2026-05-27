@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 from pathlib import Path
 from types import ModuleType
 
@@ -65,6 +66,11 @@ M6_SURFACES: tuple[tuple[str, str], ...] = (
 
 FEEDBACK_DETAIL_SLUG = "feedback-detail"
 
+_UUID_PATTERN = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    flags=re.IGNORECASE,
+)
+
 # Every snapshot slug the suite is expected to produce, used as the contract for
 # the artifact-existence and viewport-metadata assertions.
 EXPECTED_SLUGS: tuple[str, ...] = tuple(slug for slug, _ in M6_SURFACES) + (FEEDBACK_DETAIL_SLUG,)
@@ -103,7 +109,7 @@ def _seed_representative_data(session: Session) -> str:
         actor_id=user.id,
         status="published",
     )
-    create_learning_goal(
+    goal = create_learning_goal(
         session,
         learner_id=_LEARNER_ID,
         title="Use spacing to retain key ideas",
@@ -125,7 +131,7 @@ def _seed_representative_data(session: Session) -> str:
     prompt = Prompt(
         id="prompt-1",
         target_node_id=node.id,
-        learning_goal_id="goal-1",
+        learning_goal_id=goal.id,
         knowledge_type="conceptual",
         intended_cognitive_action="explain",
         demand_level="medium",
@@ -273,10 +279,15 @@ def _render_surfaces(client: TestClient, session_factory: sessionmaker[Session])
     for slug, path in surfaces:
         response = client.get(path)
         assert response.status_code == 200, f"{slug} ({path}) returned {response.status_code}"
-        html = response.text
+        html = _snapshot_html(response.text)
         (SCREENSHOT_DIR / f"m6-{slug}.html").write_text(html, encoding="utf-8")
         rendered[slug] = html
     return rendered
+
+
+def _snapshot_html(html: str) -> str:
+    """Remove per-run UUID values so committed snapshots stay idempotent."""
+    return _UUID_PATTERN.sub("snapshot-id", html)
 
 
 @pytest.mark.parametrize("api_client", [True], indirect=True)

@@ -1,5 +1,15 @@
 # Workloop State
 
+## 2026-05-27T11:35Z - codex closer addressed PR #172 review threads
+
+- Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#120](https://github.com/stranske/learning-management-system/issues/120) / [#172](https://github.com/stranske/learning-management-system/pull/172), branch `claude/issue-120-html-snapshots`, head `060dd40` before this fix.
+- Batch context: opener cap pressure active; fleet discovery found only `learning-management-system#172/#120` (normal priority) and `Pension-Data#471/#470` (low priority) as open issue-linked PRs. `#172` was clean/mergeable with green checks but had three unresolved Copilot threads, so it was selected as the one complex lane rather than batch-merged.
+- Review fixes: captured the created learning goal id before seeding the prompt; normalized volatile UUIDs before writing committed M6 HTML snapshots so rerunning the snapshot tests is idempotent; changed the graph target-scope select to render `personal`/`institutional` once each with the active scope selected, then regenerated affected snapshots.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-172 uv run pytest tests/ui/test_m6_screenshots.py tests/ui/test_playwright_smoke.py tests/test_dependency_version_alignment.py -q --no-cov` -> 4 passed / 1 skipped; `uv run ruff check src/lms/ui/graph_design.py tests/ui/test_m6_screenshots.py` -> passed; `uv run ruff format --check src/lms/ui/graph_design.py tests/ui/test_m6_screenshots.py` -> passed; `git diff --check` -> clean.
+- Next action: push the review-fix commit to `claude/issue-120-html-snapshots`, post evidence, resolve the three Copilot threads, clear stale `agent:needs-attention`/`agent:retry`, then wait for fresh CI before merge.
+
 ## 2026-05-27T11:20Z - codex opener quick-recovered PR #172 dependency scanner failure
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
