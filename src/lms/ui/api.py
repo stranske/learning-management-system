@@ -44,6 +44,12 @@ from lms.learners.models import GOAL_STATUSES
 from lms.learners.repository import create_learning_goal, list_learning_goals_for_learner
 from lms.prompts.models import ANSWER_FORMS, COGNITIVE_ACTIONS, DEMAND_LEVELS, Prompt
 from lms.prompts.repository import create_prompt, list_prompts
+from lms.scheduling.models import ReviewPolicy, ReviewSchedule, SchedulerDecision
+from lms.scheduling.repository import (
+    list_review_policies,
+    list_review_schedules,
+    list_scheduler_decisions,
+)
 from lms.scheduling.service import DEFAULT_DAILY_CAP, SchedulerSettings, get_review_queue_overview
 from lms.sources.models import SourceReference
 from lms.sources.repository import list_source_references
@@ -197,13 +203,23 @@ async def submit_learn_attempt_route(request: Request, session: SessionDep) -> s
     )
 
 
+@router.get("/app/learner/reviews", response_class=HTMLResponse)
+def learner_reviews_app_route(
+    session: SessionDep,
+    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    daily_cap: Annotated[int, Query(ge=1, le=100)] = DEFAULT_DAILY_CAP,
+) -> str:
+    """Return the canonical learner review route."""
+    return _review_surface(session=session, learner_id=learner_id, daily_cap=daily_cap)
+
+
 @router.get("/app/learner/review", response_class=HTMLResponse)
 def learner_review_app_route(
     session: SessionDep,
     learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
     daily_cap: Annotated[int, Query(ge=1, le=100)] = DEFAULT_DAILY_CAP,
 ) -> str:
-    """Return the canonical learner review route."""
+    """Return the legacy learner review route for compatibility."""
     return _review_surface(session=session, learner_id=learner_id, daily_cap=daily_cap)
 
 
@@ -224,18 +240,40 @@ def _review_surface(*, session: Session, learner_id: str, daily_cap: int) -> str
         learner_id=learner_id,
         settings=SchedulerSettings(daily_cap=daily_cap),
     )
+    schedules = list_review_schedules(session, learner_id=learner_id, limit=50)
+    decisions = list_scheduler_decisions(session, learner_id=learner_id, limit=50)
+    policies = list_review_policies(session, limit=50)
     items = [
         (
             "<li class='queue-item'>"
-            f"<strong>{escape(item.reason_code)}</strong>"
+            f"<strong>{escape(item.reason_code)} - {escape(_queue_status_label(item.status))}</strong>"
             f"<span>{escape(item.reason_explanation)}</span>"
-            f"<small>node {escape(item.knowledge_node_id)}; priority {item.priority:.2f}</small>"
+            f"<small>Due {escape(_date_label(item.due_at))}; "
+            f"node {escape(item.knowledge_node_id)}; priority {item.priority:.2f}</small>"
+            f"{_attempt_link(item.source_attempt_id)}"
             "</li>"
         )
         for item in overview.items
     ]
     if not items:
-        items.append("<li class='queue-item empty'>No due review items.</li>")
+        blocked_total = sum(
+            1 for schedule in schedules if schedule.reason_code == "blocked-prerequisite"
+        )
+        empty_text = (
+            "All review items are blocked by prerequisites."
+            if blocked_total
+            else "No due review items."
+        )
+        items.append(f"<li class='queue-item empty'>{escape(empty_text)}</li>")
+    schedule_items = [_review_schedule_item(schedule) for schedule in schedules]
+    if not schedule_items:
+        schedule_items.append("<li class='queue-item empty'>No durable review schedules.</li>")
+    decision_items = [_scheduler_decision_item(decision) for decision in decisions]
+    if not decision_items:
+        decision_items.append("<li class='queue-item empty'>No scheduler decisions recorded.</li>")
+    policy_items = [_review_policy_item(policy) for policy in policies]
+    if not policy_items:
+        policy_items.append("<li class='queue-item empty'>No active review policies.</li>")
 
     return render_page(
         "Review",
@@ -255,16 +293,88 @@ def _review_surface(*, session: Session, learner_id: str, daily_cap: int) -> str
             <h2 id="queue-heading">Reason codes</h2>
             <ul class="review-queue">{"".join(items)}</ul>
           </section>
+          <section aria-labelledby="schedule-heading">
+            <h2 id="schedule-heading">Schedule detail</h2>
+            <ul class="review-queue">{"".join(schedule_items)}</ul>
+          </section>
+          <section aria-labelledby="decision-heading">
+            <h2 id="decision-heading">Scheduler decisions</h2>
+            <ul class="review-queue">{"".join(decision_items)}</ul>
+          </section>
+          <section aria-labelledby="policy-heading">
+            <h2 id="policy-heading">Review policy</h2>
+            <ul class="review-queue">{"".join(policy_items)}</ul>
+          </section>
           <section aria-labelledby="controls-heading">
             <h2 id="controls-heading">Review controls</h2>
-            <button type="button" data-action="pause-review">Pause review</button>
-            <button type="button" data-action="mark-stale">Mark stale</button>
-            <button type="button" data-action="resume-review">Resume</button>
+            <button type="button" data-action="pause-review" disabled>Pause review</button>
+            <button type="button" data-action="mark-stale" disabled>Mark stale</button>
+            <button type="button" data-action="resume-review" disabled>Resume</button>
           </section>
         </main>
         """,
         active_path="/app/learner",
     )
+
+
+def _review_schedule_item(schedule: ReviewSchedule) -> str:
+    return (
+        "<li class='queue-item'>"
+        f"<strong>{escape(schedule.reason_code)} - {escape(schedule.schedule_state)}</strong>"
+        f"<span>Due {escape(_date_label(schedule.due_at))}; "
+        f"policy {escape(schedule.policy_version)}</span>"
+        f"<small>node {escape(schedule.knowledge_node_id)}"
+        f"{_optional_detail('type', schedule.knowledge_type)}"
+        f"{_optional_detail('scope', schedule.ownership_scope)}</small>"
+        "</li>"
+    )
+
+
+def _scheduler_decision_item(decision: SchedulerDecision) -> str:
+    return (
+        "<li class='queue-item'>"
+        f"<strong>{escape(decision.reason_code)}</strong>"
+        f"<span>{escape(decision.decision_rationale)}</span>"
+        f"<small>policy {escape(decision.policy_version)}; "
+        f"node {escape(decision.knowledge_node_id)}"
+        f"{_optional_detail('support', decision.support_level)}</small>"
+        "</li>"
+    )
+
+
+def _review_policy_item(policy: ReviewPolicy) -> str:
+    setting_bits = ", ".join(f"{key}: {value}" for key, value in sorted(policy.settings.items()))
+    setting_text = setting_bits or "No custom settings"
+    return (
+        "<li class='queue-item'>"
+        f"<strong>{escape(policy.name)}</strong>"
+        f"<span>{escape(policy.reason_code)}; version {escape(policy.policy_version)}</span>"
+        f"<small>{escape(setting_text)}</small>"
+        "</li>"
+    )
+
+
+def _attempt_link(attempt_id: str | None) -> str:
+    if attempt_id is None:
+        return ""
+    return f'<a href="/app/learner?attempt_id={escape(attempt_id)}">Open attempt</a>'
+
+
+def _optional_detail(label: str, value: str | None) -> str:
+    return f"; {escape(label)} {escape(value)}" if value else ""
+
+
+def _queue_status_label(status: str) -> str:
+    if status == "pending":
+        return "available"
+    if status == "blocked":
+        return "blocked"
+    return status
+
+
+def _date_label(value: object) -> str:
+    isoformat = getattr(value, "isoformat", None)
+    return isoformat(timespec="minutes") if callable(isoformat) else str(value)
 
 
 @router.get("/app/author", response_class=HTMLResponse)

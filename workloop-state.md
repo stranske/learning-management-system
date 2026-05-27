@@ -12,6 +12,28 @@
 - Validation before push: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run pytest tests/ui/test_author_feedback_cases.py tests/ui/test_author_learning_objects.py tests/ui/test_app_shell.py -q --no-cov` -> 10 passed; `uv run ruff check src/lms/ui/api.py tests/ui/test_author_feedback_cases.py tests/ui/test_author_learning_objects.py tests/ui/conftest.py` -> passed; `uv run ruff format --check ...` -> passed after formatting; `uv run mypy src/lms/ui/api.py tests/ui/test_author_feedback_cases.py tests/ui/test_author_learning_objects.py` -> passed with the existing pyproject unused-section note only.
 - Next action: push the rebased head to #161, remove stale `agent:retry`, then wait for fresh GitHub checks before merge/apply `verify:compare`/sequence #111.
 
+## 2026-05-27T06:19:12Z - opener materialized issue #113 review schedule UI
+
+- Automation: `pd-workloop-resume` (codex opener lane).
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#113](https://github.com/stranske/learning-management-system/issues/113) `Build review schedule UI`.
+- Branch: `codex/issue-113-review-schedule-ui`.
+- Implementation:
+  - Added canonical `/app/learner/reviews` route while preserving `/app/learner/review` and `/review` compatibility.
+  - Expanded the review surface with queue due/status metadata, durable schedule detail, scheduler-decision rationales, active review policy settings, disabled controls for unsupported pause/stale/resume writes, and attempt links when a queue item has source attempt context.
+  - Added empty and blocked-prerequisite states without changing scheduler algorithms or persistence.
+  - Added `tests/ui/test_review_schedule_surface.py` for populated schedule/decision/policy rendering and empty/blocked states.
+- Validation:
+  - `uv run pytest tests/ui/test_review_schedule_surface.py tests/ui/test_review_surface.py -q --no-cov` -> 4 passed.
+  - `uv run ruff check src/lms/ui/api.py tests/ui/test_review_schedule_surface.py tests/ui/test_review_surface.py` -> passed.
+  - `uv run ruff format --check src/lms/ui/api.py tests/ui/test_review_schedule_surface.py tests/ui/test_review_surface.py` -> passed.
+  - `uv run mypy src/lms/ui/api.py tests/ui/test_review_schedule_surface.py` -> passed; existing pyproject unused-section note only.
+- Fleet notes:
+  - Cap-health before selection: raw cap 2/5; LMS #161 and #162 draining/active-moving, no non-drainable blocker.
+  - Closed accidentally materialized duplicate `stranske/trip-planner#1238` after proving #1235/#1236 already implemented the approved high-priority queue item.
+  - `stranske/Manager-Database#1075/#1076` already completed/merged; `stranske/Workflows#2159/#2161` already merged but source issue remains open for closer/verifier disposition.
+- Next action: commit, push, open a ready-for-review PR with `agent:codex`, `agents:keepalive`, `autofix`, `repo-review-approved`, `priority:normal`, and `milestone:M6`.
+
 ## 2026-05-27T05:28:53Z - closer addressed PR #159 review threads
 
 - Automation: `imi-merge-verify-closer` (codex closer lane).
