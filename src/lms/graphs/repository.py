@@ -267,8 +267,7 @@ def create_knowledge_edge(
         raise ValueError("knowledge edge cannot point to its own source node")
     if scope != target_scope and not is_graph_reference:
         raise ValueError(
-            "cross-scope edges require is_graph_reference=True for "
-            "personal/institutional linkage"
+            "cross-scope edges require is_graph_reference=True for personal/institutional linkage"
         )
     if confidence is not None and not 0.0 <= confidence <= 1.0:
         raise ValueError("confidence must be between 0.0 and 1.0 (inclusive)")
@@ -347,6 +346,40 @@ def list_knowledge_edges(
         statement = statement.where(KnowledgeEdge.target_node_id == target_node_id)
     statement = statement.order_by(KnowledgeEdge.created_at.desc(), KnowledgeEdge.id).limit(limit)
     return list(session.scalars(statement))
+
+
+def update_knowledge_edge(
+    session: Session,
+    edge: KnowledgeEdge,
+    *,
+    actor_id: str,
+    source_subsystem: str = "api",
+    **changes: Any,
+) -> KnowledgeEdge:
+    """Update mutable edge fields and record one audit event."""
+    before = _edge_summary(edge)
+    for field, value in changes.items():
+        if value is None:
+            continue
+        if field == "edge_type":
+            _require_choice(value, EDGE_TYPES, "edge type")
+        elif field == "status":
+            _require_choice(value, EDGE_STATUSES, "status")
+        elif field == "confidence" and not 0.0 <= value <= 1.0:
+            raise ValueError("confidence must be between 0.0 and 1.0 (inclusive)")
+        setattr(edge, field, value)
+    session.flush()
+    record_audit_event(
+        session,
+        actor_id=actor_id,
+        action="update",
+        entity_type="KnowledgeEdge",
+        entity_id=edge.id,
+        source_subsystem=source_subsystem,
+        before_summary=before,
+        after_summary=_edge_summary(edge),
+    )
+    return edge
 
 
 def delete_knowledge_edge(

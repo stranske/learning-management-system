@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -81,6 +82,7 @@ def test_support_dashboard_shows_reasoned_support_signals_without_rankings(
         assert phrase not in lowered
 
 
+@pytest.mark.parametrize("api_client", [True], indirect=True)
 def test_admin_dashboard_shows_users_audit_and_health_state(
     api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
@@ -120,6 +122,7 @@ def test_admin_dashboard_shows_users_audit_and_health_state(
     assert 'href="/app/admin" aria-current="page"' in html
 
 
+@pytest.mark.parametrize("api_client", [True], indirect=True)
 def test_support_and_admin_dashboards_have_empty_states(
     api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
@@ -133,3 +136,35 @@ def test_support_and_admin_dashboards_have_empty_states(
     assert "No support signals" in support.text
     assert "No users" in admin.text
     assert "No audit events" in admin.text
+
+
+def test_admin_dashboard_hides_user_management_without_local_identity(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """Admin stays reachable but must not advertise unmounted identity routes.
+
+    With ``enable_local_identity_routes`` disabled (the default), the Users
+    section and the create-user link are hidden, while the audit/health state
+    remains available.
+    """
+    client, session_factory = api_client
+    with session_factory() as session:
+        session.add(
+            User(
+                username="hidden-hank",
+                display_name="Hank Hidden",
+                email="hank@example.test",
+            )
+        )
+        session.commit()
+
+    response = client.get("/app/admin")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "<h1>Admin</h1>" in html
+    assert "Create user API" not in html
+    assert "Hank Hidden" not in html
+    assert "Local identity routes disabled" in html
+    assert "Health: ok" in html
+    assert "Mapped table count" in html

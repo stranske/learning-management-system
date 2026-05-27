@@ -1,5 +1,18 @@
 # Workloop State
 
+## 2026-05-27T10:00Z - claude closer resolved PR #169 conflicts and review threads
+
+- Automation: `imi-merge-verify-closer` (claude_code closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#119](https://github.com/stranske/learning-management-system/issues/119) / [#169](https://github.com/stranske/learning-management-system/pull/169) `Build support and admin inspection dashboards`.
+- Branch: `codex/issue-119-support-admin-dashboards`; detached worktree `~/.codex/automations/imi-merge-verify-closer/worktrees/lms-pr169-conflict-20260527T1000Z` from PR head `b043075`.
+- Batch context: closed #118 after PR #168 durable PASS/PASS provider verification; deferred #112/#113/#115 non-PASS verifier audits and selected #169 as the one complex lane (highest-priority live open PR blocker; #471 is low-priority).
+- Conflict resolution: merged current `origin/main` (`0d02f68`, the #168 merge) into PR head `b043075`. `src/lms/main.py` auto-merged cleanly (kept all six UI routers); only `workloop-state.md` conflicted and was resolved by preserving append-only histories from both sides.
+- Review fixes (3 Copilot threads): (1) admin route no longer advertises local-identity user management when `enable_local_identity_routes` is disabled — the Users section + `/auth/users` create-user link are now content-gated via `request.app.state.enable_local_identity_routes` (kept the route reachable because the shared shell nav links `/app/admin` and `test_app_shell` asserts it resolves). (2) admin user query now bounded with `.limit(100)`. (3) the open-feedback-action query (and the sibling evidence/estimate/maintenance/review support-signal queries) now use deterministic `.order_by(created_at.desc(), id.desc())` so the `limit(100)` window is stable rather than arbitrary.
+- Test changes: `tests/ui/conftest.py` `api_client` now accepts an indirect `enable_local_identity_routes` param (default False). The two admin tests run with it True; added `test_admin_dashboard_hides_user_management_without_local_identity` covering the gated-off case (admin still 200, no Users/create-user link, audit/health present).
+- Validation (`UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-169`): `uv run pytest tests/ui/test_support_admin_surfaces.py -q --no-cov` -> 4 passed; `uv run pytest tests/ui/ -q --no-cov` -> 58 passed; `uv run ruff check` on touched files -> passed; `uv run ruff format --check` -> already formatted; `uv run mypy src/lms/ui/support_admin.py src/lms/main.py tests/ui/test_support_admin_surfaces.py tests/ui/conftest.py` -> success with existing pyproject unused-section note only.
+- Next action: push merge/review-fix commit to PR #169, resolve the three Copilot threads, remove stale `agent:retry`, then wait for fresh Gate/CI before merge.
+
 ## 2026-05-27T09:11Z - codex opener materialized issue #119 support/admin dashboards
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
@@ -13,6 +26,50 @@
 - Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-lms119 uv run pytest tests/ui/test_support_admin_surfaces.py -q --no-cov` -> 3 passed; `uv run pytest tests/ui/ -q --no-cov` -> 46 passed after rebasing onto `origin/main` `ab795fb`; `ruff check` and `ruff format --check` on touched files passed; `mypy src/lms/ui/support_admin.py src/lms/ui/api.py src/lms/main.py tests/ui/test_support_admin_surfaces.py` passed with the existing pyproject unused-section note only.
 - PR: opened #169 non-draft with `Closes #119`, labels `agent:codex`, `agents:keepalive`, `autofix`, `repo-review-approved`, `priority:normal`, and `milestone:M6`; emitted `pr_opened active.source_repo=stranske/learning-management-system active.source_issue=119 active.source_pr=169 active.next_action=wait_for_keepalive`.
 - Next action: keepalive/Gate own CI and follow-up repair; opener should not duplicate #119.
+
+## 2026-05-27T09:28Z - codex closer resolved PR #168 conflicts and review threads
+
+- Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#118](https://github.com/stranske/learning-management-system/issues/118) / [#168](https://github.com/stranske/learning-management-system/pull/168) `Build capability and gap-analysis UI`.
+- Branch: `claude/issue-118-capability-gap-ui`; worktree `~/.codex/automations/imi-merge-verify-closer/worktrees/lms-pr168-reviewfix-20260527T0921Z`.
+- Batch context: closed #117 after PR #167 received durable PASS/PASS provider verification; emitted `issue_closed` for #117. Deferred #112/#113/#115 non-PASS verifier audits and selected #168 as the oldest normal-priority dirty issue-linked PR.
+- Conflict resolution: merged current `origin/main` (`a8ed6f0`) into PR head `e8f7286`; kept all five UI routers registered in `src/lms/main.py` (attempt flow, capability gap, learner feedback, graph design, LLM study) and preserved append-only `workloop-state.md` histories.
+- Review fixes: capability UI now calls repository/service helpers directly with explicit commit/rollback instead of FastAPI route handlers; `confidence_threshold=0.0` is preserved instead of defaulting to `0.8`; gap-analysis and maintenance-plan actions render from the created analysis/plan `target_id`; node and competency title rendering now batches lookups with `IN` queries.
+- Regression coverage: `tests/ui/test_capability_gap_surface.py` now covers zero confidence thresholds and tampered gap-analysis form target ids.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-168 uv run pytest tests/ui/test_capability_gap_surface.py -q --no-cov` -> 6 passed; `UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-168 uv run pytest tests/ui/ -q --no-cov` -> 54 passed; `uv run ruff check src/lms/ui/capability_gap.py tests/ui/test_capability_gap_surface.py src/lms/main.py` -> passed; `uv run ruff format --check ...` -> passed; `uv run mypy src/lms/ui/capability_gap.py src/lms/main.py tests/ui/test_capability_gap_surface.py` -> success with existing pyproject unused-section note only.
+- Next action: push merge/review-fix commit to PR #168, resolve the six Copilot threads, remove stale `agent:retry`, then wait for fresh Gate/CI before merge.
+
+## 2026-05-27T08:50Z - claude opener materialized issue #118 (capability & gap-analysis UI)
+
+- Automation: `pd-workloop-resume` (claude opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#118](https://github.com/stranske/learning-management-system/issues/118) / new PR `Build capability and gap-analysis UI`.
+- Branch: `claude/issue-118-capability-gap-ui` (isolated worktree `/private/tmp/lms-issue-118-claude` off `origin/main` `797b717`).
+- Selection: raw opener cap 3/5 (drainable after infra repair); scoped blocker #121 excluded; #115/#116/#117 linked to open PRs #165/#166/#167; Workflows #2159 fix already merged via #2161 (closer disposition). Oldest opener-actionable issue = normal-tier M6 surface #118.
+- Implementation: added `src/lms/ui/capability_gap.py` (`/app/learner/capability` overview + per-target detail, consuming `lms.capability.api`), registered in `src/lms/main.py`. Personal-scope-only target create form (node/competency selection); recompute-estimate action with evidence breakdown + weak/missing-evidence flags; gap-analysis creation grouped by missing evidence / weak mastery / stale / support dependence / transfer need; maintenance-plan creation with scheduled steps linking to the review queue and attempt flow. Cautious present-tense "current evidence" language; no institutional/manager/certification controls.
+- Tests: `tests/ui/test_capability_gap_surface.py` (4) including the two named acceptance tests plus institutional-controls-absent and empty-state coverage.
+- Validation before push: `uv run pytest tests/ui/test_capability_gap_surface.py -q --no-cov` -> 4 passed; `uv run pytest tests/ui/ -q --no-cov` -> 37 passed; `ruff check` + `ruff format --check` on touched files -> passed; `uv run mypy src/lms/ui/capability_gap.py src/lms/main.py` -> passed (existing pyproject unused-section note only).
+- Next action: open ready-for-review PR with `agent:claude` + `agents:keepalive` + `autofix`, emit `pr_opened`, hand to keepalive for CI; do not wait for CI.
+
+## 2026-05-27T08:14Z - opener materialized issue #117 graph design UI
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#117](https://github.com/stranske/learning-management-system/issues/117) `Build graph design and testing view`.
+- Branch: `codex/issue-117-graph-design-view`.
+- Worktree: `~/.codex/automations/pd-workloop-resume/worktrees/lms-issue-117`.
+- Cap/drain context before selection: raw opener cap 3/5; cap-health showed #164 draining with active Gate evidence, #165 draining despite merge-conflict state with newer Autofix context evidence, and #166 needing dispatch evidence. `opener-repair-infra-stalls.py` added `agent:retry` and dispatched Gate Followups for #166; direct PR checks then showed fresh Health/Verifier/Autofix evidence on #166. Scoped blocker #121 remained excluded.
+- Implementation: added a dedicated `src/lms/ui/graph_design.py` surface at `/app/author/graph` plus node, edge, and proposal approval/rejection form routes. The surface lists nodes and typed edges with ownership scope, graph-reference markers, confidence, status, provenance, evidence counts, optional learner mastery summaries, empty states, and pending LLM proposal review controls. Cross-scope normal edge creation stays blocked through the existing graph repository contract.
+- Validation:
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-lms117 uv run pytest tests/ui/test_graph_design_surface.py -q --no-cov` -> 4 passed.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-lms117 uv run pytest tests/ui/ -q --no-cov` -> 26 passed.
+  - `uv run ruff check src/lms/ui/graph_design.py src/lms/main.py tests/ui/test_graph_design_surface.py` -> passed.
+  - `uv run ruff format --check src/lms/ui/graph_design.py src/lms/main.py tests/ui/test_graph_design_surface.py` -> passed.
+  - `uv run mypy src/lms/ui/graph_design.py src/lms/main.py tests/ui/test_graph_design_surface.py` -> passed with the existing pyproject unused-section note only.
+- Post-open: pushed commit `8f3ca2f` and opened ready-for-review PR [#167](https://github.com/stranske/learning-management-system/pull/167) with `agent:codex`, `agents:keepalive`, `autofix`, `repo-review-approved`, `priority:normal`, and `milestone:M6`. Emitted `pr_opened active.source_repo=stranske/learning-management-system active.source_issue=117 active.source_pr=167 active.next_action=wait_for_keepalive`.
+- Post-open repair: `opener-repair-infra-stalls.py` added `agent:retry` to #167 and dispatched Gate Followups. Direct checks showed fresh Gate/Gate Followups evidence on #167 (`Evaluate keepalive loop`, `Prepare autofix context`, `gate`, and fresh Python CI jobs after the repair). Keepalive owns #167 check follow-up from here.
+- Remaining cap hygiene note: cap-health at `2026-05-27T08:07:46Z` showed raw cap 4/5 and #167 `draining`; #166 remained `needs-dispatch-evidence` in the helper. Direct #166 checks show non-draft `claude/issue-116-llm-study-ui`, labels `agent:claude`/`agents:keepalive`/`autofix`/`agent:retry`, `mergeStateStatus=DIRTY`, `mergeable=CONFLICTING`, and no fresh Gate Followups evidence after the repair dispatch. This is a targeted drain/recovery candidate for the next closer/health pass, not a blocker to the already-opened #117 PR.
 
 ## 2026-05-27T07:46Z - opener materialized issue #116 LLM study UI (claude lane)
 

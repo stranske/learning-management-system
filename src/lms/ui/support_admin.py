@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from html import escape
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -70,9 +70,15 @@ def support_dashboard_route(session: SessionDep) -> str:
 
 
 @router.get("/app/admin", response_class=HTMLResponse)
-def admin_dashboard_route(session: SessionDep) -> str:
-    """Return the read-only admin inspection dashboard."""
-    users = session.scalars(select(User).order_by(User.created_at.desc(), User.username)).all()
+def admin_dashboard_route(request: Request, session: SessionDep) -> str:
+    """Return the read-only admin inspection dashboard.
+
+    Local user management is surfaced by ``src/lms/auth/api.py`` (the local
+    identity routes). When those routes are disabled the Users section and the
+    create-user link are hidden so the admin surface never advertises identity
+    management that is not actually mounted.
+    """
+    local_identity = bool(getattr(request.app.state, "enable_local_identity_routes", False))
     audit_events = session.scalars(
         select(AuditLog).order_by(AuditLog.occurred_at.desc(), AuditLog.id.desc()).limit(25)
     ).all()
@@ -86,11 +92,7 @@ def admin_dashboard_route(session: SessionDep) -> str:
             <h1>Admin</h1>
             <p>User, audit, permission-label, and health state for the local prototype.</p>
           </header>
-          <section aria-labelledby="users-heading">
-            <h2 id="users-heading">Users</h2>
-            <p><a href="/auth/users">Create user API</a></p>
-            {_user_list(users)}
-          </section>
+          {_users_section(session, local_identity)}
           <section aria-labelledby="audit-heading">
             <h2 id="audit-heading">Audit events</h2>
             {_audit_event_list(audit_events)}
@@ -123,7 +125,10 @@ def _support_signals(session: Session) -> list[SupportSignal]:
         return signals[learner_id]
 
     feedback_actions = session.scalars(
-        select(FeedbackAction).where(FeedbackAction.status == "open").limit(100)
+        select(FeedbackAction)
+        .where(FeedbackAction.status == "open")
+        .order_by(FeedbackAction.created_at.desc(), FeedbackAction.id.desc())
+        .limit(100)
     ).all()
     for action in feedback_actions:
         signal = signal_for(action.learner_id)
@@ -132,7 +137,11 @@ def _support_signals(session: Session) -> list[SupportSignal]:
         if action.instructions:
             signal.next_actions.append(action.instructions)
 
-    evidence_records = session.scalars(select(EvidenceRecord).limit(100)).all()
+    evidence_records = session.scalars(
+        select(EvidenceRecord)
+        .order_by(EvidenceRecord.created_at.desc(), EvidenceRecord.id.desc())
+        .limit(100)
+    ).all()
     for record in evidence_records:
         supported = record.support_level != "none" or record.hint_used or record.reference_accessed
         low_confidence = record.confidence_rating is not None and record.confidence_rating <= 2
@@ -152,7 +161,11 @@ def _support_signals(session: Session) -> list[SupportSignal]:
                 "Review the recent evidence and choose a low-stakes next task."
             )
 
-    estimates = session.scalars(select(CapabilityEstimate).limit(100)).all()
+    estimates = session.scalars(
+        select(CapabilityEstimate)
+        .order_by(CapabilityEstimate.created_at.desc(), CapabilityEstimate.id.desc())
+        .limit(100)
+    ).all()
     for estimate in estimates:
         if estimate.confidence < 0.6 or estimate.current_score < 0.5:
             signal = signal_for(estimate.learner_id)
@@ -166,7 +179,10 @@ def _support_signals(session: Session) -> list[SupportSignal]:
             signal.next_actions.append("Collect another evidence point before changing the plan.")
 
     maintenance_plans = session.scalars(
-        select(MaintenancePlan).where(MaintenancePlan.status == "active").limit(100)
+        select(MaintenancePlan)
+        .where(MaintenancePlan.status == "active")
+        .order_by(MaintenancePlan.created_at.desc(), MaintenancePlan.id.desc())
+        .limit(100)
     ).all()
     for plan in maintenance_plans:
         blocked_steps = [
@@ -181,7 +197,10 @@ def _support_signals(session: Session) -> list[SupportSignal]:
             signal.next_actions.append("Unblock the smallest maintenance step first.")
 
     review_items = session.scalars(
-        select(ReviewQueueItem).where(ReviewQueueItem.reason_code == "stale").limit(100)
+        select(ReviewQueueItem)
+        .where(ReviewQueueItem.reason_code == "stale")
+        .order_by(ReviewQueueItem.created_at.desc(), ReviewQueueItem.id.desc())
+        .limit(100)
     ).all()
     for item in review_items:
         signal = signal_for(item.learner_id)
@@ -212,6 +231,30 @@ def _support_signal_list(signals: list[SupportSignal]) -> str:
             """
         )
     return '<section aria-label="Support signals">' + "".join(cards) + "</section>"
+
+
+def _users_section(session: Session, local_identity: bool) -> str:
+    if not local_identity:
+        return (
+            '<section aria-labelledby="users-heading">'
+            '<h2 id="users-heading">Users</h2>'
+            + empty_state(
+                "Local identity routes disabled",
+                "User records and the create-user API are only available when "
+                "local identity routes are enabled.",
+            )
+            + "</section>"
+        )
+    users = session.scalars(
+        select(User).order_by(User.created_at.desc(), User.username).limit(100)
+    ).all()
+    return (
+        '<section aria-labelledby="users-heading">'
+        '<h2 id="users-heading">Users</h2>'
+        '<p><a href="/auth/users">Create user API</a></p>'
+        f"{_user_list(users)}"
+        "</section>"
+    )
 
 
 def _user_list(users: Sequence[User]) -> str:
