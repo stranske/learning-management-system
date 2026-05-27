@@ -1,5 +1,17 @@
 # Workloop State
 
+## 2026-05-27T06:02:40Z - codex closer rebased PR #161 after #159 merge
+
+- Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#111](https://github.com/stranske/learning-management-system/issues/111) `Build authoring UI for rubrics, templates, and cases`.
+- Branch/PR: `codex/issue-111-author-feedback-cases`, [#161](https://github.com/stranske/learning-management-system/pull/161).
+- Batch context: #159/#110 has `verify:compare` but no durable Provider Comparison Report yet, so #110 remains open; no safe sweep closures or label-only terminal actions were available. Scoped blocker #121 remains excluded.
+- Complex lane action: PR #161 was green on required checks and had zero review threads, but direct GraphQL showed `mergeStateStatus=DIRTY` / `mergeable=CONFLICTING` after PR #159 merged. Created detached automation worktree `~/.codex/automations/imi-merge-verify-closer/worktrees/lms-pr161-conflictfix`, rebased `origin/codex/issue-111-author-feedback-cases` onto `origin/main` (`74de9c1`), and resolved conflicts in `src/lms/ui/api.py` plus `workloop-state.md`.
+- Conflict resolution: kept #110 goals/knowledge/prompts authoring routes and server-owned author identity/local-only source redaction, added #111 rubrics/feedback-template/cases routes and helpers, and updated the author landing/navigation to expose all six authoring tools.
+- Validation before push: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run pytest tests/ui/test_author_feedback_cases.py tests/ui/test_author_learning_objects.py tests/ui/test_app_shell.py -q --no-cov` -> 10 passed; `uv run ruff check src/lms/ui/api.py tests/ui/test_author_feedback_cases.py tests/ui/test_author_learning_objects.py tests/ui/conftest.py` -> passed; `uv run ruff format --check ...` -> passed after formatting; `uv run mypy src/lms/ui/api.py tests/ui/test_author_feedback_cases.py tests/ui/test_author_learning_objects.py` -> passed with the existing pyproject unused-section note only.
+- Next action: push the rebased head to #161, remove stale `agent:retry`, then wait for fresh GitHub checks before merge/apply `verify:compare`/sequence #111.
+
 ## 2026-05-27T05:28:53Z - closer addressed PR #159 review threads
 
 - Automation: `imi-merge-verify-closer` (codex closer lane).
@@ -22,6 +34,19 @@
   - `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run mypy src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed; existing pyproject unused-section note only.
 - Next action: push the review-thread fix commit to #159, post evidence, resolve the three Copilot review threads, then wait for rerun checks before merge.
 
+## 2026-05-27T05:32Z - opener materialized issue #111 author feedback/cases UI
+
+- Automation: `pd-workloop-resume` (codex opener lane).
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#111](https://github.com/stranske/learning-management-system/issues/111) `Build authoring UI for rubrics, templates, and cases`.
+- PR: [#161](https://github.com/stranske/learning-management-system/pull/161) `Issue #111: Build authoring UI for rubrics, templates, and cases`.
+- Branch: `codex/issue-111-author-feedback-cases`.
+- Worktree: `~/.codex/automations/pd-workloop-resume/worktrees/lms-issue-111`.
+- Implementation: added `/app/author/rubrics`, `/app/author/feedback-templates`, and `/app/author/cases` HTML authoring routes; wired durable feedback and case repositories; added shared authoring navigation and responsive styling; added UI tests for rubric/template/case creation, template preview rendering, terminology, and mobile shell markup.
+- Validation: `uv run pytest tests/ui/test_author_feedback_cases.py tests/ui/test_app_shell.py -q --no-cov` -> 5 passed; `uv run pytest tests/ui -q --no-cov` -> 12 passed; `uv run ruff check src/lms/ui/api.py tests/ui/test_author_feedback_cases.py tests/ui/conftest.py` -> passed; `uv run mypy src/lms/ui/api.py tests/ui/test_author_feedback_cases.py` -> passed.
+- Post-open state: opened ready-for-review PR #161 with `agent:codex`, `agents:keepalive`, `autofix`, `repo-review-approved`, `priority:normal`, and `milestone:M6`; opener relay event `pr_opened active.source_repo=stranske/learning-management-system active.source_issue=111 active.source_pr=161 active.next_action=wait_for_keepalive`; post-open infra repair added `agent:retry` and dispatched Gate Followups.
+- Next action at that time: keepalive owned CI/check follow-up for PR #161.
+
 ## 2026-05-27T05:12Z - opener materialized issue #110 authoring UI
 
 - Automation: `pd-workloop-resume` (codex opener lane).
@@ -29,24 +54,9 @@
 - Source issue: [#110](https://github.com/stranske/learning-management-system/issues/110) `Build authoring UI for goals, graph, and prompts`.
 - Branch: `codex/issue-110-authoring-ui`.
 - PR: [#159](https://github.com/stranske/learning-management-system/pull/159) `Issue #110: Build author learning object UI`.
-- Implementation:
-  - Added author index links plus `/app/author/goals`, `/app/author/knowledge`, and `/app/author/prompts` HTML routes.
-  - Wired form posts to existing learner, graph, source, and prompt repository helpers.
-  - Preserved ownership-scope controls, published-node prompt gating, source drift/provenance display, and cross-scope edge validation feedback.
-  - Added `tests/ui/test_author_learning_objects.py` for create goal/node/edge/prompt flow and cross-scope normal-edge rejection.
-- Validation:
-  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run pytest tests/ui/test_author_learning_objects.py tests/ui/test_app_shell.py -q --no-cov` -> 4 passed.
-  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run ruff check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed.
-  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run ruff format --check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed.
-  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run mypy src/lms/ui tests/ui/test_author_learning_objects.py` -> passed; existing pyproject unused-section note only.
-- Post-open state:
-  - Opened PR #159 as ready-for-review, non-draft, linked with `Closes #110`.
-  - Labels applied: `agent:codex`, `agents:keepalive`, `autofix`, `agent:retry`, `repo-review-approved`, `priority:normal`, `milestone:M6`.
-  - `opener-repair-infra-stalls.py` added `agent:retry` and dispatched Gate Followups after cap-health initially reported `needs-dispatch-evidence`.
-  - Fresh cap-health classified PR #159 as `draining` with an active Gate run after the repair. Direct `gh pr checks` showed some earlier checks cancelled by the rerun, with the current Gate still queued/running.
-- Fleet drain note:
-  - Manager-Database PR #1076 briefly appeared as `runner-failed` in cap-health, but direct PR checks showed Gate, Postgres integration, ruff, mypy, Python 3.12, Python 3.13, and merge state all green/clean on head `81f9a7c`.
-- Next action: keepalive owns CI/check follow-up for PR #159; closer can drain Manager-Database #1076 when it next sweeps ready PRs.
+- Implementation: added author index links plus `/app/author/goals`, `/app/author/knowledge`, and `/app/author/prompts` HTML routes; wired form posts to existing learner, graph, source, and prompt repository helpers; preserved ownership-scope controls, published-node prompt gating, source drift/provenance display, and cross-scope edge validation feedback.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run pytest tests/ui/test_author_learning_objects.py tests/ui/test_app_shell.py -q --no-cov` -> 4 passed; `ruff check` / `ruff format --check` / focused `mypy` passed.
+- Post-open state: opened PR #159 as ready-for-review, non-draft, linked with `Closes #110`; labels included `agent:codex`, `agents:keepalive`, `autofix`, `agent:retry`, `repo-review-approved`, `priority:normal`, `milestone:M6`.
 
 ## 2026-05-27T04:20Z - opener recovered PR #145 Alembic double-head
 
