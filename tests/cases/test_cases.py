@@ -128,4 +128,3 @@ def test_decision_point_links_to_case_step_and_evidence_packet(db_session: Sessi
             prompt="This should fail.",
             decision_type="single-choice",
         )
-

@@ -64,4 +64,3 @@ class CompetencyEvidenceRead(BaseModel):
     contribution_weight: float
     evidence_role: str
     created_at: datetime
-

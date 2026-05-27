@@ -11,12 +11,15 @@ from sqlalchemy.orm import Session, selectinload
 from lms.cases.models import (
     CASE_STATUSES,
     DECISION_POINT_TYPES,
+    WORK_PRODUCT_STATUSES,
+    WORK_PRODUCT_SUBMISSION_TYPES,
     Case,
     CaseStep,
     DecisionPoint,
     EvidencePacket,
+    WorkProduct,
 )
-from lms.feedback.models import Rubric
+from lms.feedback.models import RevisionRequest, Rubric, RubricScore
 from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeNode
 from lms.sources.models import SourceReference
 
@@ -115,7 +118,9 @@ def add_case_step(
     case = get_case(session, case_id)
     if case is None:
         raise ValueError("case was not found")
-    _require_unique_orders([{"step_order": step.step_order} for step in case.steps] + [{"step_order": step_order}])
+    _require_unique_orders(
+        [{"step_order": step.step_order} for step in case.steps] + [{"step_order": step_order}]
+    )
     step = CaseStep(
         case_id=case_id,
         step_order=step_order,
@@ -242,6 +247,235 @@ def serialize_decision_point(point: DecisionPoint) -> dict[str, object]:
     }
 
 
+def create_work_product(
+    session: Session,
+    *,
+    case_id: str,
+    learner_id: str,
+    submission_type: str,
+    case_step_id: str | None = None,
+    rubric_id: str | None = None,
+    prompt_id: str | None = None,
+    body: str | None = None,
+    artifact_ref: str | None = None,
+    status: str = "submitted",
+) -> WorkProduct:
+    """Record a learner work product submitted for a transfer case."""
+    _require_submission_type(submission_type)
+    _require_work_product_status(status)
+    if status not in ("draft", "submitted"):
+        raise ValueError("work product status on create must be draft or submitted")
+    if body is None and artifact_ref is None:
+        raise ValueError("work product must include a body or an artifact_ref")
+    case = get_case(session, case_id)
+    if case is None:
+        raise ValueError("case was not found")
+    if case_step_id is not None:
+        step = session.get(CaseStep, case_step_id)
+        if step is None or step.case_id != case_id:
+            raise ValueError("case step must belong to the work product case")
+    if rubric_id is not None:
+        rubric = session.get(Rubric, rubric_id)
+        if rubric is None or rubric.ownership_scope != case.ownership_scope:
+            raise ValueError("rubric must exist and match the case ownership_scope")
+    work_product = WorkProduct(
+        case_id=case_id,
+        learner_id=learner_id,
+        submission_type=submission_type,
+        case_step_id=case_step_id,
+        rubric_id=rubric_id,
+        prompt_id=prompt_id,
+        body=body,
+        artifact_ref=artifact_ref,
+        status=status,
+    )
+    session.add(work_product)
+    session.flush()
+    return work_product
+
+
+def get_work_product(session: Session, work_product_id: str) -> WorkProduct | None:
+    """Return one work product by id."""
+    return session.get(WorkProduct, work_product_id)
+
+
+def list_work_products(
+    session: Session,
+    *,
+    case_id: str | None = None,
+    learner_id: str | None = None,
+    case_step_id: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> Sequence[WorkProduct]:
+    """List work products with common case and learner filters."""
+    statement = select(WorkProduct)
+    if case_id is not None:
+        statement = statement.where(WorkProduct.case_id == case_id)
+    if learner_id is not None:
+        statement = statement.where(WorkProduct.learner_id == learner_id)
+    if case_step_id is not None:
+        statement = statement.where(WorkProduct.case_step_id == case_step_id)
+    if status is not None:
+        _require_work_product_status(status)
+        statement = statement.where(WorkProduct.status == status)
+    statement = statement.order_by(WorkProduct.submitted_at.desc(), WorkProduct.id).limit(limit)
+    return list(session.scalars(statement))
+
+
+def score_work_product(
+    session: Session,
+    work_product: WorkProduct,
+    *,
+    scorer_type: str,
+    criterion_scores: list[dict[str, Any]],
+    raw_score: float,
+    max_score: float,
+    normalized_score: float | None = None,
+    scorer_id: str | None = None,
+    scorer_version: str | None = None,
+    knowledge_node_id: str | None = None,
+    transfer_distance: str = "case-transfer",
+    validity_scope: str | None = None,
+    score_metadata: dict[str, Any] | None = None,
+) -> RubricScore:
+    """Score a work product against its rubric and capture transfer evidence.
+
+    Reuses the attempt/feedback/rubric-score/evidence stack: the submission is
+    recorded as an attempt so a ``RubricScore`` can anchor to it, and a transfer
+    ``EvidenceRecord`` carries the ``transfer_distance`` and case-scoped validity.
+    """
+    rubric_id = work_product.rubric_id
+    if rubric_id is None:
+        raise ValueError("work product requires a linked rubric to score")
+    case = get_case(session, work_product.case_id)
+    if case is None:
+        raise ValueError("case was not found")
+    resolved_node_id = knowledge_node_id or case.knowledge_node_id
+    if resolved_node_id is None:
+        rubric = session.get(Rubric, rubric_id)
+        resolved_node_id = rubric.knowledge_node_id if rubric is not None else None
+    if resolved_node_id is None:
+        raise ValueError(
+            "scoring a work product requires a knowledge node from the case, rubric, "
+            "or an explicit knowledge_node_id"
+        )
+    if max_score <= 0:
+        raise ValueError("max_score must be positive")
+    if raw_score < 0:
+        raise ValueError("raw_score must be non-negative")
+    computed_normalized = (
+        normalized_score if normalized_score is not None else raw_score / max_score
+    )
+    if not 0.0 <= computed_normalized <= 1.0:
+        raise ValueError("normalized_score must be within the unit interval")
+
+    # Local imports mirror the lazy cross-module repository pattern and avoid cycles.
+    from lms.evidence.repository import create_attempt, create_evidence_record
+    from lms.feedback.repository import create_rubric_score
+
+    prompt_context = work_product.prompt_id or work_product.case_step_id or work_product.case_id
+    response_text = work_product.body or f"[artifact] {work_product.artifact_ref}"
+    attempt = create_attempt(
+        session,
+        learner_id=work_product.learner_id,
+        prompt_id=prompt_context,
+        response_text=response_text,
+        feedback={
+            "goal": "Score the transfer-case work product against its rubric.",
+            "next_action": "Review the transfer evidence and decide on a revision.",
+        },
+    )
+    scope_value = validity_scope or f"transfer-case:{work_product.case_id}"
+    evidence = create_evidence_record(
+        session,
+        learner_id=work_product.learner_id,
+        knowledge_node_id=resolved_node_id,
+        attempt_id=attempt.id,
+        prompt_id=attempt.prompt_id,
+        evidence_kind="observed",
+        transfer_distance=transfer_distance,
+        validity_scope=scope_value,
+        raw_score=raw_score,
+        normalized_score=computed_normalized,
+        max_score=max_score,
+        answer_artifact_ref=work_product.artifact_ref,
+        scorer_metadata={"source": "work-product", "work_product_id": work_product.id},
+    )
+    score = create_rubric_score(
+        session,
+        rubric_id=rubric_id,
+        attempt_id=attempt.id,
+        learner_id=work_product.learner_id,
+        scorer_type=scorer_type,
+        raw_score=raw_score,
+        normalized_score=computed_normalized,
+        max_score=max_score,
+        criterion_scores=criterion_scores,
+        scorer_id=scorer_id,
+        scorer_version=scorer_version,
+        evidence_record_id=evidence.id,
+        score_metadata=score_metadata,
+    )
+    work_product.rubric_score_id = score.id
+    work_product.status = "scored"
+    session.flush()
+    return score
+
+
+def request_work_product_revision(
+    session: Session,
+    work_product: WorkProduct,
+    *,
+    feedback_record_id: str | None = None,
+    feedback_action_id: str | None = None,
+) -> RevisionRequest:
+    """Open a revision request for a work product from case feedback."""
+    # Local import mirrors the lazy cross-module repository pattern and avoids cycles.
+    from lms.feedback.repository import create_revision_request
+
+    request = create_revision_request(
+        session,
+        learner_id=work_product.learner_id,
+        feedback_record_id=feedback_record_id,
+        feedback_action_id=feedback_action_id,
+        work_product_id=work_product.id,
+    )
+    session.flush()
+    return request
+
+
+def serialize_work_product(work_product: WorkProduct) -> dict[str, object]:
+    """Return a response-ready work product payload."""
+    return {
+        "id": work_product.id,
+        "case_id": work_product.case_id,
+        "case_step_id": work_product.case_step_id,
+        "learner_id": work_product.learner_id,
+        "rubric_id": work_product.rubric_id,
+        "prompt_id": work_product.prompt_id,
+        "submission_type": work_product.submission_type,
+        "body": work_product.body,
+        "artifact_ref": work_product.artifact_ref,
+        "status": work_product.status,
+        "rubric_score_id": work_product.rubric_score_id,
+        "revision_request_id": work_product.revision_request_id,
+        "submitted_at": work_product.submitted_at,
+        "created_at": work_product.created_at,
+        "updated_at": work_product.updated_at,
+    }
+
+
+def _require_submission_type(submission_type: str) -> None:
+    if submission_type not in WORK_PRODUCT_SUBMISSION_TYPES:
+        raise ValueError(f"unknown work product submission type {submission_type!r}")
+
+
+def _require_work_product_status(status: str) -> None:
+    if status not in WORK_PRODUCT_STATUSES:
+        raise ValueError(f"unknown work product status {status!r}")
+
+
 def _require_scope(scope: str) -> None:
     if scope not in OWNERSHIP_SCOPES:
         raise ValueError(f"unknown ownership scope {scope!r}")
@@ -270,7 +504,10 @@ def _validate_case_links(
 
 
 def _require_source_reference(session: Session, source_reference_id: str | None) -> None:
-    if source_reference_id is not None and session.get(SourceReference, source_reference_id) is None:
+    if (
+        source_reference_id is not None
+        and session.get(SourceReference, source_reference_id) is None
+    ):
         raise ValueError("source reference was not found")
 
 

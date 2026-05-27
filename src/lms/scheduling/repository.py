@@ -109,12 +109,16 @@ def get_or_create_review_policy(
     statement = select(ReviewPolicy).where(
         ReviewPolicy.reason_code == reason_code,
         ReviewPolicy.policy_version == policy_version,
-        ReviewPolicy.knowledge_type.is_(knowledge_type)
-        if knowledge_type is None
-        else ReviewPolicy.knowledge_type == knowledge_type,
-        ReviewPolicy.ownership_scope.is_(ownership_scope)
-        if ownership_scope is None
-        else ReviewPolicy.ownership_scope == ownership_scope,
+        (
+            ReviewPolicy.knowledge_type.is_(knowledge_type)
+            if knowledge_type is None
+            else ReviewPolicy.knowledge_type == knowledge_type
+        ),
+        (
+            ReviewPolicy.ownership_scope.is_(ownership_scope)
+            if ownership_scope is None
+            else ReviewPolicy.ownership_scope == ownership_scope
+        ),
         ReviewPolicy.is_active.is_(True),
     )
     existing = session.scalar(statement)
@@ -289,7 +293,9 @@ def create_remediation_trigger(
 ) -> RemediationTrigger:
     """Persist one active remediation trigger rule."""
     if ownership_scope not in OWNERSHIP_SCOPES:
-        raise ValueError(f"unknown ownership scope {ownership_scope!r}; expected one of {OWNERSHIP_SCOPES}")
+        raise ValueError(
+            f"unknown ownership scope {ownership_scope!r}; expected one of {OWNERSHIP_SCOPES}"
+        )
     node = session.get(KnowledgeNode, knowledge_node_id)
     if node is None:
         raise ValueError("referenced knowledge node was not found")

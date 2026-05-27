@@ -122,9 +122,11 @@ def score_attempt_with_rubric(
             learner_id=attempt.learner_id,
             attempt_id=attempt.id,
             prompt_id=attempt.prompt_id,
-            action_type="prerequisite-remediation"
-            if normalized_score < remediation_threshold
-            else "revision",
+            action_type=(
+                "prerequisite-remediation"
+                if normalized_score < remediation_threshold
+                else "revision"
+            ),
             title="Revise the attempt using rubric feedback",
             instructions=_lowest_scored_gap(normalized_scores),
             action_metadata={

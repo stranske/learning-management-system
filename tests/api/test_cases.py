@@ -119,4 +119,3 @@ def test_case_route_rejects_cross_scope_rubric(db_session: Session) -> None:
 
     assert response.status_code == 422
     assert "rubric must exist and match" in response.json()["detail"]
-
