@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from lms.evidence.schemas import AttemptEvidenceCreate
+
 FeedbackLevel = Literal["affirmation", "coaching", "remediation", "review"]
 FeedbackActionType = Literal[
     "retry",
@@ -73,6 +75,61 @@ class FeedbackActionRead(FeedbackActionCreate):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+RevisionRequestStatus = Literal["open", "submitted", "accepted", "closed", "superseded"]
+RevisionOutcome = Literal["accepted", "closed"]
+
+
+class RevisionRequestCreate(BaseModel):
+    """Input for opening a revision request from feedback."""
+
+    learner_id: str = Field(min_length=1, max_length=36)
+    feedback_record_id: str | None = Field(default=None, min_length=1, max_length=36)
+    feedback_action_id: str | None = Field(default=None, min_length=1, max_length=36)
+    prompt_id: str | None = Field(default=None, min_length=1, max_length=36)
+    original_attempt_id: str | None = Field(default=None, min_length=1, max_length=36)
+    work_product_id: str | None = Field(default=None, min_length=1, max_length=36)
+
+
+class RevisionRequestSubmit(BaseModel):
+    """Input for submitting a revised response against an open request."""
+
+    response_text: str = Field(min_length=1)
+    response_metadata: dict[str, object] | None = None
+    confidence_rating: int | None = Field(default=None, ge=1, le=5)
+    feedback: dict[str, object] | None = None
+    evidence: AttemptEvidenceCreate | None = None
+
+
+class RevisionRequestResolve(BaseModel):
+    """Input for accepting or closing a revision request."""
+
+    outcome: RevisionOutcome
+    result_note: str | None = None
+
+
+class RevisionRequestRead(BaseModel):
+    """Serializable revision request with its loop state and links."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    learner_id: str
+    feedback_record_id: str | None
+    feedback_action_id: str | None
+    prompt_id: str | None
+    original_attempt_id: str | None
+    revised_attempt_id: str | None
+    work_product_id: str | None
+    status: RevisionRequestStatus
+    result_note: str | None
+    scheduler_hook: dict[str, object] | None
+    requested_at: datetime
+    submitted_at: datetime | None
+    resolved_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

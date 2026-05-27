@@ -18,6 +18,7 @@ from lms.feedback.repository import (
     create_hint,
     create_misconception_pattern,
     create_model_answer,
+    create_revision_request,
     create_rubric,
     create_rubric_criterion,
     get_feedback_action,
@@ -25,6 +26,7 @@ from lms.feedback.repository import (
     get_feedback_template,
     get_hint,
     get_model_answer,
+    get_revision_request,
     get_rubric,
     get_rubric_criterion,
     get_rubric_score,
@@ -35,12 +37,15 @@ from lms.feedback.repository import (
     list_hints,
     list_misconception_patterns,
     list_model_answers,
+    list_revision_requests,
     list_rubric_criteria,
     list_rubric_scores,
     list_rubrics,
     render_feedback_template,
+    resolve_revision_request,
     reveal_hint,
     reveal_model_answer,
+    submit_revision_request,
     update_rubric,
     update_rubric_criterion,
 )
@@ -67,6 +72,11 @@ from lms.feedback.schemas import (
     ModelAnswerSummaryRead,
     OwnershipScope,
     RevealInitiator,
+    RevisionRequestCreate,
+    RevisionRequestRead,
+    RevisionRequestResolve,
+    RevisionRequestStatus,
+    RevisionRequestSubmit,
     RubricCreate,
     RubricCriterionCreate,
     RubricCriterionRead,
@@ -200,6 +210,140 @@ def get_feedback_action_route(feedback_action_id: str, session: SessionDep) -> F
             status_code=status.HTTP_404_NOT_FOUND, detail="Feedback action not found."
         )
     return FeedbackActionRead.model_validate(action)
+
+
+@router.post(
+    "/revision-requests",
+    response_model=RevisionRequestRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_revision_request_route(
+    payload: RevisionRequestCreate, session: SessionDep
+) -> RevisionRequestRead:
+    """Open a revision request from a feedback record and/or revision action."""
+    data = payload.model_dump()
+    if (
+        data.get("feedback_record_id") is not None
+        and get_feedback_record(session, data["feedback_record_id"]) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Referenced feedback record not found.",
+        )
+    if (
+        data.get("feedback_action_id") is not None
+        and get_feedback_action(session, data["feedback_action_id"]) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Referenced feedback action not found.",
+        )
+    try:
+        request = create_revision_request(session, **data)
+        session.commit()
+        session.refresh(request)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return RevisionRequestRead.model_validate(request)
+
+
+@router.get("/revision-requests", response_model=list[RevisionRequestRead])
+def list_revision_requests_route(
+    session: SessionDep,
+    learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    feedback_record_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    revision_status: Annotated[RevisionRequestStatus | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[RevisionRequestRead]:
+    """Return revision requests with learner, feedback, prompt, and status filters."""
+    requests = list_revision_requests(
+        session,
+        learner_id=learner_id,
+        feedback_record_id=feedback_record_id,
+        prompt_id=prompt_id,
+        status=revision_status,
+        limit=limit,
+    )
+    return [RevisionRequestRead.model_validate(request) for request in requests]
+
+
+@router.get("/revision-requests/{revision_request_id}", response_model=RevisionRequestRead)
+def get_revision_request_route(
+    revision_request_id: str, session: SessionDep
+) -> RevisionRequestRead:
+    """Return one revision request."""
+    request = get_revision_request(session, revision_request_id)
+    if request is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Revision request not found."
+        )
+    return RevisionRequestRead.model_validate(request)
+
+
+@router.post("/revision-requests/{revision_request_id}/submit", response_model=RevisionRequestRead)
+def submit_revision_request_route(
+    revision_request_id: str,
+    payload: RevisionRequestSubmit,
+    session: SessionDep,
+) -> RevisionRequestRead:
+    """Submit a revised response and record a standard attempt for the request."""
+    request = get_revision_request(session, revision_request_id)
+    if request is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Revision request not found."
+        )
+    try:
+        submit_revision_request(session, request, **payload.model_dump())
+        session.commit()
+        session.refresh(request)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return RevisionRequestRead.model_validate(request)
+
+
+@router.post("/revision-requests/{revision_request_id}/resolve", response_model=RevisionRequestRead)
+def resolve_revision_request_route(
+    revision_request_id: str,
+    payload: RevisionRequestResolve,
+    session: SessionDep,
+) -> RevisionRequestRead:
+    """Accept or close a revision request and stage deferred scheduling metadata."""
+    request = get_revision_request(session, revision_request_id)
+    if request is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Revision request not found."
+        )
+    try:
+        resolve_revision_request(session, request, **payload.model_dump())
+        session.commit()
+        session.refresh(request)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return RevisionRequestRead.model_validate(request)
+
+
+@router.get(
+    "/feedback/{feedback_record_id}/revision-requests",
+    response_model=list[RevisionRequestRead],
+)
+def list_feedback_revision_requests_route(
+    feedback_record_id: str, session: SessionDep
+) -> list[RevisionRequestRead]:
+    """Return revision requests for a feedback record so completion is visible from feedback."""
+    if get_feedback_record(session, feedback_record_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found.")
+    requests = list_revision_requests(session, feedback_record_id=feedback_record_id)
+    return [RevisionRequestRead.model_validate(request) for request in requests]
 
 
 @router.post(

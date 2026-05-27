@@ -40,6 +40,13 @@ FEEDBACK_ACTION_TYPES: tuple[str, ...] = (
     "author-review",
 )
 FEEDBACK_ACTION_STATUSES: tuple[str, ...] = ("open", "in-progress", "completed", "dismissed")
+REVISION_REQUEST_STATUSES: tuple[str, ...] = (
+    "open",
+    "submitted",
+    "accepted",
+    "closed",
+    "superseded",
+)
 RUBRIC_STATUSES: tuple[str, ...] = ("draft", "published", "archived")
 RUBRIC_CRITERION_STATUSES: tuple[str, ...] = ("active", "archived")
 MISCONCEPTION_ACTION_TYPES: tuple[str, ...] = FEEDBACK_ACTION_TYPES
@@ -603,3 +610,77 @@ class RubricScore(Base):
     )
 
     rubric: Mapped[Rubric] = relationship("Rubric")
+
+
+class RevisionRequest(Base):
+    """A learner request-to-revised-submission loop opened from feedback."""
+
+    __tablename__ = "revision_requests"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({_sql_values(REVISION_REQUEST_STATUSES)})",
+            name="revision_request_status_valid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    learner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    feedback_record_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("feedback_records.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    feedback_action_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("feedback_actions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    prompt_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    original_attempt_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("attempts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    revised_attempt_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("attempts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Plain string placeholder until a WorkProduct table exists; no FK yet.
+    work_product_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="open",
+        server_default=text("'open'"),
+        index=True,
+    )
+    result_note: Mapped[str | None] = mapped_column(Text)
+    scheduler_hook: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+        nullable=False,
+    )

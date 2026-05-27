@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from lms.auth.models import utc_now
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.models import (
     FeedbackAction,
@@ -20,6 +21,7 @@ from lms.feedback.models import (
     MisconceptionPattern,
     ModelAnswer,
     ModelAnswerReveal,
+    RevisionRequest,
     Rubric,
     RubricCriterion,
     RubricScore,
@@ -205,6 +207,217 @@ def list_feedback_actions(
     if status is not None:
         statement = statement.where(FeedbackAction.status == status)
     statement = statement.order_by(FeedbackAction.created_at.desc(), FeedbackAction.id).limit(limit)
+    return list(session.scalars(statement))
+
+
+_REVISION_REQUEST_TRANSITIONS: dict[str, frozenset[str]] = {
+    "open": frozenset({"submitted", "closed", "superseded"}),
+    "submitted": frozenset({"accepted", "closed", "superseded"}),
+    "accepted": frozenset(),
+    "closed": frozenset(),
+    "superseded": frozenset(),
+}
+
+
+def _coalesce_revision_link(
+    field_name: str, current: str | None, incoming: str | None
+) -> str | None:
+    """Return the shared revision link value, rejecting inconsistent references."""
+    if current is not None and incoming is not None and current != incoming:
+        raise ValueError(f"revision request {field_name} must match linked feedback context")
+    return current or incoming
+
+
+def _require_revision_transition(request: RevisionRequest, target: str) -> None:
+    """Raise when a revision request cannot move into ``target``."""
+    if target not in _REVISION_REQUEST_TRANSITIONS.get(request.status, frozenset()):
+        raise ValueError(
+            f"cannot transition revision request from '{request.status}' to '{target}'"
+        )
+
+
+def _revision_scheduler_hook(request: RevisionRequest, outcome: str) -> dict[str, Any]:
+    """Build deferred review/remediation scheduling metadata for a resolution."""
+    reason_code = "due-review" if outcome == "accepted" else "remediation"
+    trigger = "revision-accepted" if outcome == "accepted" else "revision-failed"
+    return {
+        "source": "revision-request",
+        "reason_code": reason_code,
+        "trigger": trigger,
+        "learner_id": request.learner_id,
+        "prompt_id": request.prompt_id,
+        "revision_request_id": request.id,
+    }
+
+
+def create_revision_request(
+    session: Session,
+    *,
+    learner_id: str,
+    feedback_record_id: str | None = None,
+    feedback_action_id: str | None = None,
+    prompt_id: str | None = None,
+    original_attempt_id: str | None = None,
+    work_product_id: str | None = None,
+) -> RevisionRequest:
+    """Open a revision request from a feedback record and/or revision action."""
+    if (
+        feedback_record_id is None
+        and feedback_action_id is None
+        and work_product_id is None
+        and (prompt_id is None or original_attempt_id is None)
+    ):
+        raise ValueError(
+            "revision request must link to feedback, a feedback action, a work product, "
+            "or an original prompt attempt"
+        )
+
+    if feedback_record_id is not None:
+        record = get_feedback_record(session, feedback_record_id)
+        if record is None:
+            raise ValueError("referenced feedback record was not found")
+        if record.learner_id != learner_id:
+            raise ValueError("revision request learner must match the feedback record learner")
+        prompt_id = _coalesce_revision_link("prompt id", prompt_id, record.prompt_id)
+        original_attempt_id = _coalesce_revision_link(
+            "original attempt id", original_attempt_id, record.attempt_id
+        )
+
+    action: FeedbackAction | None = None
+    if feedback_action_id is not None:
+        action = get_feedback_action(session, feedback_action_id)
+        if action is None:
+            raise ValueError("referenced feedback action was not found")
+        if action.action_type != "revision":
+            raise ValueError("linked feedback action must be a revision action")
+        if action.learner_id != learner_id:
+            raise ValueError("revision request learner must match the feedback action learner")
+        if (
+            feedback_record_id is not None
+            and action.feedback_record_id is not None
+            and action.feedback_record_id != feedback_record_id
+        ):
+            raise ValueError("feedback action must belong to the linked feedback record")
+        prompt_id = _coalesce_revision_link("prompt id", prompt_id, action.prompt_id)
+        original_attempt_id = _coalesce_revision_link(
+            "original attempt id", original_attempt_id, action.attempt_id
+        )
+
+    if feedback_record_id is not None:
+        for prior in list_revision_requests(
+            session,
+            feedback_record_id=feedback_record_id,
+            statuses=("open", "submitted"),
+            limit=None,
+        ):
+            prior.status = "superseded"
+            prior.resolved_at = utc_now()
+
+    request = RevisionRequest(
+        learner_id=learner_id,
+        feedback_record_id=feedback_record_id,
+        feedback_action_id=feedback_action_id,
+        prompt_id=prompt_id,
+        original_attempt_id=original_attempt_id,
+        work_product_id=work_product_id,
+        status="open",
+    )
+    session.add(request)
+    session.flush()
+    if action is not None:
+        action.status = "in-progress"
+        session.flush()
+    return request
+
+
+def submit_revision_request(
+    session: Session,
+    request: RevisionRequest,
+    *,
+    response_text: str,
+    response_metadata: dict[str, Any] | None = None,
+    confidence_rating: int | None = None,
+    feedback: dict[str, Any] | None = None,
+    evidence: dict[str, Any] | None = None,
+) -> RevisionRequest:
+    """Record a revised attempt for a request and move it to ``submitted``."""
+    _require_revision_transition(request, "submitted")
+    if request.prompt_id is None:
+        raise ValueError("a prompt id is required to submit a prompt revision")
+    # Local import mirrors evidence.repository's lazy feedback import and avoids a cycle.
+    from lms.evidence.repository import create_attempt
+
+    attempt = create_attempt(
+        session,
+        learner_id=request.learner_id,
+        prompt_id=request.prompt_id,
+        response_text=response_text,
+        feedback=feedback
+        or {"goal": "Revise after feedback", "next_action": "Review the revised response"},
+        response_metadata=response_metadata,
+        confidence_rating=confidence_rating,
+        evidence=evidence,
+    )
+    request.revised_attempt_id = attempt.id
+    request.status = "submitted"
+    request.submitted_at = utc_now()
+    session.flush()
+    return request
+
+
+def resolve_revision_request(
+    session: Session,
+    request: RevisionRequest,
+    *,
+    outcome: str,
+    result_note: str | None = None,
+) -> RevisionRequest:
+    """Accept or close a revision request and stage deferred scheduling metadata."""
+    if outcome not in ("accepted", "closed"):
+        raise ValueError("revision outcome must be 'accepted' or 'closed'")
+    _require_revision_transition(request, outcome)
+    request.status = outcome
+    request.result_note = result_note
+    request.resolved_at = utc_now()
+    request.scheduler_hook = _revision_scheduler_hook(request, outcome)
+    if request.feedback_action_id is not None:
+        action = get_feedback_action(session, request.feedback_action_id)
+        if action is not None:
+            action.status = "completed" if outcome == "accepted" else "dismissed"
+    session.flush()
+    return request
+
+
+def get_revision_request(session: Session, revision_request_id: str) -> RevisionRequest | None:
+    """Return one revision request by id."""
+    return session.get(RevisionRequest, revision_request_id)
+
+
+def list_revision_requests(
+    session: Session,
+    *,
+    learner_id: str | None = None,
+    feedback_record_id: str | None = None,
+    prompt_id: str | None = None,
+    status: str | None = None,
+    statuses: Sequence[str] | None = None,
+    limit: int | None = 100,
+) -> Sequence[RevisionRequest]:
+    """List revision requests with common loop filters."""
+    statement = select(RevisionRequest)
+    if learner_id is not None:
+        statement = statement.where(RevisionRequest.learner_id == learner_id)
+    if feedback_record_id is not None:
+        statement = statement.where(RevisionRequest.feedback_record_id == feedback_record_id)
+    if prompt_id is not None:
+        statement = statement.where(RevisionRequest.prompt_id == prompt_id)
+    if status is not None:
+        statement = statement.where(RevisionRequest.status == status)
+    if statuses is not None:
+        statement = statement.where(RevisionRequest.status.in_(tuple(statuses)))
+    statement = statement.order_by(RevisionRequest.requested_at.desc(), RevisionRequest.id)
+    if limit is not None:
+        statement = statement.limit(limit)
     return list(session.scalars(statement))
 
 

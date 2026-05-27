@@ -120,3 +120,5 @@ def test_openapi_schema_includes_feedback_routes(db_session: Session) -> None:
 
     assert "/feedback" in schema["paths"]
     assert "/feedback-actions" in schema["paths"]
+    assert "/revision-requests" in schema["paths"]
+    assert "/feedback/{feedback_record_id}/revision-requests" in schema["paths"]
