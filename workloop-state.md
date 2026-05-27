@@ -1,5 +1,16 @@
 # Workloop State
 
+## 2026-05-27T10:10Z - keepalive completed issue #107 tasks
+
+- Automation: `pd-workloop-resume` (claude keepalive lane).
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#107](https://github.com/stranske/learning-management-system/issues/107) / [#171](https://github.com/stranske/learning-management-system/pull/171).
+- All 4 PR tasks confirmed implemented by commit `604b2cb`: `ResearchScan`/`EvidenceReview` schemas, validator cross-reference checks, seed YAML, CLI counts.
+- Improvement: strengthened `test_cli_validates_registry` to assert `"research scans"` and `"evidence reviews"` in CLI output, directly verifying task 4's "reports scan/review counts" requirement (was only checking `"research registry valid:"`).
+- Validation: `pytest tests/research_registry/ --no-cov` -> 11 passed; `ruff check`/`ruff format --check` clean.
+- Commit: `1f96197` pushed to `claude/issue-107-research-registry-reviews`.
+- Next action: keepalive owns Gate/CI follow-up; closer owns post-merge verifier disposition.
+
 ## 2026-05-27T09:55Z - claude opener materialized issue #107 (research registry reviews)
 
 - Automation: `pd-workloop-resume` (claude opener lane) from the neutral Code workspace.
