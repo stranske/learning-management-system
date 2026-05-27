@@ -28,6 +28,7 @@ from lms.ui.api import router as learner_ui_router
 from lms.ui.attempts import router as attempt_flow_router
 from lms.ui.feedback import router as learner_feedback_ui_router
 from lms.ui.llm_study import router as llm_study_ui_router
+from lms.ui.support_admin import router as support_admin_ui_router
 
 
 def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
@@ -68,6 +69,7 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     app.include_router(attempt_flow_router)
     app.include_router(learner_feedback_ui_router)
     app.include_router(llm_study_ui_router)
+    app.include_router(support_admin_ui_router)
     static_path = files("lms.ui.static")
     app.mount("/static/ui", StaticFiles(directory=str(static_path)), name="ui-static")
     return app

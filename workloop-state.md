@@ -1,5 +1,19 @@
 # Workloop State
 
+## 2026-05-27T09:11Z - codex opener materialized issue #119 support/admin dashboards
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#119](https://github.com/stranske/learning-management-system/issues/119) / [#169](https://github.com/stranske/learning-management-system/pull/169) `Build support and admin inspection dashboards`.
+- Branch/worktree: `codex/issue-119-support-admin-dashboards` in `~/.codex/automations/pd-workloop-resume/worktrees/lms-issue-119`.
+- Cap/drain preflight: repaired #168 by adding `agent:retry` and dispatching Gate Followups; post-repair cap-health showed #166/#167/#168 draining, raw cap 3/5. Direct sweep classified #166 active-moving with Python CI pending, #167 green but dirty/closer-owned, and #168 freshly moving after repair.
+- Queue disposition: stale trip-planner approved queue item was already implemented by merged PR #1236 / closed issue #1235; duplicate issue #1239 was closed with evidence, then opener continued to LMS #119 as the oldest unlinked normal-priority implementation issue outside the scoped #121 blocker.
+- Implementation: added `src/lms/ui/support_admin.py` with read-only `/app/support` and `/app/admin` routes. Support groups existing feedback actions, evidence support/low-confidence signals, capability estimates, maintenance-plan blockers, and stale review items by learner with reasons, uncertainty, sensitivity, and recommended next actions. Admin lists local users, audit events, local auth/create-user link, personal-scope permission placeholders, app health/version, and mapped table count. Removed the previous support/admin shell stubs from `src/lms/ui/api.py` and registered the new router in `src/lms/main.py`.
+- Tests: added `tests/ui/test_support_admin_surfaces.py` covering reasoned support signals without rankings, admin user/audit/health inspection, and empty states.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-lms119 uv run pytest tests/ui/test_support_admin_surfaces.py -q --no-cov` -> 3 passed; `uv run pytest tests/ui/ -q --no-cov` -> 46 passed after rebasing onto `origin/main` `ab795fb`; `ruff check` and `ruff format --check` on touched files passed; `mypy src/lms/ui/support_admin.py src/lms/ui/api.py src/lms/main.py tests/ui/test_support_admin_surfaces.py` passed with the existing pyproject unused-section note only.
+- PR: opened #169 non-draft with `Closes #119`, labels `agent:codex`, `agents:keepalive`, `autofix`, `repo-review-approved`, `priority:normal`, and `milestone:M6`; emitted `pr_opened active.source_repo=stranske/learning-management-system active.source_issue=119 active.source_pr=169 active.next_action=wait_for_keepalive`.
+- Next action: keepalive/Gate own CI and follow-up repair; opener should not duplicate #119.
+
 ## 2026-05-27T07:46Z - opener materialized issue #116 LLM study UI (claude lane)
 
 - Automation: `pd-workloop-resume` (Claude Code opener lane) from the neutral Code workspace.
