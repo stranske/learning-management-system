@@ -1,5 +1,17 @@
 # Workloop State
 
+## 2026-05-27T07:46Z - opener materialized issue #116 LLM study UI (claude lane)
+
+- Automation: `pd-workloop-resume` (Claude Code opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#116](https://github.com/stranske/learning-management-system/issues/116) `Polish LLM study session UI` (priority:normal, repo-review-approved, milestone:M6).
+- Branch: `claude/issue-116-llm-study-ui` (isolated worktree `/private/tmp/lms-issue-116-claude` off `origin/main` `bab2d52`).
+- Selection: opener cap was 3/5 drainable (helper repaired stale blocking labels on #163/#165 first; all opener-owned LMS PRs `draining`). Oldest unlinked normal-tier candidate after excluding linked #112-#115, fix-merged Workflows #2159, and scoped-blocked #121.
+- Implementation: added isolated `src/lms/ui/llm_study.py` router (registered in `src/lms/main.py`) to avoid `api.py` conflict churn with sibling PRs #163/#164/#165. Routes: `GET /app/learner/llm-study` (start form + trace-handling note), `POST /app/learner/llm-study/sessions` (formative study-coach/practice turn rendering trace class, model identity, cost summary, policy decision, and `unverified` flags), and `POST /app/learner/llm-study/sessions/{id}/trace-control` (keep/forget). Reuses `lms.llm.api` handlers as the service layer; no core client/wrapper changes. Surfaces budget-kill-switch, source-constraint, ephemeral-keep, and not-found error states; never renders retained transcript bodies.
+- Tests: `tests/ui/test_llm_study_surface.py` (7 tests) covering trace/cost/model display, forget control + DB effect, uncited->`unverified`, formative/ephemeral trace-handling doc, unknown-session error, and ephemeral keep rejection.
+- Validation: `uv run pytest tests/ui/ -q --no-cov` -> 27 passed; `ruff check` -> passed; `ruff format` -> applied; `mypy src/lms/ui/llm_study.py src/lms/main.py` -> passed with the existing pyproject unused-section note only.
+- Next action: push branch, open ready-for-review PR `Closes #116` with `agent:claude` + `agents:keepalive` + `autofix`, emit `issue`/`pr_opened` relay events, then hand to keepalive.
+
 ## 2026-05-27T08:33Z - codex closer resolved PR #165 merge conflicts
 
 - Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
