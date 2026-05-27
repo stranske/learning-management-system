@@ -30,6 +30,7 @@ from lms.ui.capability_gap import router as capability_ui_router
 from lms.ui.feedback import router as learner_feedback_ui_router
 from lms.ui.graph_design import router as graph_design_ui_router
 from lms.ui.llm_study import router as llm_study_ui_router
+from lms.ui.support_admin import router as support_admin_ui_router
 
 
 def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
@@ -47,6 +48,7 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     )
     if enable_local_identity_routes is None:
         enable_local_identity_routes = get_settings().enable_local_identity_routes
+    app.state.enable_local_identity_routes = enable_local_identity_routes
 
     if enable_local_identity_routes:
         app.include_router(auth_router)
@@ -72,6 +74,7 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     app.include_router(learner_feedback_ui_router)
     app.include_router(graph_design_ui_router)
     app.include_router(llm_study_ui_router)
+    app.include_router(support_admin_ui_router)
     static_path = files("lms.ui.static")
     app.mount("/static/ui", StaticFiles(directory=str(static_path)), name="ui-static")
     return app

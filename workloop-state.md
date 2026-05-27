@@ -1,5 +1,17 @@
 # Workloop State
 
+## 2026-05-27T10:24Z - codex closer resolved PR #171 conflict and review thread
+
+- Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#107](https://github.com/stranske/learning-management-system/issues/107) / [#171](https://github.com/stranske/learning-management-system/pull/171) `Extend research registry with scan and evidence-review YAML`.
+- Branch: `claude/issue-107-research-registry-reviews`; detached worktree `~/.codex/automations/imi-merge-verify-closer/worktrees/lms-pr171-conflict-20260527T1024Z` from PR head `76f8adf`.
+- Batch context: merged key PR #169/#119, applied `verify:compare`, reopened #119 for verifier sequencing, cleared key PR pressure, and cleared scoped blocker #120 because support/admin routes are now on `main`.
+- Conflict resolution: merged current `origin/main` (`2e4b0b6`, the #169 merge) into PR head. Code files from the support/admin merge applied cleanly; only `workloop-state.md` conflicted and was resolved by preserving both append-only histories.
+- Review fix: clarified `validate-research-registry --registry-dir` help text so `research-scans.yml` and `evidence-reviews.yml` are described as optional, matching `load_registry(required=False)` behavior and addressing the remaining Copilot thread.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-171 uv run pytest tests/research_registry/ -q --no-cov` -> 11 passed; `uv run ruff check src/lms/__main__.py workloop-state.md` -> passed; `uv run ruff format --check src/lms/__main__.py` -> already formatted.
+- Next action: push the merge/review-fix commit to PR #171, resolve the Copilot thread, remove stale `agent:retry`, then wait for fresh Gate/CI before merge.
+
 ## 2026-05-27T10:10Z - keepalive completed issue #107 tasks
 
 - Automation: `pd-workloop-resume` (claude keepalive lane).
@@ -21,6 +33,44 @@
 - Changes: added `ResearchScan` and `EvidenceReview` Pydantic schemas (+ `ResearchDecision`/`EvidenceReviewStatus` enums, decision vocabulary aligned to the domain-model Experiment `decision` enum) to `src/lms/research_registry/schemas.py`; extended `validator.py` to load `research-scans.yml`/`evidence-reviews.yml` (optional-if-missing) and cross-check their source/claim references with unique-id checks; added seed YAML under `docs/research/registry/` (paraphrase-only summaries, stable ids); updated the `validate-research-registry` CLI help/counts; added `tests/research_registry/test_research_reviews.py`.
 - Validation: `tests/research_registry/test_research_reviews.py` -> 5 passed; full `tests/research_registry/` -> 11 passed (no regression); `ruff check`/`ruff format --check` clean; `mypy src/lms/research_registry/ src/lms/__main__.py` -> success (existing pyproject unused-section note only); CLI `validate-research-registry` -> "4 principles, 3 claims, 4 evidence sources, 2 research scans, 2 evidence reviews". No SQLAlchemy model and no `/research` route added (existing `test_research_api_routes_are_not_added` still passes).
 - Next action: push branch, open ready-for-review PR with `agent:claude`/`agents:keepalive`/`autofix`/`repo-review-approved`/`priority:low`, emit `pr_opened`; keepalive owns Gate/CI follow-up.
+
+## 2026-05-27T10:06Z - codex opener key-PR recovery for PR #169
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Key PR: [#169](https://github.com/stranske/learning-management-system/pull/169) for issue [#119](https://github.com/stranske/learning-management-system/issues/119), branch `codex/issue-119-support-admin-dashboards`.
+- Reason for key status: PR #169 supplies the support/admin routes required by downstream M6 snapshot and end-to-end issues #120 and #121; those remain scoped-blocked until #169 is merged or otherwise no longer blocks support/admin route availability.
+- Cap/drain context: raw opener cap was below 5; `opener-cap-health.py` reported #471, #169, and #171 as `draining` with no non-drainable cap blocker. Direct sweep found #171 actively running Claude keepalive, #471 with repeated Codex keepalive no-output failures and bot-comment-handler work (not a branch-local deterministic opener fix), and #169 with stale keepalive merge-conflict/task-state evidence.
+- Recovery action: fast-forwarded the existing opener worktree to remote head `f2d6de5` (the closer merge/review-fix commit), confirmed local `merge-tree HEAD origin/main` has no textual conflict, and updated the PR automated status summary checkboxes from stale unchecked to checked after validating the issue-specific acceptance tests locally.
+- Validation (`UV_CACHE_DIR=/private/tmp/uv-cache-lms119-recovery`): `uv run pytest tests/ui/test_support_admin_surfaces.py -q --no-cov` -> 4 passed; `uv run ruff check src/lms/ui/support_admin.py tests/ui/test_support_admin_surfaces.py` -> passed; `uv run ruff format --check src/lms/ui/support_admin.py tests/ui/test_support_admin_surfaces.py` -> already formatted; `uv run mypy src/lms/ui/support_admin.py` -> success with existing pyproject unused-section note only.
+- Next action: push this state-only recovery commit, rerun/refresh cap-health, and hand the key PR to closer/keepalive if checks are still asynchronous or the PR remains blocked.
+
+## 2026-05-27T10:00Z - claude closer resolved PR #169 conflicts and review threads
+
+- Automation: `imi-merge-verify-closer` (claude_code closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#119](https://github.com/stranske/learning-management-system/issues/119) / [#169](https://github.com/stranske/learning-management-system/pull/169) `Build support and admin inspection dashboards`.
+- Branch: `codex/issue-119-support-admin-dashboards`; detached worktree `~/.codex/automations/imi-merge-verify-closer/worktrees/lms-pr169-conflict-20260527T1000Z` from PR head `b043075`.
+- Batch context: closed #118 after PR #168 durable PASS/PASS provider verification; deferred #112/#113/#115 non-PASS verifier audits and selected #169 as the one complex lane (highest-priority live open PR blocker; #471 is low-priority).
+- Conflict resolution: merged current `origin/main` (`0d02f68`, the #168 merge) into PR head `b043075`. `src/lms/main.py` auto-merged cleanly (kept all six UI routers); only `workloop-state.md` conflicted and was resolved by preserving append-only histories from both sides.
+- Review fixes (3 Copilot threads): (1) admin route no longer advertises local-identity user management when `enable_local_identity_routes` is disabled — the Users section + `/auth/users` create-user link are now content-gated via `request.app.state.enable_local_identity_routes` (kept the route reachable because the shared shell nav links `/app/admin` and `test_app_shell` asserts it resolves). (2) admin user query now bounded with `.limit(100)`. (3) the open-feedback-action query (and the sibling evidence/estimate/maintenance/review support-signal queries) now use deterministic `.order_by(created_at.desc(), id.desc())` so the `limit(100)` window is stable rather than arbitrary.
+- Test changes: `tests/ui/conftest.py` `api_client` now accepts an indirect `enable_local_identity_routes` param (default False). The two admin tests run with it True; added `test_admin_dashboard_hides_user_management_without_local_identity` covering the gated-off case (admin still 200, no Users/create-user link, audit/health present).
+- Validation (`UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-169`): `uv run pytest tests/ui/test_support_admin_surfaces.py -q --no-cov` -> 4 passed; `uv run pytest tests/ui/ -q --no-cov` -> 58 passed; `uv run ruff check` on touched files -> passed; `uv run ruff format --check` -> already formatted; `uv run mypy src/lms/ui/support_admin.py src/lms/main.py tests/ui/test_support_admin_surfaces.py tests/ui/conftest.py` -> success with existing pyproject unused-section note only.
+- Next action: push merge/review-fix commit to PR #169, resolve the three Copilot threads, remove stale `agent:retry`, then wait for fresh Gate/CI before merge.
+
+## 2026-05-27T09:11Z - codex opener materialized issue #119 support/admin dashboards
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#119](https://github.com/stranske/learning-management-system/issues/119) / [#169](https://github.com/stranske/learning-management-system/pull/169) `Build support and admin inspection dashboards`.
+- Branch/worktree: `codex/issue-119-support-admin-dashboards` in `~/.codex/automations/pd-workloop-resume/worktrees/lms-issue-119`.
+- Cap/drain preflight: repaired #168 by adding `agent:retry` and dispatching Gate Followups; post-repair cap-health showed #166/#167/#168 draining, raw cap 3/5. Direct sweep classified #166 active-moving with Python CI pending, #167 green but dirty/closer-owned, and #168 freshly moving after repair.
+- Queue disposition: stale trip-planner approved queue item was already implemented by merged PR #1236 / closed issue #1235; duplicate issue #1239 was closed with evidence, then opener continued to LMS #119 as the oldest unlinked normal-priority implementation issue outside the scoped #121 blocker.
+- Implementation: added `src/lms/ui/support_admin.py` with read-only `/app/support` and `/app/admin` routes. Support groups existing feedback actions, evidence support/low-confidence signals, capability estimates, maintenance-plan blockers, and stale review items by learner with reasons, uncertainty, sensitivity, and recommended next actions. Admin lists local users, audit events, local auth/create-user link, personal-scope permission placeholders, app health/version, and mapped table count. Removed the previous support/admin shell stubs from `src/lms/ui/api.py` and registered the new router in `src/lms/main.py`.
+- Tests: added `tests/ui/test_support_admin_surfaces.py` covering reasoned support signals without rankings, admin user/audit/health inspection, and empty states.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-lms119 uv run pytest tests/ui/test_support_admin_surfaces.py -q --no-cov` -> 3 passed; `uv run pytest tests/ui/ -q --no-cov` -> 46 passed after rebasing onto `origin/main` `ab795fb`; `ruff check` and `ruff format --check` on touched files passed; `mypy src/lms/ui/support_admin.py src/lms/ui/api.py src/lms/main.py tests/ui/test_support_admin_surfaces.py` passed with the existing pyproject unused-section note only.
+- PR: opened #169 non-draft with `Closes #119`, labels `agent:codex`, `agents:keepalive`, `autofix`, `repo-review-approved`, `priority:normal`, and `milestone:M6`; emitted `pr_opened active.source_repo=stranske/learning-management-system active.source_issue=119 active.source_pr=169 active.next_action=wait_for_keepalive`.
+- Next action: keepalive/Gate own CI and follow-up repair; opener should not duplicate #119.
 
 ## 2026-05-27T09:28Z - codex closer resolved PR #168 conflicts and review threads
 

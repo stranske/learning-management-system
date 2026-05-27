@@ -37,7 +37,7 @@ def main() -> None:
         default=None,
         help=(
             "directory containing principles.yml, claims.yml, evidence-sources.yml, "
-            "research-scans.yml, and evidence-reviews.yml"
+            "and optional research-scans.yml / evidence-reviews.yml"
         ),
     )
     source_parser = subparsers.add_parser(

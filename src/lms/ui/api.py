@@ -64,7 +64,7 @@ from lms.scheduling.service import (
 )
 from lms.sources.models import SourceReference
 from lms.sources.repository import list_source_references
-from lms.ui.shell import empty_state, render_page, surface_stub
+from lms.ui.shell import empty_state, render_page
 
 router = APIRouter(tags=["learner-ui"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -747,26 +747,6 @@ async def create_author_case_route(request: Request, session: SessionDep) -> str
     return _author_cases_page(session, notice=notice)
 
 
-@router.get("/app/support", response_class=HTMLResponse)
-def support_app_route() -> str:
-    """Return the support app route shell."""
-    return surface_stub(
-        "Support",
-        "Support inspection surfaces will use this route for learner-safe troubleshooting.",
-        active_path="/app/support",
-    )
-
-
-@router.get("/app/admin", response_class=HTMLResponse)
-def admin_app_route() -> str:
-    """Return the admin app route shell."""
-    return surface_stub(
-        "Admin",
-        "Admin inspection surfaces will use this route for local prototype operations.",
-        active_path="/app/admin",
-    )
-
-
 def _dashboard_surface(*, session: Session, learner_id: str) -> str:
     """Return the learner home dashboard aggregating the learner's own state."""
     goals = list_learning_goals_for_learner(session, learner_id=learner_id)
@@ -1144,7 +1124,9 @@ def _latest_attempt_summary(session: Session, *, learner_id: str, prompt_id: str
     correctness_label = (
         "pending scoring evidence"
         if correctness is None
-        else "correct" if correctness else "incorrect"
+        else "correct"
+        if correctness
+        else "incorrect"
     )
     return (
         f"Latest evidence: confidence {_confidence_label(attempt.confidence_rating)}; "
