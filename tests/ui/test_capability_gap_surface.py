@@ -279,3 +279,82 @@ def test_capability_surface_empty_states_guide_next_step(
     assert "once you have collected evidence" in detail.text
     assert "No gap analysis yet" in detail.text
     assert "No maintenance-plan steps yet" in detail.text
+
+
+def test_capability_target_detail_not_found(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, _session_factory = api_client
+
+    response = client.get(f"{TARGETS_PATH}/nonexistent-target-id")
+
+    assert response.status_code == 200
+    assert "Capability target not found" in response.text
+
+
+def test_capability_target_create_empty_title_returns_error(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        learner_id, node_id = _seed_learner_with_low_evidence(session)
+        session.commit()
+
+    response = client.post(
+        TARGETS_PATH,
+        data={
+            "learner_id": learner_id,
+            "title": "",
+            "target_node_ids": [node_id],
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Enter a title" in response.text
+    assert "Set a capability target" in response.text
+
+
+def test_gap_analysis_action_shows_error_on_invalid_estimate(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        learner_id, node_id = _seed_learner_with_low_evidence(session)
+        target = create_capability_target(
+            session,
+            learner_id=learner_id,
+            title="Error surface test",
+            target_node_ids=[node_id],
+        )
+        target_id = target.id
+        session.commit()
+
+    response = client.post(
+        GAP_PATH,
+        data={"target_id": target_id, "estimate_id": "nonexistent-estimate-id"},
+    )
+
+    assert response.status_code == 200
+    assert "Error surface test" in response.text
+    assert "capability estimate was not found" in response.text
+
+
+def test_overview_shows_target_cards_for_learner_with_targets(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        learner_id, node_id = _seed_learner_with_low_evidence(session)
+        create_capability_target(
+            session,
+            learner_id=learner_id,
+            title="My first capability target",
+            target_node_ids=[node_id],
+        )
+        session.commit()
+
+    response = client.get(f"{CAPABILITY_PATH}?learner_id={learner_id}")
+
+    assert response.status_code == 200
+    assert "My first capability target" in response.text
+    assert f"{TARGETS_PATH}/" in response.text
