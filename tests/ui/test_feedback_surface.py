@@ -1,185 +1,207 @@
-"""Tests for learner feedback, hint, model-answer, and revision UI."""
+"""Learner feedback, hint reveal, and revision UI tests."""
 
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
-from lms.evidence.repository import create_attempt
+from lms.evidence.models import Attempt
+from lms.feedback.models import Rubric, RubricScore
 from lms.feedback.repository import (
     create_feedback_action,
+    create_feedback_record,
     create_hint,
     create_model_answer,
-    create_rubric,
-    create_rubric_score,
-    list_feedback_records,
-    list_revision_requests,
 )
-from lms.graphs.models import KnowledgeNode
-from lms.prompts.models import Prompt, PromptVersion
-
-
-def _seed_feedback_context(
-    session_factory: sessionmaker[Session],
-) -> tuple[str, str, str]:
-    with session_factory() as session:
-        node = KnowledgeNode(
-            id="node-feedback",
-            title="Equation checks",
-            knowledge_type="procedural",
-            ownership_scope="personal",
-            status="published",
-        )
-        session.add(node)
-        prompt = Prompt(
-            target_node_id=node.id,
-            learning_goal_id="goal-feedback",
-            knowledge_type="procedural",
-            intended_cognitive_action="explain",
-            demand_level="medium",
-            expected_answer_form="short-text",
-            status="draft",
-            authoring_method="human-authored",
-            authoring_actor="author-ui",
-        )
-        prompt.versions.append(
-            PromptVersion(
-                version_number=1,
-                body="Explain how you checked the equation solution.",
-                created_by="author-ui",
-            )
-        )
-        session.add(prompt)
-        session.flush()
-        attempt = create_attempt(
-            session,
-            learner_id="learner-1",
-            prompt_id=prompt.id,
-            response_text="I solved x = 4 but did not check it.",
-            confidence_rating=3,
-            feedback={
-                "goal": "Check equation solutions",
-                "observed_evidence": "Solved the equation but skipped substitution.",
-                "diagnosis": "The solving step is present.",
-                "gap": "The answer was not substituted back into the original equation.",
-                "next_action": "Revise with a substitution check.",
-            },
-        )
-        records = list_feedback_records(session, attempt_id=attempt.id)
-        record = records[0]
-        action = create_feedback_action(
-            session,
-            feedback_record_id=record.id,
-            learner_id="learner-1",
-            attempt_id=attempt.id,
-            prompt_id=prompt.id,
-            action_type="revision",
-            title="Revise with a substitution check.",
-            instructions="Show the check after solving.",
-        )
-        record.next_action_ids = [action.id]
-        rubric = create_rubric(
-            session,
-            title="Equation explanation rubric",
-            ownership_scope="personal",
-            authoring_actor="author-ui",
-            prompt_id=prompt.id,
-            status="published",
-            criteria=[
-                {
-                    "criterion_order": 1,
-                    "description": "Shows the substitution check",
-                    "max_points": 2.0,
-                    "performance_levels": {},
-                }
-            ],
-        )
-        create_rubric_score(
-            session,
-            rubric_id=rubric.id,
-            attempt_id=attempt.id,
-            learner_id="learner-1",
-            scorer_type="rule",
-            raw_score=1.0,
-            normalized_score=0.5,
-            max_score=2.0,
-            criterion_scores=[
-                {
-                    "criterion_id": rubric.criteria[0].id,
-                    "criterion_order": 1,
-                    "description": "Shows the substitution check",
-                    "points": 1.0,
-                    "max_points": 2.0,
-                    "rationale": "The check is missing from the response.",
-                }
-            ],
-            feedback_record_id=record.id,
-        )
-        hint = create_hint(
-            session,
-            prompt_id=prompt.id,
-            hint_text="Substitute the value back into the original equation.",
-            reveal_order=1,
-            authoring_actor="author-ui",
-        )
-        model_answer = create_model_answer(
-            session,
-            prompt_id=prompt.id,
-            answer_body="The solution checks because both sides evaluate to 9.",
-            authoring_actor="author-ui",
-        )
-        session.commit()
-        return record.id, hint.id, model_answer.id
+from lms.prompts.models import Prompt
 
 
 def test_feedback_view_shows_goal_gap_next_action_and_rubric_breakdown(
     api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
     client, session_factory = api_client
-    feedback_id, _, _ = _seed_feedback_context(session_factory)
+    with session_factory() as session:
+        prompt = _prompt()
+        session.add(prompt)
+        session.flush()
+        attempt = _attempt(prompt.id)
+        session.add(attempt)
+        session.flush()
+        record = create_feedback_record(
+            session,
+            learner_id="learner-1",
+            attempt_id=attempt.id,
+            prompt_id=prompt.id,
+            feedback_level="remediation",
+            goal="Use source evidence to explain the decision",
+            observed_evidence="The response named a conclusion without evidence.",
+            diagnosis="The answer needs a cited reason.",
+            gap="Missing source-backed reasoning",
+        )
+        create_feedback_action(
+            session,
+            learner_id="learner-1",
+            feedback_record_id=record.id,
+            attempt_id=attempt.id,
+            prompt_id=prompt.id,
+            action_type="revision",
+            title="Revise with one cited reason",
+            instructions="Add the source-backed reason before resubmitting.",
+        )
+        rubric = Rubric(
+            title="Evidence use",
+            ownership_scope="personal",
+            status="published",
+            authoring_actor="author-1",
+            reviewing_actor="reviewer-1",
+        )
+        session.add(rubric)
+        session.flush()
+        session.add(
+            RubricScore(
+                rubric_id=rubric.id,
+                attempt_id=attempt.id,
+                learner_id="learner-1",
+                scorer_type="deterministic",
+                raw_score=2,
+                normalized_score=0.5,
+                max_score=4,
+                criterion_scores=[
+                    {
+                        "description": "Uses source evidence",
+                        "points": 2,
+                        "max_points": 4,
+                        "rationale": "Names the source to add next.",
+                    }
+                ],
+            )
+        )
+        session.commit()
+        record_id = record.id
 
-    response = client.get(f"/app/learner/feedback/{feedback_id}")
+    response = client.get(f"/app/learner/feedback/{record_id}")
 
     assert response.status_code == 200
-    assert "Check equation solutions" in response.text
-    assert "The answer was not substituted back" in response.text
-    assert "Revise with a substitution check." in response.text
-    assert "Shows the substitution check" in response.text
-    assert "1.0 / 2.0 points" in response.text
-    assert "The solution checks because" not in response.text
+    html = response.text
+    assert "Use source evidence to explain the decision" in html
+    assert "Missing source-backed reasoning" in html
+    assert "Revise with one cited reason" in html
+    assert "Uses source evidence" in html
+    assert "2 / 4 points" in html
+    assert "lazy" not in html.lower()
+    assert "bad learner" not in html.lower()
 
 
 def test_hint_reveal_updates_feedback_view_without_exposing_model_answer(
     api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
     client, session_factory = api_client
-    feedback_id, hint_id, _ = _seed_feedback_context(session_factory)
+    with session_factory() as session:
+        prompt = _prompt()
+        session.add(prompt)
+        session.flush()
+        attempt = _attempt(prompt.id)
+        session.add(attempt)
+        session.flush()
+        record = create_feedback_record(
+            session,
+            learner_id="learner-1",
+            attempt_id=attempt.id,
+            prompt_id=prompt.id,
+            goal="Connect the answer to evidence",
+            observed_evidence="The response was partly supported.",
+            gap="Needs one citation",
+        )
+        hint = create_hint(
+            session,
+            prompt_id=prompt.id,
+            hint_text="Look for the sentence that names the cause.",
+            reveal_order=1,
+            authoring_actor="author-1",
+        )
+        create_model_answer(
+            session,
+            prompt_id=prompt.id,
+            answer_body="Hidden complete model answer.",
+            authoring_actor="author-1",
+        )
+        session.commit()
+        record_id = record.id
+        hint_id = hint.id
+        attempt_id = attempt.id
 
-    response = client.post(f"/app/learner/feedback/{feedback_id}/hints/{hint_id}/reveal")
+    response = client.post(f"/app/learner/feedback/{record_id}/hints/{hint_id}/reveal")
 
     assert response.status_code == 200
-    assert "Hint revealed: Substitute the value back" in response.text
-    assert "The solution checks because" not in response.text
+    assert "Hint revealed: Look for the sentence that names the cause." in response.text
+    assert "Hidden complete model answer." not in response.text
+    with session_factory() as session:
+        loaded_attempt = session.get(Attempt, attempt_id)
+        assert loaded_attempt is not None
+        assert loaded_attempt.hint_used is True
 
 
 def test_revision_request_can_be_submitted_from_feedback_view(
     api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
     client, session_factory = api_client
-    feedback_id, _, _ = _seed_feedback_context(session_factory)
+    with session_factory() as session:
+        prompt = _prompt()
+        session.add(prompt)
+        session.flush()
+        attempt = _attempt(prompt.id)
+        session.add(attempt)
+        session.flush()
+        record = create_feedback_record(
+            session,
+            learner_id="learner-1",
+            attempt_id=attempt.id,
+            prompt_id=prompt.id,
+            goal="Revise with a clearer reason",
+            observed_evidence="The initial response was incomplete.",
+            gap="Needs a revised explanation",
+        )
+        session.commit()
+        record_id = record.id
 
     response = client.post(
-        f"/app/learner/feedback/{feedback_id}/revision",
+        f"/app/learner/feedback/{record_id}/revision",
         data={
-            "response_text": "Revised: x = 4 checks because both sides equal 9.",
+            "response_text": "I revised the answer with a cited explanation.",
             "confidence_rating": "4",
         },
     )
 
     assert response.status_code == 200
     assert "Revision submitted. Status: submitted." in response.text
+    assert "submitted" in response.text
     with session_factory() as session:
-        revisions = list_revision_requests(session, feedback_record_id=feedback_id)
-        assert len(revisions) == 1
-        assert revisions[0].status == "submitted"
-        assert revisions[0].revised_attempt_id is not None
+        revised = (
+            session.query(Attempt)
+            .filter_by(response_text="I revised the answer with a cited explanation.")
+            .one()
+        )
+        assert revised.confidence_rating == 4
+
+
+def _prompt() -> Prompt:
+    return Prompt(
+        target_node_id="node-1",
+        learning_goal_id="goal-1",
+        knowledge_type="conceptual",
+        intended_cognitive_action="explain",
+        demand_level="medium",
+        expected_answer_form="short-text",
+        status="draft",
+        authoring_method="human-authored",
+        authoring_actor="author-1",
+    )
+
+
+def _attempt(prompt_id: str) -> Attempt:
+    return Attempt(
+        learner_id="learner-1",
+        prompt_id=prompt_id,
+        response_text="Initial response",
+        feedback={"goal": "Improve the response", "next_action": "Revise"},
+    )

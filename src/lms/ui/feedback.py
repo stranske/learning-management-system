@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from html import escape
-from typing import Annotated, Any
+from typing import Annotated
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -12,7 +12,14 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
-from lms.feedback.models import FeedbackRecord, RevisionRequest
+from lms.feedback.models import (
+    FeedbackAction,
+    FeedbackRecord,
+    Hint,
+    ModelAnswer,
+    RevisionRequest,
+    RubricScore,
+)
 from lms.feedback.repository import (
     create_revision_request,
     get_feedback_record,
@@ -226,8 +233,8 @@ def _feedback_detail_page(
           {_revision_panel(revisions)}
           {_revision_form(record)}
           <nav aria-label="Feedback navigation">
-            <a href="/app/learner/attempts">Attempt flow</a>
-            <a href="/app/learner/reviews">Review queue</a>
+            <a href="/learn">Attempt flow</a>
+            <a href="/app/learner/review">Review queue</a>
             <a href="/app/learner">Learner dashboard</a>
           </nav>
         </main>
@@ -245,7 +252,7 @@ def _record_list_item(record: FeedbackRecord) -> str:
     )
 
 
-def _actions_panel(actions: Sequence[Any]) -> str:
+def _actions_panel(actions: Sequence[FeedbackAction]) -> str:
     items = []
     for action in actions:
         items.append(
@@ -265,7 +272,7 @@ def _actions_panel(actions: Sequence[Any]) -> str:
     )
 
 
-def _rubric_panel(scores: Sequence[Any]) -> str:
+def _rubric_panel(scores: Sequence[RubricScore]) -> str:
     items = []
     for score in scores:
         for criterion in score.criterion_scores:
@@ -287,7 +294,7 @@ def _rubric_panel(scores: Sequence[Any]) -> str:
     )
 
 
-def _hint_panel(record: FeedbackRecord, hints: Sequence[Any]) -> str:
+def _hint_panel(record: FeedbackRecord, hints: Sequence[Hint]) -> str:
     items = []
     for hint in hints:
         items.append(
@@ -308,7 +315,7 @@ def _hint_panel(record: FeedbackRecord, hints: Sequence[Any]) -> str:
     )
 
 
-def _model_answer_panel(record: FeedbackRecord, model_answers: Sequence[Any]) -> str:
+def _model_answer_panel(record: FeedbackRecord, model_answers: Sequence[ModelAnswer]) -> str:
     items = []
     for answer in model_answers:
         items.append(
@@ -329,7 +336,7 @@ def _model_answer_panel(record: FeedbackRecord, model_answers: Sequence[Any]) ->
     )
 
 
-def _revision_panel(revisions: Sequence[Any]) -> str:
+def _revision_panel(revisions: Sequence[RevisionRequest]) -> str:
     items = []
     for revision in revisions:
         items.append(
