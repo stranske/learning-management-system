@@ -22,6 +22,8 @@ OwnershipScope = Literal["personal", "institutional"]
 RubricStatus = Literal["draft", "published", "archived"]
 RubricCriterionStatus = Literal["active", "archived"]
 FeedbackTemplateStatus = Literal["draft", "published", "archived"]
+RevealPolicy = Literal["after-attempt", "always", "instructor-only", "system-triggered"]
+RevealInitiator = Literal["learner", "system", "instructor", "test"]
 
 
 class FeedbackRecordCreate(BaseModel):
@@ -135,6 +137,114 @@ class FeedbackTemplateRenderRead(BaseModel):
     template_id: str
     rendered_body: str
     values: dict[str, object]
+
+
+class SourceCitationRead(BaseModel):
+    """Learner-safe source citation summary."""
+
+    source_type: str
+    passage_range: str | None = None
+    source_visibility: str
+    stable_locator: str | None = None
+
+
+class HintCreate(BaseModel):
+    """Input for prompt hint authoring."""
+
+    prompt_id: str = Field(min_length=1, max_length=36)
+    hint_text: str = Field(min_length=1)
+    reveal_order: int = Field(ge=1)
+    support_level: Literal["hint", "reference", "worked-example", "coach"] = "hint"
+    reveal_policy: RevealPolicy = "after-attempt"
+    source_citation_metadata: dict[str, object] | None = None
+    authoring_actor: str = Field(min_length=1, max_length=255)
+
+
+class HintRead(HintCreate):
+    """Learner-safe hint response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_citations: list[SourceCitationRead] = Field(default_factory=list)
+    created_at: datetime
+
+
+class HintRevealRequest(BaseModel):
+    """Input for recording a hint reveal."""
+
+    learner_id: str = Field(min_length=1, max_length=36)
+    attempt_id: str | None = Field(default=None, min_length=1, max_length=36)
+    initiated_by: RevealInitiator = "learner"
+
+
+class HintRevealRead(BaseModel):
+    """A revealed hint with durable reveal audit metadata."""
+
+    id: str
+    hint_id: str
+    learner_id: str
+    prompt_id: str
+    attempt_id: str | None
+    initiated_by: RevealInitiator
+    hint_text: str
+    support_level: str
+    source_citations: list[SourceCitationRead] = Field(default_factory=list)
+    revealed_at: datetime
+
+
+class ModelAnswerCreate(BaseModel):
+    """Input for author-managed model answers."""
+
+    prompt_id: str = Field(min_length=1, max_length=36)
+    rubric_id: str | None = Field(default=None, min_length=1, max_length=36)
+    answer_body: str = Field(min_length=1)
+    reveal_policy: RevealPolicy = "after-attempt"
+    source_citation_metadata: dict[str, object] | None = None
+    authoring_actor: str = Field(min_length=1, max_length=255)
+
+
+class ModelAnswerSummaryRead(BaseModel):
+    """Model answer metadata without learner-hidden answer content."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    prompt_id: str
+    rubric_id: str | None
+    reveal_policy: RevealPolicy
+    source_citations: list[SourceCitationRead] = Field(default_factory=list)
+    authoring_actor: str
+    created_at: datetime
+
+
+class ModelAnswerRead(ModelAnswerSummaryRead):
+    """Author or post-attempt model answer response."""
+
+    answer_body: str
+
+
+class ModelAnswerRevealRequest(BaseModel):
+    """Input for revealing a model answer after learner work."""
+
+    learner_id: str = Field(min_length=1, max_length=36)
+    attempt_id: str | None = Field(default=None, min_length=1, max_length=36)
+    initiated_by: RevealInitiator = "learner"
+    instructor_mode: bool = False
+
+
+class ModelAnswerRevealRead(BaseModel):
+    """A revealed model answer with audit metadata."""
+
+    id: str
+    model_answer_id: str
+    learner_id: str
+    prompt_id: str
+    attempt_id: str | None
+    initiated_by: RevealInitiator
+    answer_body: str
+    source_citations: list[SourceCitationRead] = Field(default_factory=list)
+    revealed_at: datetime
 
 
 class RubricCriterionCreate(BaseModel):

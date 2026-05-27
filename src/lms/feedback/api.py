@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -15,23 +15,32 @@ from lms.feedback.repository import (
     create_feedback_action,
     create_feedback_record,
     create_feedback_template,
+    create_hint,
     create_misconception_pattern,
+    create_model_answer,
     create_rubric,
     create_rubric_criterion,
     get_feedback_action,
     get_feedback_record,
     get_feedback_template,
+    get_hint,
+    get_model_answer,
     get_rubric,
     get_rubric_criterion,
     get_rubric_score,
+    learner_safe_source_citations,
     list_feedback_actions,
     list_feedback_records,
     list_feedback_templates,
+    list_hints,
     list_misconception_patterns,
+    list_model_answers,
     list_rubric_criteria,
     list_rubric_scores,
     list_rubrics,
     render_feedback_template,
+    reveal_hint,
+    reveal_model_answer,
     update_rubric,
     update_rubric_criterion,
 )
@@ -45,9 +54,19 @@ from lms.feedback.schemas import (
     FeedbackTemplateRenderRead,
     FeedbackTemplateRenderRequest,
     FeedbackTemplateStatus,
+    HintCreate,
+    HintRead,
+    HintRevealRead,
+    HintRevealRequest,
     MisconceptionPatternCreate,
     MisconceptionPatternRead,
+    ModelAnswerCreate,
+    ModelAnswerRead,
+    ModelAnswerRevealRead,
+    ModelAnswerRevealRequest,
+    ModelAnswerSummaryRead,
     OwnershipScope,
+    RevealInitiator,
     RubricCreate,
     RubricCriterionCreate,
     RubricCriterionRead,
@@ -59,6 +78,7 @@ from lms.feedback.schemas import (
     RubricScoreRead,
     RubricStatus,
     RubricUpdate,
+    SourceCitationRead,
 )
 from lms.feedback.scoring import RubricScoringError, score_attempt_with_rubric
 
@@ -324,6 +344,139 @@ def archive_feedback_template_route(
     return FeedbackTemplateRead.model_validate(archived)
 
 
+@router.post("/hints", response_model=HintRead, status_code=status.HTTP_201_CREATED)
+def create_hint_route(payload: HintCreate, session: SessionDep) -> HintRead:
+    """Create ordered learner support for a prompt."""
+    try:
+        hint = create_hint(session, **payload.model_dump())
+        session.commit()
+        session.refresh(hint)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return _hint_read(session, hint)
+
+
+@router.get("/hints", response_model=list[HintRead])
+def list_hints_route(
+    session: SessionDep,
+    prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[HintRead]:
+    """Return ordered hints without exposing hidden model-answer content."""
+    return [
+        _hint_read(session, hint) for hint in list_hints(session, prompt_id=prompt_id, limit=limit)
+    ]
+
+
+@router.post("/hints/{hint_id}/reveal", response_model=HintRevealRead)
+def reveal_hint_route(
+    hint_id: str,
+    payload: HintRevealRequest,
+    session: SessionDep,
+) -> HintRevealRead:
+    """Record a hint reveal and mark attempt/evidence support usage."""
+    hint = get_hint(session, hint_id)
+    if hint is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hint not found.")
+    try:
+        reveal = reveal_hint(session, hint, **payload.model_dump())
+        session.commit()
+        session.refresh(reveal)
+        session.refresh(hint)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return HintRevealRead(
+        id=reveal.id,
+        hint_id=hint.id,
+        learner_id=reveal.learner_id,
+        prompt_id=reveal.prompt_id,
+        attempt_id=reveal.attempt_id,
+        initiated_by=cast(RevealInitiator, reveal.initiated_by),
+        hint_text=hint.hint_text,
+        support_level=hint.support_level,
+        source_citations=_source_citation_reads(
+            session, hint.prompt_id, hint.source_citation_metadata
+        ),
+        revealed_at=reveal.revealed_at,
+    )
+
+
+@router.post(
+    "/model-answers",
+    response_model=ModelAnswerRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_model_answer_route(
+    payload: ModelAnswerCreate,
+    session: SessionDep,
+) -> ModelAnswerRead:
+    """Create an author-managed model answer."""
+    try:
+        answer = create_model_answer(session, **payload.model_dump())
+        session.commit()
+        session.refresh(answer)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return _model_answer_read(session, answer)
+
+
+@router.get("/model-answers", response_model=list[ModelAnswerSummaryRead])
+def list_model_answers_route(
+    session: SessionDep,
+    prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[ModelAnswerSummaryRead]:
+    """Return model-answer metadata without learner-hidden answer bodies."""
+    return [
+        _model_answer_summary_read(session, answer)
+        for answer in list_model_answers(session, prompt_id=prompt_id, limit=limit)
+    ]
+
+
+@router.post("/model-answers/{model_answer_id}/reveal", response_model=ModelAnswerRevealRead)
+def reveal_model_answer_route(
+    model_answer_id: str,
+    payload: ModelAnswerRevealRequest,
+    session: SessionDep,
+) -> ModelAnswerRevealRead:
+    """Reveal a model answer only after an attempt or explicit instructor/test mode."""
+    answer = get_model_answer(session, model_answer_id)
+    if answer is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model answer not found.")
+    try:
+        reveal = reveal_model_answer(session, answer, **payload.model_dump())
+        session.commit()
+        session.refresh(reveal)
+        session.refresh(answer)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return ModelAnswerRevealRead(
+        id=reveal.id,
+        model_answer_id=answer.id,
+        learner_id=reveal.learner_id,
+        prompt_id=reveal.prompt_id,
+        attempt_id=reveal.attempt_id,
+        initiated_by=cast(RevealInitiator, reveal.initiated_by),
+        answer_body=answer.answer_body,
+        source_citations=_source_citation_reads(
+            session, answer.prompt_id, answer.source_citation_metadata
+        ),
+        revealed_at=reveal.revealed_at,
+    )
+
+
 @router.post(
     "/rubric-scores",
     response_model=RubricScoreRead,
@@ -561,3 +714,38 @@ def update_rubric_criterion_route(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
     return RubricCriterionRead.model_validate(updated)
+
+
+def _hint_read(session: Session, hint: Any) -> HintRead:
+    read = HintRead.model_validate(hint)
+    read.source_citations = _source_citation_reads(
+        session, read.prompt_id, read.source_citation_metadata
+    )
+    return read
+
+
+def _model_answer_summary_read(session: Session, answer: Any) -> ModelAnswerSummaryRead:
+    read = ModelAnswerSummaryRead.model_validate(answer)
+    read.source_citations = _source_citation_reads(
+        session, read.prompt_id, answer.source_citation_metadata
+    )
+    return read
+
+
+def _model_answer_read(session: Session, answer: Any) -> ModelAnswerRead:
+    read = ModelAnswerRead.model_validate(answer)
+    read.source_citations = _source_citation_reads(
+        session, read.prompt_id, answer.source_citation_metadata
+    )
+    return read
+
+
+def _source_citation_reads(
+    session: Session,
+    prompt_id: str,
+    explicit_metadata: dict[str, Any] | None = None,
+) -> list[SourceCitationRead]:
+    return [
+        SourceCitationRead.model_validate(citation)
+        for citation in learner_safe_source_citations(session, prompt_id, explicit_metadata)
+    ]
