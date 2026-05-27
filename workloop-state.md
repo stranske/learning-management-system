@@ -1,5 +1,20 @@
 # Workloop State
 
+## 2026-05-27T08:05Z - codex closer resolved PR #164 review threads
+
+- Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#114](https://github.com/stranske/learning-management-system/issues/114) / [#164](https://github.com/stranske/learning-management-system/pull/164) `Build prompt attempt flow`.
+- Branch: `claude/issue-114-prompt-attempt-flow`.
+- Batch sweep context: no safe terminal sweep actions. Other supported repos had no open PRs; LMS #162/#112 and #163/#113 have verifier CONCERNS disposition debt, while #165/#115 and #166/#116 are DIRTY/CONFLICTING. Scoped blocker #121 remains excluded.
+- Complex lane trigger: #164 was non-draft, in-scope, clean/green on head `ef30208`, but had five unresolved Copilot review threads in `src/lms/ui/attempts.py`.
+- Fix commit: `0608fc1` addresses all review findings: explicit `attempt_id` feedback lookups are scoped to the requested learner and optional prompt, invalid numeric `confidence_rating` / `elapsed_seconds` form values return inline validation instead of silently becoming `None` or raising a 500, and generated feedback links URL-encode `learner_id`/`prompt_id`.
+- Regression coverage: `tests/ui/test_activity_attempt_flow.py` now covers URL-encoded feedback links, invalid numeric field rejection, and cross-learner attempt-id rejection.
+- Validation before push: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-164 uv run pytest tests/ui/test_activity_attempt_flow.py -q --no-cov` -> 11 passed; `uv run pytest tests/ui/ -q --no-cov` -> 33 passed; `uv run ruff check src/lms/ui/attempts.py tests/ui/test_activity_attempt_flow.py` -> passed; `uv run ruff format --check ...` -> passed; `uv run mypy src/lms/ui/attempts.py tests/ui/test_activity_attempt_flow.py` -> passed with the existing pyproject unused-section note only.
+- PR evidence: posted comment `pull/164#issuecomment-4552647030`; resolved review threads `PRRT_kwDOSm8tI86FBPnV`, `PRRT_kwDOSm8tI86FBPoB`, `PRRT_kwDOSm8tI86FBPoq`, `PRRT_kwDOSm8tI86FBPpb`, and `PRRT_kwDOSm8tI86FBPqF`.
+- Current remote state after push: head `0608fc1`, mergeable `MERGEABLE`, merge state `BLOCKED` only because fresh post-push Gate/PR-meta checks are still in progress (`typecheck-mypy`, Python 3.12, Python 3.13, and PR body update were running at 08:05Z). No terminal relay event fired.
+- Next action: next closer should recheck #164 after fresh checks complete; if green and review threads remain resolved, merge #164, apply `verify:compare`, emit `pr_merged` and `verify_label_applied`, and reopen/sequence issue #114 if GitHub auto-closes it.
+
 ## 2026-05-27T07:06Z - opener rebased PR #163 after #161 merge
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
