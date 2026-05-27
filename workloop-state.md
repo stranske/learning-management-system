@@ -1,6 +1,18 @@
 # Workloop State
 
-## 2026-05-27T04:20Z - opener recovered PR #145 Alembic double-head
+## 2026-05-27T05:1xZ - opener materialized PR for #110 author UI
+
+- Automation: `pd-workloop-resume` (Claude Code opener lane), neutral Code workspace.
+- Source issue: [#110](https://github.com/stranske/learning-management-system/issues/110) `Build authoring UI for goals, graph, and prompts` (priority:normal, milestone:M6, repo-review-approved).
+- Branch: `claude/issue-110-author-learning-objects` off `origin/main` `470e449`.
+- Selection: oldest unlinked normal-tier issue. High #121 deferred (M6 acceptance gate depends on the still-open M6 surfaces #110-#120). #106/#1075 excluded (already implemented/linked).
+- Implementation (Surface 3 + Surface 4):
+  - New `src/lms/ui/author.py` FastAPI router (`/app/author` landing + `/app/author/{goals,knowledge,prompts}` GET, `/app/author/knowledge/nodes`, `/app/author/knowledge/edges`, `/app/author/goals`, `/app/author/prompts` POST). Hand-built HTML via `render_page`/`empty_state`, matching `ui/api.py`.
+  - Reuses existing repositories only: `graphs.repository` (node/edge create, cross-scope edges rejected by the existing `is_graph_reference` rule), `learners.repository` (goal create requires published target nodes), `prompts.repository` (draft prompt create requires published linked node + >=1 source ref), `sources.repository` (drift status display).
+  - Forms enforce ownership_scope, show prompt provenance + source drift, render validation feedback (draft-node, missing-source, cross-scope) as `aria-invalid` notices, and show empty states. No course/module/lesson container text.
+  - Wired router in `src/lms/main.py`; removed the old `/app/author` stub from `src/lms/ui/api.py`; updated `tests/ui/test_app_shell.py` (author surface is now implemented, not an empty stub).
+- Tests: `tests/ui/test_author_learning_objects.py` -> 4 tests incl. the two required acceptance tests; full `tests/ui/` -> 14 passed; ruff check + format clean; mypy clean; author.py 98% / api.py 96% line coverage under the ui suite.
+- Next action: keepalive owns CI/check follow-up; closer owns post-merge verification.
 
 - Automation: `pd-workloop-resume` (codex opener lane).
 - Source repo: `stranske/learning-management-system`.
