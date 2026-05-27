@@ -1,5 +1,20 @@
 # Workloop State
 
+## 2026-05-27T08:05Z - codex closer resolved PR #164 review threads
+
+- Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#114](https://github.com/stranske/learning-management-system/issues/114) / [#164](https://github.com/stranske/learning-management-system/pull/164) `Build prompt attempt flow`.
+- Branch: `claude/issue-114-prompt-attempt-flow`.
+- Batch sweep context: no safe terminal sweep actions. Other supported repos had no open PRs; LMS #162/#112 and #163/#113 have verifier CONCERNS disposition debt, while #165/#115 and #166/#116 are DIRTY/CONFLICTING. Scoped blocker #121 remains excluded.
+- Complex lane trigger: #164 was non-draft, in-scope, clean/green on head `ef30208`, but had five unresolved Copilot review threads in `src/lms/ui/attempts.py`.
+- Fix commit: `0608fc1` addresses all review findings: explicit `attempt_id` feedback lookups are scoped to the requested learner and optional prompt, invalid numeric `confidence_rating` / `elapsed_seconds` form values return inline validation instead of silently becoming `None` or raising a 500, and generated feedback links URL-encode `learner_id`/`prompt_id`.
+- Regression coverage: `tests/ui/test_activity_attempt_flow.py` now covers URL-encoded feedback links, invalid numeric field rejection, and cross-learner attempt-id rejection.
+- Validation before push: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-164 uv run pytest tests/ui/test_activity_attempt_flow.py -q --no-cov` -> 11 passed; `uv run pytest tests/ui/ -q --no-cov` -> 33 passed; `uv run ruff check src/lms/ui/attempts.py tests/ui/test_activity_attempt_flow.py` -> passed; `uv run ruff format --check ...` -> passed; `uv run mypy src/lms/ui/attempts.py tests/ui/test_activity_attempt_flow.py` -> passed with the existing pyproject unused-section note only.
+- PR evidence: posted comment `pull/164#issuecomment-4552647030`; resolved review threads `PRRT_kwDOSm8tI86FBPnV`, `PRRT_kwDOSm8tI86FBPoB`, `PRRT_kwDOSm8tI86FBPoq`, `PRRT_kwDOSm8tI86FBPpb`, and `PRRT_kwDOSm8tI86FBPqF`.
+- Current remote state after push: head `0608fc1`, mergeable `MERGEABLE`, merge state `BLOCKED` only because fresh post-push Gate/PR-meta checks are still in progress (`typecheck-mypy`, Python 3.12, Python 3.13, and PR body update were running at 08:05Z). No terminal relay event fired.
+- Next action: next closer should recheck #164 after fresh checks complete; if green and review threads remain resolved, merge #164, apply `verify:compare`, emit `pr_merged` and `verify_label_applied`, and reopen/sequence issue #114 if GitHub auto-closes it.
+
 ## 2026-05-27T07:06Z - opener rebased PR #163 after #161 merge
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
@@ -20,6 +35,18 @@
 - Conflict resolution: rebased `claude/issue-112-learner-dashboard` onto `origin/main` (`e8103bb`), keeping the merged authoring rubrics/templates/cases UI, preserving the learner dashboard imports/routes/builders, unioning dashboard and author CSS, and retaining both workloop histories.
 - Validation before push: `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-resume uv run pytest tests/ui/ -q --no-cov` -> 20 passed; `uv run ruff check src/lms/ui/api.py tests/ui/test_learner_dashboard.py tests/ui/test_author_learning_objects.py tests/ui/test_author_feedback_cases.py` -> passed; `uv run ruff format --check ...` -> passed; `uv run mypy src/lms/ui/api.py tests/ui/test_learner_dashboard.py tests/ui/test_author_learning_objects.py tests/ui/test_author_feedback_cases.py` -> passed with the existing pyproject unused-section note only.
 - Next action: push the rebased head to #162 and wait for fresh GitHub checks/closer drain.
+
+## 2026-05-27T06:50Z - claude opener materialized issue #114 (prompt attempt flow)
+
+- Automation: `pd-workloop-resume` (Claude Code opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#114](https://github.com/stranske/learning-management-system/issues/114) `Build prompt attempt flow` (priority:normal, repo-review-approved, milestone:M6).
+- Branch: `claude/issue-114-prompt-attempt-flow` off `origin/main` (`e8103bb`).
+- Selection: cap-health 2/5 (drainable: #162/#163), cap not reached. Discovery normal tier — Workflows #2159 excluded (PR #2161 merged, `Closes #2159`); #111 excluded (PR #161 merged); #112/#113 linked to open PRs #162/#163; #121 scoped-blocked. #114 was the oldest truly-unlinked normal implementation issue.
+- Implementation: added a self-contained `src/lms/ui/attempts.py` (registered in `src/lms/main.py`) rather than expanding `api.py`, to minimize collision with in-flight #162/#163 which both edit `api.py`. New routes: GET `/app/learner/attempts` (activity start: prompt body + demand/answer-form/cognitive-action metadata, confidence control, reference-access checkbox, JS-tracked elapsed seconds, provenance + source citations with local-only locators hidden; explicit no-prompt, unpublished-prompt, and already-submitted states; inline validation error), POST `/app/learner/attempts` (records attempt via `create_attempt`, routes to scored feedback), GET `/app/learner/attempts/feedback` (latest/named attempt: rubric score, feedback records/diagnosis/gap, feedback actions, next-review hint from `get_review_queue_overview`, citations). Did NOT touch `/learn`, `/app/learner`, `api.py`, or `app.css`.
+- Tests: `tests/ui/test_activity_attempt_flow.py` (8 tests incl. the two required acceptance tests `test_attempt_flow_records_response_confidence_and_reference_access` and `test_attempt_flow_routes_to_feedback_after_rubric_scoring`).
+- Validation: `uv run pytest tests/ui/ -q --no-cov` -> 25 passed; `uv run ruff check` + `ruff format --check` -> clean; `uv run mypy src/lms/ui/attempts.py src/lms/main.py tests/ui/test_activity_attempt_flow.py` -> clean (pre-existing pyproject unused-section note only).
+- Next action: opened ready-for-review PR with `agent:claude` + `agents:keepalive` + `autofix` (+ repo-review-approved/priority:normal/milestone:M6); emit `pr_opened`. Keepalive owns CI follow-up; closer owns post-merge verifier disposition.
 
 ## 2026-05-27T06:02:40Z - codex closer rebased PR #161 after #159 merge
 
