@@ -1,5 +1,17 @@
 # Workloop State
 
+## 2026-05-27T06:02:40Z - codex closer rebased PR #161 after #159 merge
+
+- Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#111](https://github.com/stranske/learning-management-system/issues/111) `Build authoring UI for rubrics, templates, and cases`.
+- Branch/PR: `codex/issue-111-author-feedback-cases`, [#161](https://github.com/stranske/learning-management-system/pull/161).
+- Batch context: #159/#110 has `verify:compare` but no durable Provider Comparison Report yet, so #110 remains open; no safe sweep closures or label-only terminal actions were available. Scoped blocker #121 remains excluded.
+- Complex lane action: PR #161 was green on required checks and had zero review threads, but direct GraphQL showed `mergeStateStatus=DIRTY` / `mergeable=CONFLICTING` after PR #159 merged. Created detached automation worktree `~/.codex/automations/imi-merge-verify-closer/worktrees/lms-pr161-conflictfix`, rebased `origin/codex/issue-111-author-feedback-cases` onto `origin/main` (`74de9c1`), and resolved conflicts in `src/lms/ui/api.py` plus `workloop-state.md`.
+- Conflict resolution: kept #110 goals/knowledge/prompts authoring routes and server-owned author identity/local-only source redaction, added #111 rubrics/feedback-template/cases routes and helpers, and updated the author landing/navigation to expose all six authoring tools.
+- Validation before push: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run pytest tests/ui/test_author_feedback_cases.py tests/ui/test_author_learning_objects.py tests/ui/test_app_shell.py -q --no-cov` -> 10 passed; `uv run ruff check src/lms/ui/api.py tests/ui/test_author_feedback_cases.py tests/ui/test_author_learning_objects.py tests/ui/conftest.py` -> passed; `uv run ruff format --check ...` -> passed after formatting; `uv run mypy src/lms/ui/api.py tests/ui/test_author_feedback_cases.py tests/ui/test_author_learning_objects.py` -> passed with the existing pyproject unused-section note only.
+- Next action: push the rebased head to #161, remove stale `agent:retry`, then wait for fresh GitHub checks before merge/apply `verify:compare`/sequence #111.
+
 ## 2026-05-27T05:28:53Z - closer addressed PR #159 review threads
 
 - Automation: `imi-merge-verify-closer` (codex closer lane).

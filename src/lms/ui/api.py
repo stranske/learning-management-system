@@ -1046,8 +1046,7 @@ def _author_cases_page(session: Session, *, notice: str | None = None) -> str:
     cases = list_cases(session)
     rubrics = list_rubrics(session)
     rubric_options = '<option value="">None</option>' + "".join(
-        f'<option value="{escape(rubric.id)}">{escape(rubric.title)}</option>'
-        for rubric in rubrics
+        f'<option value="{escape(rubric.id)}">{escape(rubric.title)}</option>' for rubric in rubrics
     )
     items = [
         (
