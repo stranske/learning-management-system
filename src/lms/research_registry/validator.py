@@ -10,7 +10,13 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from lms.research_registry.schemas import EvidenceSource, LearningClaim, LearningPrinciple
+from lms.research_registry.schemas import (
+    EvidenceReview,
+    EvidenceSource,
+    LearningClaim,
+    LearningPrinciple,
+    ResearchScan,
+)
 
 
 class ResearchRegistryError(ValueError):
@@ -24,6 +30,8 @@ class ResearchRegistry:
     principles: tuple[LearningPrinciple, ...]
     claims: tuple[LearningClaim, ...]
     evidence_sources: tuple[EvidenceSource, ...]
+    research_scans: tuple[ResearchScan, ...] = ()
+    evidence_reviews: tuple[EvidenceReview, ...] = ()
 
 
 def default_registry_dir() -> Path:
@@ -37,10 +45,16 @@ def load_registry(registry_dir: Path | None = None) -> ResearchRegistry:
     evidence_sources = _load_collection(root / "evidence-sources.yml", EvidenceSource)
     principles = _load_collection(root / "principles.yml", LearningPrinciple)
     claims = _load_collection(root / "claims.yml", LearningClaim)
+    research_scans = _load_collection(root / "research-scans.yml", ResearchScan, required=False)
+    evidence_reviews = _load_collection(
+        root / "evidence-reviews.yml", EvidenceReview, required=False
+    )
     registry = ResearchRegistry(
         principles=tuple(principles),
         claims=tuple(claims),
         evidence_sources=tuple(evidence_sources),
+        research_scans=tuple(research_scans),
+        evidence_reviews=tuple(evidence_reviews),
     )
     validate_registry(registry)
     return registry
@@ -52,7 +66,9 @@ def validate_registry(registry: ResearchRegistry) -> None:
         "evidence source", (source.id for source in registry.evidence_sources)
     )
     principle_ids = _ensure_unique("principle", (principle.id for principle in registry.principles))
-    _ensure_unique("claim", (claim.id for claim in registry.claims))
+    claim_ids = _ensure_unique("claim", (claim.id for claim in registry.claims))
+    _ensure_unique("research scan", (scan.id for scan in registry.research_scans))
+    _ensure_unique("evidence review", (review.id for review in registry.evidence_reviews))
 
     errors: list[str] = []
     for principle in registry.principles:
@@ -68,14 +84,34 @@ def validate_registry(registry: ResearchRegistry) -> None:
             if source_id not in source_ids:
                 errors.append(f"claim {claim.id} references unknown source id {source_id}")
 
+    for scan in registry.research_scans:
+        for source_id in scan.source_ids:
+            if source_id not in source_ids:
+                errors.append(f"research scan {scan.id} references unknown source id {source_id}")
+        for claim_id in scan.claim_ids:
+            if claim_id not in claim_ids:
+                errors.append(f"research scan {scan.id} references unknown claim id {claim_id}")
+
+    for review in registry.evidence_reviews:
+        if review.evidence_source_id not in source_ids:
+            errors.append(
+                f"evidence review {review.id} references unknown source id "
+                f"{review.evidence_source_id}"
+            )
+        for claim_id in review.claim_ids:
+            if claim_id not in claim_ids:
+                errors.append(f"evidence review {review.id} references unknown claim id {claim_id}")
+
     if errors:
         raise ResearchRegistryError("; ".join(errors))
 
 
-def _load_collection[T: (EvidenceSource, LearningClaim, LearningPrinciple)](
-    path: Path, model_type: type[T]
-) -> list[T]:
+def _load_collection[
+    T: (EvidenceSource, LearningClaim, LearningPrinciple, ResearchScan, EvidenceReview)
+](path: Path, model_type: type[T], *, required: bool = True) -> list[T]:
     if not path.exists():
+        if not required:
+            return []
         raise ResearchRegistryError(f"registry file missing: {path}")
 
     try:
@@ -94,9 +130,9 @@ def _load_collection[T: (EvidenceSource, LearningClaim, LearningPrinciple)](
     return records
 
 
-def _parse_record[T: (EvidenceSource, LearningClaim, LearningPrinciple)](
-    path: Path, index: int, item: dict[str, Any], model_type: type[T]
-) -> T:
+def _parse_record[
+    T: (EvidenceSource, LearningClaim, LearningPrinciple, ResearchScan, EvidenceReview)
+](path: Path, index: int, item: dict[str, Any], model_type: type[T]) -> T:
     try:
         return model_type.model_validate(item)
     except ValidationError as exc:

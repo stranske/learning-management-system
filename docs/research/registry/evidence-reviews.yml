@@ -1,0 +1,17 @@
+- id: review-roediger-karpicke-2006
+  evidenceSourceId: roediger-karpicke-2006
+  claimIds:
+    - claim-rereading-fluency-not-mastery
+  reviewStatus: accepted
+  reliabilityNotes: "Paraphrased: peer-reviewed experimental study reporting replicated test-enhanced learning effects."
+  limitations: "Paraphrased: laboratory paradigm; transfer to applied analyst tasks still needs internal confirmation."
+  decision: adopt
+  reviewedAt: "2026-05-25T00:00:00Z"
+- id: review-cepeda-et-al-2006
+  evidenceSourceId: cepeda-et-al-2006
+  claimIds: []
+  reviewStatus: needs-followup
+  reliabilityNotes: "Paraphrased: large quantitative synthesis of distributed-practice effects across verbal recall tasks."
+  limitations: "Paraphrased: heterogeneity across retention intervals means operational spacing defaults still need local validation."
+  decision: needs-more-data
+  reviewedAt: "2026-05-25T00:00:00Z"

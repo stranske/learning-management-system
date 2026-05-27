@@ -35,7 +35,10 @@ def main() -> None:
         "--registry-dir",
         type=Path,
         default=None,
-        help="directory containing principles.yml, claims.yml, and evidence-sources.yml",
+        help=(
+            "directory containing principles.yml, claims.yml, evidence-sources.yml, "
+            "research-scans.yml, and evidence-reviews.yml"
+        ),
     )
     source_parser = subparsers.add_parser(
         "source-references",
@@ -278,7 +281,9 @@ def main() -> None:
             "research registry valid: "
             f"{len(registry.principles)} principles, "
             f"{len(registry.claims)} claims, "
-            f"{len(registry.evidence_sources)} evidence sources"
+            f"{len(registry.evidence_sources)} evidence sources, "
+            f"{len(registry.research_scans)} research scans, "
+            f"{len(registry.evidence_reviews)} evidence reviews"
         )
         return
     if args.command == "source-references":

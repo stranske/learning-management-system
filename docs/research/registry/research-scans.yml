@@ -1,0 +1,22 @@
+- id: scan-retrieval-practice-2026q2
+  topic: "Retrieval practice and the testing effect for analyst onboarding."
+  scanDate: "2026-05-25"
+  sourceIds:
+    - how-do-we-learn-section-2-3
+    - roediger-karpicke-2006
+  claimIds:
+    - claim-rereading-fluency-not-mastery
+  summary: "Paraphrased scan: current retrieval-practice sources remain consistent with the rereading-versus-mastery claim; no contradicting evidence surfaced this cycle."
+  decision: monitor
+  nextReviewAt: "2026-11-25T00:00:00Z"
+  reviewer: "research-hygiene:personal"
+- id: scan-spacing-defaults-2026q2
+  topic: "Spaced and interleaved practice scheduling defaults."
+  scanDate: "2026-05-25"
+  sourceIds:
+    - cepeda-et-al-2006
+  claimIds: []
+  summary: "Paraphrased scan: distributed-practice synthesis still supports the current scheduling defaults; flagged for iteration once internal experiment data is available."
+  decision: iterate
+  nextReviewAt: "2026-11-25T00:00:00Z"
+  reviewer: "research-hygiene:personal"

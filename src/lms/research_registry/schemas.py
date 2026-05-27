@@ -79,6 +79,30 @@ class ClaimType(StrEnum):
     RISK_WARNING = "risk-warning"
 
 
+class ResearchDecision(StrEnum):
+    """Decision outcomes for research-hygiene records.
+
+    Mirrors the ``decision`` enum on the Experiment entity in the research
+    domain model so scans and reviews share one decision vocabulary.
+    """
+
+    ADOPT = "adopt"
+    ITERATE = "iterate"
+    REJECT = "reject"
+    NEEDS_MORE_DATA = "needs-more-data"
+    MONITOR = "monitor"
+
+
+class EvidenceReviewStatus(StrEnum):
+    """Lifecycle state for an evidence review."""
+
+    PENDING = "pending"
+    IN_REVIEW = "in-review"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    NEEDS_FOLLOWUP = "needs-followup"
+
+
 class RegistryModel(BaseModel):
     """Base model accepting the camel-case field names used in YAML."""
 
@@ -128,3 +152,30 @@ class LearningClaim(RegistryModel):
     scope: str = Field(min_length=1)
     review_cadence: ReviewCadence = Field(alias="reviewCadence")
     last_reviewed_at: datetime = Field(alias="lastReviewedAt")
+
+
+class ResearchScan(RegistryModel):
+    """A periodic research-hygiene scan of a topic's evidence and claims."""
+
+    id: str = Field(min_length=1)
+    topic: str = Field(min_length=1)
+    scan_date: date = Field(alias="scanDate")
+    source_ids: list[str] = Field(default_factory=list, alias="sourceIds")
+    claim_ids: list[str] = Field(default_factory=list, alias="claimIds")
+    summary: str = Field(min_length=1)
+    decision: ResearchDecision
+    next_review_at: datetime = Field(alias="nextReviewAt")
+    reviewer: str = Field(min_length=1)
+
+
+class EvidenceReview(RegistryModel):
+    """A structured review of one evidence source against the claims it informs."""
+
+    id: str = Field(min_length=1)
+    evidence_source_id: str = Field(min_length=1, alias="evidenceSourceId")
+    claim_ids: list[str] = Field(default_factory=list, alias="claimIds")
+    review_status: EvidenceReviewStatus = Field(alias="reviewStatus")
+    reliability_notes: str = Field(min_length=1, alias="reliabilityNotes")
+    limitations: str = Field(min_length=1)
+    decision: ResearchDecision
+    reviewed_at: datetime = Field(alias="reviewedAt")

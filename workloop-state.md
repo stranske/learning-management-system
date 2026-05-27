@@ -1,5 +1,16 @@
 # Workloop State
 
+## 2026-05-27T09:55Z - claude opener materialized issue #107 (research registry reviews)
+
+- Automation: `pd-workloop-resume` (claude opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#107](https://github.com/stranske/learning-management-system/issues/107) / new PR `Extend research registry review YAML` (priority:low, milestone:M5, repo-review-approved).
+- Selection context: raw opener cap 2/5 (not reached). Normal-tier candidates excluded — #112-#118 addressed by merged PRs (#162/#163/#164/#165/#166/#167/#168, closer issue-close territory), #119→open PR #169, #121 scoped-blocked (M6 gate). #120 newly scope-blocked this round (acceptance needs support+admin snapshots from unmerged #119/PR #169). Workflows #2159 already fixed by merged PR #2161 (closer issue-close). Oldest opener-actionable remaining = low-tier #107 (no PR any state, no branch, self-contained M5 validator work, no unmet dependency).
+- Worktree: `/private/tmp/lms-issue-107-claude`, branch `claude/issue-107-research-registry-reviews`, off `origin/main` `0d02f68`.
+- Changes: added `ResearchScan` and `EvidenceReview` Pydantic schemas (+ `ResearchDecision`/`EvidenceReviewStatus` enums, decision vocabulary aligned to the domain-model Experiment `decision` enum) to `src/lms/research_registry/schemas.py`; extended `validator.py` to load `research-scans.yml`/`evidence-reviews.yml` (optional-if-missing) and cross-check their source/claim references with unique-id checks; added seed YAML under `docs/research/registry/` (paraphrase-only summaries, stable ids); updated the `validate-research-registry` CLI help/counts; added `tests/research_registry/test_research_reviews.py`.
+- Validation: `tests/research_registry/test_research_reviews.py` -> 5 passed; full `tests/research_registry/` -> 11 passed (no regression); `ruff check`/`ruff format --check` clean; `mypy src/lms/research_registry/ src/lms/__main__.py` -> success (existing pyproject unused-section note only); CLI `validate-research-registry` -> "4 principles, 3 claims, 4 evidence sources, 2 research scans, 2 evidence reviews". No SQLAlchemy model and no `/research` route added (existing `test_research_api_routes_are_not_added` still passes).
+- Next action: push branch, open ready-for-review PR with `agent:claude`/`agents:keepalive`/`autofix`/`repo-review-approved`/`priority:low`, emit `pr_opened`; keepalive owns Gate/CI follow-up.
+
 ## 2026-05-27T09:28Z - codex closer resolved PR #168 conflicts and review threads
 
 - Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
