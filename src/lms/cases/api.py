@@ -161,7 +161,12 @@ def submit_work_product_route(
     if get_case(session, case_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found.")
     try:
-        work_product = create_work_product(session, case_id=case_id, **payload.model_dump())
+        work_product = create_work_product(
+            session,
+            case_id=case_id,
+            status="submitted",
+            **payload.model_dump(),
+        )
         session.commit()
         session.refresh(work_product)
     except ValueError as exc:

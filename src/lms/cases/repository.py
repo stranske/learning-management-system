@@ -263,6 +263,8 @@ def create_work_product(
     """Record a learner work product submitted for a transfer case."""
     _require_submission_type(submission_type)
     _require_work_product_status(status)
+    if status not in ("draft", "submitted"):
+        raise ValueError("work product status on create must be draft or submitted")
     if body is None and artifact_ref is None:
         raise ValueError("work product must include a body or an artifact_ref")
     case = get_case(session, case_id)
@@ -390,7 +392,7 @@ def score_work_product(
         learner_id=work_product.learner_id,
         knowledge_node_id=resolved_node_id,
         attempt_id=attempt.id,
-        prompt_id=work_product.prompt_id,
+        prompt_id=attempt.prompt_id,
         evidence_kind="observed",
         transfer_distance=transfer_distance,
         validity_scope=scope_value,
@@ -439,8 +441,6 @@ def request_work_product_revision(
         feedback_action_id=feedback_action_id,
         work_product_id=work_product.id,
     )
-    work_product.revision_request_id = request.id
-    work_product.status = "revision-requested"
     session.flush()
     return request
 

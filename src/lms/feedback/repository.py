@@ -272,6 +272,21 @@ def create_revision_request(
             "or an original prompt attempt"
         )
 
+    work_product = None
+    if work_product_id is not None:
+        from lms.cases.models import WorkProduct
+
+        work_product = session.get(WorkProduct, work_product_id)
+        if work_product is None:
+            raise ValueError("referenced work product was not found")
+        if work_product.learner_id != learner_id:
+            raise ValueError("revision request learner must match the work product learner")
+        prompt_id = _coalesce_revision_link(
+            "prompt id",
+            prompt_id,
+            work_product.prompt_id or work_product.case_step_id or work_product.case_id,
+        )
+
     if feedback_record_id is not None:
         record = get_feedback_record(session, feedback_record_id)
         if record is None:
@@ -326,7 +341,10 @@ def create_revision_request(
     session.flush()
     if action is not None:
         action.status = "in-progress"
-        session.flush()
+    if work_product is not None:
+        work_product.revision_request_id = request.id
+        work_product.status = "revision-requested"
+    session.flush()
     return request
 
 

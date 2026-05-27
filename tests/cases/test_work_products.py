@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from lms.cases.models import CaseStep
 from lms.cases.repository import (
     create_case,
     create_work_product,
@@ -14,6 +16,7 @@ from lms.cases.repository import (
 from lms.evidence.repository import list_evidence_records
 from lms.feedback.repository import (
     create_feedback_action,
+    create_revision_request,
     create_rubric,
     list_feedback_records,
 )
@@ -85,9 +88,45 @@ def test_work_product_scoring_creates_transfer_evidence(db_session: Session) -> 
     assert len(evidence_records) == 1
     transfer_evidence = evidence_records[0]
     assert transfer_evidence.id == score.evidence_record_id
+    assert transfer_evidence.prompt_id == case_id
     assert transfer_evidence.transfer_distance == "far"
     assert transfer_evidence.validity_scope == f"transfer-case:{case_id}"
     assert transfer_evidence.normalized_score == pytest.approx(0.8)
+
+
+def test_work_product_scoring_aligns_attempt_and_evidence_prompt_ids(
+    db_session: Session,
+) -> None:
+    """Transfer evidence uses the same prompt id as the work-product attempt."""
+    node_id, rubric_id, case_id = _seed_case_with_rubric(db_session)
+    step_id = db_session.scalar(select(CaseStep.id).where(CaseStep.case_id == case_id))
+    assert step_id is not None
+    work_product = create_work_product(
+        db_session,
+        case_id=case_id,
+        learner_id="learner-1",
+        submission_type="memo",
+        rubric_id=rubric_id,
+        case_step_id=step_id,
+        body="Recommend granting the exception.",
+    )
+    db_session.commit()
+
+    score = score_work_product(
+        db_session,
+        work_product,
+        scorer_type="rubric-local",
+        criterion_scores=[{"criterion": "analysis", "points": 8, "max_points": 10}],
+        raw_score=8.0,
+        max_score=10.0,
+    )
+    db_session.commit()
+
+    evidence = list_evidence_records(db_session, learner_id="learner-1", knowledge_node_id=node_id)[
+        0
+    ]
+    assert evidence.attempt_id == score.attempt_id
+    assert evidence.prompt_id == step_id
 
 
 def test_work_product_scoring_requires_a_linked_rubric(db_session: Session) -> None:
@@ -161,3 +200,29 @@ def test_case_feedback_can_request_work_product_revision(db_session: Session) ->
     # Opening the request moves the linked revision action into progress.
     db_session.refresh(action)
     assert action.status == "in-progress"
+
+
+def test_revision_request_create_syncs_work_product_link(db_session: Session) -> None:
+    """Generic revision creation keeps the work-product pointer in sync."""
+    _, rubric_id, case_id = _seed_case_with_rubric(db_session)
+    work_product = create_work_product(
+        db_session,
+        case_id=case_id,
+        learner_id="learner-1",
+        submission_type="memo",
+        rubric_id=rubric_id,
+        body="Initial recommendation that needs revision.",
+    )
+    db_session.commit()
+
+    request = create_revision_request(
+        db_session,
+        learner_id="learner-1",
+        work_product_id=work_product.id,
+    )
+    db_session.commit()
+
+    assert request.work_product_id == work_product.id
+    assert request.prompt_id == case_id
+    assert work_product.revision_request_id == request.id
+    assert work_product.status == "revision-requested"

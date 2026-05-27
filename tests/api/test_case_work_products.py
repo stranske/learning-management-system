@@ -84,6 +84,26 @@ def test_submit_case_work_product(db_session: Session) -> None:
     assert get_response.json()["id"] == work_product_id
 
 
+def test_submit_case_work_product_ignores_client_status(db_session: Session) -> None:
+    """Submitting a work product keeps workflow status server-controlled."""
+    case_id, rubric_id = _seed_case(db_session)
+    client = _client(db_session)
+
+    response = client.post(
+        f"/cases/{case_id}/work-products",
+        json={
+            "learner_id": "learner-1",
+            "submission_type": "memo",
+            "rubric_id": rubric_id,
+            "body": "Recommend granting the exception with the controlling clause cited.",
+            "status": "accepted",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "submitted"
+
+
 def test_submit_work_product_requires_body_or_artifact(db_session: Session) -> None:
     """A work product without a body or artifact reference is rejected."""
     case_id, _ = _seed_case(db_session)

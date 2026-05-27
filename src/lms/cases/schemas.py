@@ -108,7 +108,6 @@ class WorkProductCreate(BaseModel):
     prompt_id: str | None = Field(default=None, min_length=1, max_length=36)
     body: str | None = Field(default=None, min_length=1)
     artifact_ref: str | None = Field(default=None, min_length=1, max_length=1024)
-    status: WorkProductStatus = "submitted"
 
     @model_validator(mode="after")
     def _require_body_or_artifact(self) -> WorkProductCreate:
