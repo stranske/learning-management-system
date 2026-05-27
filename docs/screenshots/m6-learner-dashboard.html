@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Learner</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner" aria-current="page">Learner</a></li><li><a href="/app/author">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface learner-dashboard">
+          <header>
+            <p class="eyebrow">Your learning home</p>
+            <h1>Learner dashboard</h1>
+            <p>Everything below reflects your own evidence and goals. Counts are
+            informational, not scores.</p>
+          </header>
+          <nav class="dashboard-links" aria-label="Dashboard quick links"><ul><li><a href="/learn">Start or continue an attempt</a></li><li><a href="/app/learner/review">Open the review queue</a></li><li><a href="#next-actions">See feedback actions</a></li><li><a href="#capability">See capability targets</a></li></ul></nav>
+          <div class="dashboard-grid">
+            <section class="panel" id="next-actions" aria-labelledby="next-actions-heading"><h2 id="next-actions-heading">Next actions</h2><p><a href="/learn">Start or continue an attempt</a></p><ul class="panel-list"><li class='panel-item'><strong>Revise with one cited reason</strong><span>revision · open</span><small>Add the source-backed reason before resubmitting.</small></li></ul></section>
+            <section class="panel" id="reviews" aria-labelledby="reviews-heading"><h2 id="reviews-heading">Due reviews</h2><section class="empty-state" aria-label="Empty state"><h2>No reviews due</h2><p>Nothing is due for review today. Scheduled reviews show up here; the backlog total is informational, not an obligation score.</p></section></section>
+            <section class="panel" id="recent-evidence" aria-labelledby="recent-evidence-heading"><h2 id="recent-evidence-heading">Recent evidence</h2><ul class="panel-list"><li class='panel-item'><strong>snapshot-id</strong><span>score 40%</span><small>used hint, reference, support hint; observed 2026-05-27</small></li></ul></section>
+            <section class="panel" id="goals" aria-labelledby="goals-heading"><h2 id="goals-heading">Goals</h2><ul class="panel-list"><li class='panel-item'><strong>Use spacing to retain key ideas</strong><span>conceptual · active</span></li></ul></section>
+            <section class="panel" id="mastery" aria-labelledby="mastery-heading"><h2 id="mastery-heading">Mastery summary</h2><ul class="panel-list"><li class='panel-item'><strong>Explain spacing effects</strong><span>estimate 40%; evidence count 1</span></li></ul><p class="note">Model attribution: Deterministic placeholder policy inspired by FSRS 4.5</p></section>
+            <section class="panel" id="capability" aria-labelledby="capability-heading"><h2 id="capability-heading">Capability targets</h2><ul class="panel-list"><li class='panel-item'><strong>Apply spacing in a study plan</strong><span>active · confidence threshold 80%</span></li></ul></section>
+            <section class="panel" id="maintenance" aria-labelledby="maintenance-heading"><h2 id="maintenance-heading">Maintenance plan</h2><section class="empty-state" aria-label="Empty state"><h2>No maintenance-plan steps yet</h2><p>No maintenance-plan steps yet. Steps are generated from a gap analysis when there is something specific to maintain.</p></section></section>
+          </div>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Attempt</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner" aria-current="page">Learner</a></li><li><a href="/app/author">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface attempt-surface">
+          <header>
+            <p class="eyebrow">Activity attempt</p>
+            <h1>Attempt</h1>
+          </header>
+          
+        
+        
+          <section class="notice" aria-labelledby="resubmit-heading">
+            <h2 id="resubmit-heading">You already submitted an attempt for this prompt</h2>
+            <p>Your most recent confidence was 3/5.</p>
+            <p><a href="/app/learner/attempts/feedback?learner_id=learner-1&prompt_id=prompt-1">
+              View your feedback and next action</a>, or submit another attempt below.</p>
+          </section>
+        
+        <section aria-labelledby="task-heading">
+          <h2 id="task-heading">Your task</h2>
+          <p class="prompt-text">Explain the retrieval practice idea.</p>
+          <ul class="prompt-meta">
+            <li>Demand level: <strong>medium</strong></li>
+            <li>Expected answer form: <strong>short-text</strong></li>
+            <li>Cognitive action: <strong>explain</strong></li>
+          </ul>
+          <p class="prompt-provenance">Provenance: human-authored; author author-1; reviewer reviewer-1.</p>
+        </section>
+        <form class="attempt-form" method="post" action="/app/learner/attempts" data-started-at="">
+          <input type="hidden" name="learner_id" value="learner-1">
+          <input type="hidden" name="prompt_id" value="prompt-1">
+          <input type="hidden" id="elapsed_seconds" name="elapsed_seconds" value="">
+          <label for="response_text">Your response</label>
+          <textarea id="response_text" name="response_text" rows="6" required></textarea>
+          <label for="confidence_rating">Confidence</label>
+          <select id="confidence_rating" name="confidence_rating">
+            <option value="1">1 - unsure</option>
+            <option value="2">2</option>
+            <option value="3" selected>3</option>
+            <option value="4">4</option>
+            <option value="5">5 - confident</option>
+          </select>
+          <label class="check">
+            <input type="checkbox" name="reference_accessed" value="true">
+            I opened a reference during this attempt
+          </label>
+          <button type="submit">Submit attempt</button>
+        </form>
+        <section aria-labelledby="sources-heading" class="source-panel">
+          <h2 id="sources-heading">Source citations after attempt</h2>
+          <ul><li>source-1: https://example.test/source</li></ul>
+        </section>
+        <script>
+          (function () {
+            var form = document.querySelector(".attempt-form");
+            if (!form) { return; }
+            var startedAt = Date.now();
+            form.addEventListener("submit", function () {
+              var field = form.querySelector("#elapsed_seconds");
+              if (field && !field.value) {
+                field.value = Math.round((Date.now() - startedAt) / 1000);
+              }
+            });
+          })();
+        </script>
+        
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

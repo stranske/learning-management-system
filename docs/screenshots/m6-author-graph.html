@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Graph</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner">Learner</a></li><li><a href="/app/author">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface graph-design-surface">
+          <header>
+            <p class="eyebrow">Author graph</p>
+            <h1>Graph design</h1>
+            <p>Edit nodes, test typed edges, and review LLM drafts.</p>
+          </header>
+          <section aria-labelledby="nodes-heading">
+            <h2 id="nodes-heading">Nodes</h2>
+            <article class="graph-node" data-node-id="snapshot-id"><h3>Explain spacing effects</h3><p>conceptual · personal · published · manual</p><p>A representative published node for demo snapshots.</p><p data-signal="evidence-summary">1 evidence records · mastery pending</p></article>
+            <form method="post" action="/app/author/graph/nodes" data-action="create-node">
+              <input type="hidden" name="ownership_scope" value="personal">
+              <label>Title <input name="title" required></label>
+              <label>Type
+                <select name="knowledge_type">
+                  <option value="conceptual">conceptual</option>
+                  <option value="procedural">procedural</option>
+                  <option value="judgment">judgment</option>
+                  <option value="factual">factual</option>
+                </select>
+              </label>
+              <label>Status
+                <select name="status">
+                  <option value="draft">draft</option>
+                  <option value="published">published</option>
+                </select>
+              </label>
+              <label>Description <textarea name="description" rows="3"></textarea></label>
+              <button type="submit">Save node</button>
+            </form>
+          </section>
+          <section aria-labelledby="edges-heading">
+            <h2 id="edges-heading">Adjacency</h2>
+            <p class="empty-state">No graph edges yet.</p>
+            <form method="post" action="/app/author/graph/edges" data-action="create-edge">
+              <input type="hidden" name="ownership_scope" value="personal">
+              <label>Source <select name="source_node_id"><option value="snapshot-id">Explain spacing effects</option></select></label>
+              <label>Target <select name="target_node_id"><option value="snapshot-id">Explain spacing effects</option></select></label>
+              <label>Type
+                <select name="edge_type">
+                  <option value="prerequisite">prerequisite</option>
+                  <option value="transfer-context">transfer-context</option>
+                  <option value="supports-competency">supports-competency</option>
+                  <option value="analogy">analogy</option>
+                </select>
+              </label>
+              <label>Target scope
+                <select name="target_scope">
+                  <option value="personal" selected>personal</option><option value="institutional">institutional</option>
+                </select>
+              </label>
+              <label>Confidence <input name="confidence" inputmode="decimal" placeholder="0.0-1.0"></label>
+              <label class="check"><input type="checkbox" name="is_graph_reference" value="true"> graph-reference</label>
+              <button type="submit">Save edge</button>
+            </form>
+          </section>
+          <section aria-labelledby="proposals-heading">
+            <h2 id="proposals-heading">LLM proposals</h2>
+            <p class="empty-state">No proposal drafts pending human approval.</p>
+          </section>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

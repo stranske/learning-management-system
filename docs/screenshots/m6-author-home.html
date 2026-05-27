@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Author</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner">Learner</a></li><li><a href="/app/author" aria-current="page">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface author-surface">
+          <header>
+            <p class="eyebrow">Author workspace</p>
+            <h1>Author</h1>
+          </header>
+          <section class="empty-state" aria-labelledby="author-start-heading">
+            <h2 id="author-start-heading">Authoring tools</h2>
+            <p>Create learning objects, feedback instruments, and transfer cases.</p>
+            <nav aria-label="Author tools">
+              <a href="/app/author/goals">Goals</a>
+              <a href="/app/author/knowledge">Knowledge graph</a>
+              <a href="/app/author/prompts">Prompts</a>
+              <a href="/app/author/rubrics">Rubrics</a>
+              <a href="/app/author/feedback-templates">Feedback templates</a>
+              <a href="/app/author/cases">Cases</a>
+            </nav>
+          </section>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

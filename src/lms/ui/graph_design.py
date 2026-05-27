@@ -155,6 +155,11 @@ def _graph_surface(
     node_titles = {node.id: node.title for node in nodes}
     edge_items = "".join(_edge_item(edge, node_titles=node_titles) for edge in edges)
     proposal_items = "".join(_proposal_item(proposal, scope=scope) for proposal in proposals)
+    target_scope_options = "".join(
+        f'<option value="{escape(candidate)}"'
+        f"{' selected' if candidate == scope else ''}>{escape(candidate)}</option>"
+        for candidate in ("personal", "institutional")
+    )
 
     return render_page(
         "Graph",
@@ -206,9 +211,7 @@ def _graph_surface(
               </label>
               <label>Target scope
                 <select name="target_scope">
-                  <option value="{escape(scope)}">{escape(scope)}</option>
-                  <option value="personal">personal</option>
-                  <option value="institutional">institutional</option>
+                  {target_scope_options}
                 </select>
               </label>
               <label>Confidence <input name="confidence" inputmode="decimal" placeholder="0.0-1.0"></label>

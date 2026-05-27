@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Review</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner" aria-current="page">Learner</a></li><li><a href="/app/author">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface review-surface">
+          <header>
+            <p class="eyebrow">Due review queue</p>
+            <h1>Review</h1>
+          </header>
+          <section class="queue-summary" aria-label="Review queue summary">
+            <p>Daily cap: <strong>25</strong></p>
+            <p>Returned: <strong>0</strong></p>
+            <p>Backlog: <strong>0</strong></p>
+            <p>0 pending item(s); showing up to 25 today. The total is informational, not an obligation score.</p>
+          </section>
+          <section aria-labelledby="queue-heading">
+            <h2 id="queue-heading">Reason codes</h2>
+            <ul class="review-queue"><li class='queue-item empty'>No due review items.</li></ul>
+          </section>
+          <section aria-labelledby="schedule-heading">
+            <h2 id="schedule-heading">Schedule detail</h2>
+            <ul class="review-queue"><li class='queue-item empty'>No durable review schedules.</li></ul>
+          </section>
+          <section aria-labelledby="decision-heading">
+            <h2 id="decision-heading">Scheduler decisions</h2>
+            <ul class="review-queue"><li class='queue-item empty'>No scheduler decisions recorded.</li></ul>
+          </section>
+          <section aria-labelledby="policy-heading">
+            <h2 id="policy-heading">Review policy</h2>
+            <ul class="review-queue"><li class='queue-item empty'>No active review policies.</li></ul>
+          </section>
+          <section aria-labelledby="controls-heading">
+            <h2 id="controls-heading">Review controls</h2>
+            <button type="button" data-action="pause-review" disabled>Pause review</button>
+            <button type="button" data-action="mark-stale" disabled>Mark stale</button>
+            <button type="button" data-action="resume-review" disabled>Resume</button>
+          </section>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

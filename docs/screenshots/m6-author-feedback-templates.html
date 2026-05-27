@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Author feedback templates</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner">Learner</a></li><li><a href="/app/author" aria-current="page">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface author-surface">
+          
+      <header>
+        <p class="eyebrow">Authoring workspace</p>
+        <h1>Feedback templates</h1>
+      </header>
+      <nav class="subnav" aria-label="Authoring tools">
+        <a href="/app/author/goals">Goals</a>
+        <a href="/app/author/knowledge">Knowledge graph</a>
+        <a href="/app/author/prompts">Prompts</a>
+        <a href="/app/author/rubrics">Rubrics</a>
+        <a href="/app/author/feedback-templates">Feedback templates</a>
+        <a href="/app/author/cases">Cases</a>
+      </nav>
+    
+          
+          <form method="post" action="/app/author/feedback-templates">
+            <label for="name">Template name</label>
+            <input id="name" name="name" required>
+            <label for="template_body">Template body</label>
+            <textarea id="template_body" name="template_body" rows="4" required>Focus next on {next_action} because {gap}.</textarea>
+            <label for="required_placeholders">Required placeholders</label>
+            <input id="required_placeholders" name="required_placeholders" value="gap,next_action">
+            <label for="feedback_level">Feedback level</label>
+            <select id="feedback_level" name="feedback_level">
+              <option value="coaching">coaching</option>
+              <option value="remediation">remediation</option>
+              <option value="review">review</option>
+            </select>
+            <label for="action_type">Action type</label>
+            <select id="action_type" name="action_type">
+              <option value="retry">retry</option>
+              <option value="revision">revision</option>
+              <option value="prerequisite-remediation">prerequisite-remediation</option>
+            </select>
+            
+      <label for="ownership_scope">Ownership scope</label>
+      <select id="ownership_scope" name="ownership_scope">
+        <option value="personal">personal</option>
+        <option value="institutional">institutional</option>
+      </select>
+      <label for="status">Status</label>
+      <select id="status" name="status">
+        <option value="draft">draft</option>
+        <option value="published">published</option>
+      </select>
+      
+        <label for="authoring_actor">Authoring actor</label>
+        <input id="authoring_actor" name="authoring_actor" value="author-1" required>
+        
+    
+            <button type="submit">Create template</button>
+          </form>
+          <form method="post" action="/app/author/feedback-templates/preview">
+            <label for="template_id">Template preview</label>
+            <select id="template_id" name="template_id" required></select>
+            <label for="values_json">Placeholder values JSON</label>
+            <textarea id="values_json" name="values_json" rows="3">{"gap": "cite the source", "next_action": "revise the evidence paragraph"}</textarea>
+            <button type="submit">Render preview</button>
+          </form>
+          
+          <section aria-labelledby="templates-list-heading">
+            <h2 id="templates-list-heading">Template library</h2>
+            <section class="empty-state" aria-label="Empty state"><h2>No feedback templates</h2><p>Create a template before testing placeholder rendering.</p></section>
+          </section>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

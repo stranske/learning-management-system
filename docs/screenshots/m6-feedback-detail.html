@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Feedback</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner" aria-current="page">Learner</a></li><li><a href="/app/author">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface feedback-surface">
+          <header>
+            <p class="eyebrow">Learner feedback</p>
+            <h1>Use source evidence to explain the decision</h1>
+          </header>
+          
+          
+          <section aria-labelledby="feedback-summary-heading">
+            <h2 id="feedback-summary-heading">What the feedback says</h2>
+            <dl>
+              <dt>Observed evidence</dt>
+              <dd>The response named a conclusion without evidence.</dd>
+              <dt>Diagnosis</dt>
+              <dd>No diagnosis recorded yet.</dd>
+              <dt>Gap</dt>
+              <dd>Missing source-backed reasoning</dd>
+            </dl>
+          </section>
+          <section aria-labelledby="feedback-actions-heading"><h2 id="feedback-actions-heading">Next actions</h2><ul class="panel-list"><li class='panel-item'><strong>Revise with one cited reason</strong><span>Add the source-backed reason before resubmitting.</span><small>revision - open</small></li></ul></section>
+          <section aria-labelledby="rubric-heading"><h2 id="rubric-heading">Rubric breakdown</h2><ul class="panel-list"><li class='panel-item'>No rubric breakdown recorded yet.</li></ul></section>
+          <section aria-labelledby="hints-heading"><h2 id="hints-heading">Hints</h2><ul class="panel-list"><li class='panel-item'>No hints are linked to this prompt.</li></ul></section>
+          <section aria-labelledby="model-answer-heading"><h2 id="model-answer-heading">Model answer</h2><ul class="panel-list"><li class='panel-item'>No model answer is linked to this prompt.</li></ul></section>
+          <section aria-labelledby="revision-state-heading"><h2 id="revision-state-heading">Revision status</h2><ul class="panel-list"><li class='panel-item'>No revision request has been submitted yet.</li></ul></section>
+          
+    <section aria-labelledby="revision-form-heading">
+      <h2 id="revision-form-heading">Submit a revision</h2>
+      <form method="post" action="/app/learner/feedback/snapshot-id/revision">
+        <label for="response_text">Revised response</label>
+        <textarea id="response_text" name="response_text" rows="5"></textarea>
+        <label for="confidence_rating">Confidence</label>
+        <select id="confidence_rating" name="confidence_rating">
+          <option value="">Not recorded</option>
+          <option value="1">1 - unsure</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5 - confident</option>
+        </select>
+        <button type="submit">Submit revision</button>
+      </form>
+    </section>
+    
+          <nav aria-label="Feedback navigation">
+            <a href="/learn">Attempt flow</a>
+            <a href="/app/learner/review">Review queue</a>
+            <a href="/app/learner">Learner dashboard</a>
+          </nav>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

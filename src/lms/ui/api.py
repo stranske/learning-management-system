@@ -1124,9 +1124,7 @@ def _latest_attempt_summary(session: Session, *, learner_id: str, prompt_id: str
     correctness_label = (
         "pending scoring evidence"
         if correctness is None
-        else "correct"
-        if correctness
-        else "incorrect"
+        else "correct" if correctness else "incorrect"
     )
     return (
         f"Latest evidence: confidence {_confidence_label(attempt.confidence_rating)}; "
@@ -1198,7 +1196,7 @@ def _author_goals_surface(
           </form>
           <section aria-labelledby="goal-list-heading">
             <h2 id="goal-list-heading">Current goals</h2>
-            <ul>{"".join(goal_items)}</ul>
+            <ul class="author-list">{"".join(goal_items)}</ul>
           </section>
         </main>
         """,
@@ -1282,11 +1280,11 @@ def _author_knowledge_surface(
           </section>
           <section aria-labelledby="node-list-heading">
             <h2 id="node-list-heading">Nodes</h2>
-            <ul>{"".join(node_items)}</ul>
+            <ul class="author-list">{"".join(node_items)}</ul>
           </section>
           <section aria-labelledby="edge-list-heading">
             <h2 id="edge-list-heading">Edges</h2>
-            <ul>{"".join(edge_items)}</ul>
+            <ul class="author-list">{"".join(edge_items)}</ul>
           </section>
         </main>
         """,
@@ -1347,7 +1345,7 @@ def _author_prompts_surface(
           </form>
           <section aria-labelledby="prompt-list-heading">
             <h2 id="prompt-list-heading">Current prompts</h2>
-            <ul>{"".join(prompt_items)}</ul>
+            <ul class="author-list">{"".join(prompt_items)}</ul>
           </section>
         </main>
         """,

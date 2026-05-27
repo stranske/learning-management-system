@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS LLM study</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner" aria-current="page">Learner</a></li><li><a href="/app/author">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface llm-study-surface">
+          
+          <header>
+            <p class="eyebrow">Guided LLM study</p>
+            <h1>LLM study session</h1>
+            <p>Start a formative study-coach or practice turn. Provider routing and
+            budgets are fixed by policy; this surface only shows what the backend
+            returns.</p>
+          </header>
+          
+          <form method="post" action="/app/learner/llm-study/sessions" class="llm-study-form">
+            <input type="hidden" name="learner_id" value="learner-1">
+            <label for="mode">mode</label><select id="mode" name="mode"><option value="study-coach" selected>study-coach</option><option value="practice">practice</option></select>
+            <label for="coaching_intensity">coaching intensity</label><select id="coaching_intensity" name="coaching_intensity"><option value="full" selected>full</option><option value="light">light</option><option value="quiet">quiet</option></select>
+            <label for="user_message">Your message</label>
+            <textarea id="user_message" name="user_message" rows="4" required></textarea>
+            <label for="source_constraints">Required source ids (comma separated)</label>
+            <input id="source_constraints" name="source_constraints"
+              aria-describedby="source-hint">
+            <small id="source-hint">Responses that omit a required source id are flagged
+            <code>unverified</code>.</small>
+            <label class="check">
+              <input type="checkbox" name="assessment_restricted" value="true">
+              Assessment-restricted (disable hints and direct feedback)
+            </label>
+            <label class="check">
+              <input type="checkbox" name="retrieval_active" value="true">
+              Retrieval practice active
+            </label>
+            <button type="submit">Start study turn</button>
+          </form>
+          <p class="note">Transfer-mode interactions are read-only and are not started
+          from this surface.</p>
+    
+          
+          <section aria-labelledby="trace-handling-heading" class="trace-handling">
+            <h2 id="trace-handling-heading">Trace handling</h2>
+            <ul>
+              <li><strong>formative</strong> traces keep a short local summary for your
+              own review and are not exported verbatim to external trace tooling.</li>
+              <li><strong>ephemeral</strong> traces are held locally only, are never
+              externally exported, and cannot be kept for verbatim retention.</li>
+            </ul>
+            <p>Verbatim transcript bodies are never exported from this surface; only the
+            current response and trace metadata are shown.</p>
+          </section>
+    
+          <section aria-labelledby="result-heading" class="study-result">
+            <h2 id="result-heading">Session result</h2>
+            <section class="empty-state" aria-label="Empty state"><h2>No session yet</h2><p>Start a study turn above to see the response, trace class, cost, model identity, and keep/forget controls.</p></section>
+          </section>
+        </main>
+    
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

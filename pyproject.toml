@@ -48,6 +48,15 @@ dev = [
     "jupyter>=1.1.1",
     "types-PyYAML>=6.0.12.20260518",
 ]
+# Deferred visual/accessibility harness. Not installed in CI: the required M6
+# smoke layer is the browser-free HTML snapshot suite in
+# tests/ui/test_m6_screenshots.py. Activate Playwright with
+# ``pip install -e '.[visual]' && playwright install`` and PLAYWRIGHT_AVAILABLE=1
+# when a later milestone justifies it (see docs/development/web-prototype.md).
+visual = [
+    "playwright>=1.56.0",
+    "pytest-playwright>=0.5.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/stranske/learning-management-system"
@@ -142,4 +151,11 @@ ignore_missing_imports = true
 # mistune does not ship a py.typed marker; keep the markdown importer typed
 # internally while ignoring the third-party package boundary.
 module = ["mistune"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# playwright is the deferred [visual] optional dependency and is not installed
+# in CI. The smoke scaffold imports it lazily inside a skipped-by-default test;
+# ignore the missing import so the browser-free suite stays type-clean.
+module = ["playwright.*"]
 ignore_missing_imports = true

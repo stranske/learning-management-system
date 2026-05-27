@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Author cases</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner">Learner</a></li><li><a href="/app/author" aria-current="page">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface author-surface">
+          
+      <header>
+        <p class="eyebrow">Authoring workspace</p>
+        <h1>Cases</h1>
+      </header>
+      <nav class="subnav" aria-label="Authoring tools">
+        <a href="/app/author/goals">Goals</a>
+        <a href="/app/author/knowledge">Knowledge graph</a>
+        <a href="/app/author/prompts">Prompts</a>
+        <a href="/app/author/rubrics">Rubrics</a>
+        <a href="/app/author/feedback-templates">Feedback templates</a>
+        <a href="/app/author/cases">Cases</a>
+      </nav>
+    
+          
+          <form method="post" action="/app/author/cases">
+            <label for="case-title">Case title</label>
+            <input id="case-title" name="title" required>
+            <label for="case-description">Description</label>
+            <textarea id="case-description" name="description" rows="2"></textarea>
+            
+      <label for="ownership_scope">Ownership scope</label>
+      <select id="ownership_scope" name="ownership_scope">
+        <option value="personal">personal</option>
+        <option value="institutional">institutional</option>
+      </select>
+      <label for="status">Status</label>
+      <select id="status" name="status">
+        <option value="draft">draft</option>
+        <option value="published">published</option>
+      </select>
+      
+    
+            <label for="rubric_id">Linked rubric</label>
+            <select id="rubric_id" name="rubric_id"><option value="">None</option><option value="snapshot-id">Evidence use</option></select>
+            <label for="case-node">Linked source node</label>
+            <input id="case-node" name="knowledge_node_id">
+            <fieldset>
+              <legend>Step</legend>
+              <label for="step_order">Order</label>
+              <input id="step_order" name="step_order" type="number" min="1" value="1" required>
+              <label for="step_title">Step title</label>
+              <input id="step_title" name="step_title" required>
+              <label for="step_prompt">Step prompt</label>
+              <textarea id="step_prompt" name="step_prompt" rows="3" required></textarea>
+              <label for="expected_work_product">Expected work product</label>
+              <input id="expected_work_product" name="expected_work_product" placeholder="memo, rationale, or analysis">
+            </fieldset>
+            <fieldset>
+              <legend>Evidence packet</legend>
+              <label for="evidence_title">Evidence title</label>
+              <input id="evidence_title" name="evidence_title" required>
+              <label for="evidence_summary">Evidence summary</label>
+              <textarea id="evidence_summary" name="evidence_summary" rows="2"></textarea>
+              <label for="packet_metadata">Packet metadata JSON</label>
+              <textarea id="packet_metadata" name="packet_metadata" rows="2">{"source": "author"}</textarea>
+            </fieldset>
+            <fieldset>
+              <legend>Decision point</legend>
+              <label for="decision_title">Decision title</label>
+              <input id="decision_title" name="decision_title" required>
+              <label for="decision_prompt">Decision prompt</label>
+              <textarea id="decision_prompt" name="decision_prompt" rows="2" required></textarea>
+              <label for="decision_type">Decision type</label>
+              <select id="decision_type" name="decision_type">
+                <option value="single-choice">single-choice</option>
+                <option value="free-response">free-response</option>
+                <option value="evidence-selection">evidence-selection</option>
+              </select>
+              <label for="decision_options">Decision options JSON</label>
+              <textarea id="decision_options" name="decision_options" rows="2">[{"label": "Approve", "value": "approve"}]</textarea>
+            </fieldset>
+            <button type="submit">Create case</button>
+          </form>
+          <section aria-labelledby="cases-list-heading">
+            <h2 id="cases-list-heading">Case library</h2>
+            <ul class='author-list'><li><strong>Plan a spaced review</strong><span>personal scope; draft; 1 steps; 1 evidence packets</span><small>Rubric: none | source node: none</small></li></ul>
+          </section>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

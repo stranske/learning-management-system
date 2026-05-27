@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Learn</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner" aria-current="page">Learner</a></li><li><a href="/app/author">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface learn-surface">
+          <header>
+            <p class="eyebrow">Assigned next task</p>
+            <h1>Learn</h1>
+          </header>
+          <section aria-labelledby="prompt-heading">
+            <h2 id="prompt-heading">Prompt</h2>
+            <p class="prompt-text">Explain the retrieval practice idea.</p>
+            <p class="prompt-provenance">Provenance: human-authored; author author-1; reviewer reviewer-1.</p>
+          </section>
+          <form class="attempt-form" method="post" action="/learn/attempts">
+            <input type="hidden" name="learner_id" value="learner-1">
+            <input type="hidden" name="prompt_id" value="prompt-1">
+            <label for="response_text">Response</label>
+            <textarea id="response_text" name="response_text" rows="6"></textarea>
+            <label for="confidence_rating">Confidence</label>
+            <select id="confidence_rating" name="confidence_rating">
+              <option value="1">1 - unsure</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5 - confident</option>
+            </select>
+            <label class="check">
+              <input type="checkbox" name="reference_accessed" value="true">
+              I opened a reference during the attempt
+            </label>
+            <button type="submit">Submit attempt</button>
+          </form>
+          <section aria-labelledby="feedback-heading">
+            <h2 id="feedback-heading">Feedback and next action</h2>
+            <p>Latest evidence: confidence 3/5; correctness pending scoring evidence.</p>
+          </section>
+          <section aria-labelledby="sources-heading" class="source-panel">
+            <h2 id="sources-heading">Source citations after attempt</h2>
+            <ul><li>source-1: https://example.test/source</li></ul>
+          </section>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>
