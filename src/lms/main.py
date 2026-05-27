@@ -25,6 +25,7 @@ from lms.scheduling.api import router as review_queue_router
 from lms.settings import get_settings
 from lms.sources.api import router as sources_router
 from lms.ui.api import router as learner_ui_router
+from lms.ui.author import router as author_ui_router
 
 
 def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
@@ -62,6 +63,7 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     app.include_router(review_queue_router)
     app.include_router(llm_router)
     app.include_router(learner_ui_router)
+    app.include_router(author_ui_router)
     static_path = files("lms.ui.static")
     app.mount("/static/ui", StaticFiles(directory=str(static_path)), name="ui-static")
     return app

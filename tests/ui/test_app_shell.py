@@ -32,7 +32,6 @@ def test_app_shell_empty_surfaces_are_available(
     client, _session_factory = api_client
 
     for route, heading in [
-        ("/app/author", "Author"),
         ("/app/support", "Support"),
         ("/app/admin", "Admin"),
     ]:
@@ -41,3 +40,17 @@ def test_app_shell_empty_surfaces_are_available(
         assert response.status_code == 200
         assert f"<h1>{heading}</h1>" in response.text
         assert "empty-state" in response.text
+
+
+def test_app_shell_author_surface_links_authoring_routes(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, _session_factory = api_client
+
+    response = client.get("/app/author")
+
+    assert response.status_code == 200
+    assert "<h1>Author</h1>" in response.text
+    assert 'href="/app/author/goals"' in response.text
+    assert 'href="/app/author/knowledge"' in response.text
+    assert 'href="/app/author/prompts"' in response.text

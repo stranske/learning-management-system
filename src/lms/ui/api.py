@@ -238,16 +238,6 @@ def _review_surface(*, session: Session, learner_id: str, daily_cap: int) -> str
     )
 
 
-@router.get("/app/author", response_class=HTMLResponse)
-def author_app_route() -> str:
-    """Return the author app route shell."""
-    return surface_stub(
-        "Author",
-        "Authoring surfaces will use this route for goals, graphs, prompts, rubrics, and cases.",
-        active_path="/app/author",
-    )
-
-
 @router.get("/app/support", response_class=HTMLResponse)
 def support_app_route() -> str:
     """Return the support app route shell."""
@@ -318,7 +308,9 @@ def _latest_attempt_summary(session: Session, *, learner_id: str, prompt_id: str
     correctness_label = (
         "pending scoring evidence"
         if correctness is None
-        else "correct" if correctness else "incorrect"
+        else "correct"
+        if correctness
+        else "incorrect"
     )
     return (
         f"Latest evidence: confidence {_confidence_label(attempt.confidence_rating)}; "
