@@ -1,7 +1,7 @@
 """Add misconception patterns and remediation triggers.
 
 Revision ID: 20260526_0022_remediation_triggers
-Revises: 20260526_0021_gap_analyses
+Revises: 20260526_0022_gap_analysis_scope_constraint_cleanup
 """
 
 from __future__ import annotations
@@ -39,9 +39,7 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)",
-            name=op.f(
-                "ck_misconception_patterns_misconception_pattern_confidence_unit_interval"
-            ),
+            name=op.f("ck_misconception_patterns_misconception_pattern_confidence_unit_interval"),
         ),
         sa.CheckConstraint(
             "suggested_feedback_action_type IN ('retry', 'parallel-prompt', "
@@ -60,7 +58,9 @@ def upgrade() -> None:
         "ownership_scope",
         "created_at",
     ):
-        op.create_index(op.f(f"ix_misconception_patterns_{column}"), "misconception_patterns", [column])
+        op.create_index(
+            op.f(f"ix_misconception_patterns_{column}"), "misconception_patterns", [column]
+        )
 
     op.create_table(
         "remediation_triggers",
