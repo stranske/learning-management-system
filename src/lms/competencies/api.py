@@ -147,4 +147,3 @@ def learner_evidence_for_competency_route(
         limit=limit,
     )
     return [CompetencyEvidenceRead.model_validate(link) for link in links]
-

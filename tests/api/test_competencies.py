@@ -124,4 +124,3 @@ def test_competency_evidence_route_rejects_scope_mismatch(db_session: Session) -
 
     assert response.status_code == 422
     assert "ownership_scope must match" in response.json()["detail"]
-
