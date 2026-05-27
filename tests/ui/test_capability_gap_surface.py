@@ -192,6 +192,64 @@ def test_capability_surface_hides_institutional_controls_on_create_form(
         assert phrase not in lowered
 
 
+def test_capability_target_create_preserves_zero_confidence_threshold(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        learner_id, node_id = _seed_learner_with_low_evidence(session)
+        session.commit()
+
+    created = client.post(
+        TARGETS_PATH,
+        data={
+            "learner_id": learner_id,
+            "title": "Zero threshold target",
+            "target_node_ids": [node_id],
+            "confidence_threshold": "0.0",
+        },
+    )
+
+    assert created.status_code == 200
+    assert "Zero threshold target" in created.text
+    assert "Confidence threshold: <strong>0%</strong>" in created.text
+
+
+def test_gap_analysis_action_renders_created_analysis_target(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        learner_id, node_id = _seed_learner_with_low_evidence(session)
+        source_target = create_capability_target(
+            session,
+            learner_id=learner_id,
+            title="Source target",
+            target_node_ids=[node_id],
+        )
+        other_target = create_capability_target(
+            session,
+            learner_id=learner_id,
+            title="Other target",
+            target_node_ids=[node_id],
+        )
+        estimate = recompute_capability_estimate(session, target_id=source_target.id)
+        source_target_id = source_target.id
+        other_target_id = other_target.id
+        estimate_id = estimate.id
+        session.commit()
+
+    response = client.post(
+        GAP_PATH,
+        data={"target_id": other_target_id, "estimate_id": estimate_id},
+    )
+
+    assert response.status_code == 200
+    assert "Source target" in response.text
+    assert f"name='target_id' value='{source_target_id}'" in response.text
+    assert "Other target" not in response.text
+
+
 def test_capability_surface_empty_states_guide_next_step(
     api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:

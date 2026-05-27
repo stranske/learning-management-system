@@ -14,22 +14,26 @@ from html import escape
 from typing import Annotated
 from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lms.capability.api import (
-    create_capability_target_route,
-    create_gap_analysis_route,
-    create_maintenance_plan_route,
-    get_capability_target_route,
-    list_capability_estimates_route,
-    list_capability_targets_route,
-    list_gap_analyses_route,
-    list_maintenance_plans_route,
-    recompute_capability_estimate_route,
+from lms.capability.repository import (
+    create_capability_target,
+    create_gap_analysis,
+    create_maintenance_plan,
+    get_capability_target,
+    list_capability_estimates,
+    list_capability_targets,
+    list_gap_analyses,
+    list_maintenance_plans,
+    recompute_capability_estimate,
+    serialize_capability_estimate,
+    serialize_capability_target,
+    serialize_gap_analysis,
+    serialize_maintenance_plan,
 )
 from lms.capability.schemas import (
     CapabilityEstimateRecompute,
@@ -82,9 +86,8 @@ def capability_overview_route(
 @router.get(f"{CAPABILITY_PATH}/targets/{{target_id}}", response_class=HTMLResponse)
 def capability_target_detail_route(target_id: str, session: SessionDep) -> str:
     """Return the detail surface for one personal capability target."""
-    try:
-        target = get_capability_target_route(target_id, session)
-    except HTTPException:
+    target = _target_payload(session, target_id)
+    if target is None:
         return _not_found_page()
     return _detail_surface(session=session, target=target, notice=None)
 
@@ -102,7 +105,9 @@ async def create_capability_target_action(request: Request, session: SessionDep)
             target_node_ids=_many(form, "target_node_ids"),
             target_competency_ids=_many(form, "target_competency_ids"),
             required_evidence_types=_split_tokens(_one(form, "required_evidence_types")),
-            confidence_threshold=_optional_float(_one(form, "confidence_threshold")) or 0.8,
+            confidence_threshold=_float_or_default(
+                _optional_float(_one(form, "confidence_threshold")), 0.8
+            ),
         )
     except (ValidationError, ValueError):
         return _overview_surface(
@@ -114,9 +119,25 @@ async def create_capability_target_action(request: Request, session: SessionDep)
             ),
         )
     try:
-        target = create_capability_target_route(payload, session)
-    except HTTPException as exc:
-        return _overview_surface(session=session, learner_id=learner_id, error=str(exc.detail))
+        target_model = create_capability_target(
+            session,
+            learner_id=payload.learner_id,
+            title=payload.title,
+            description=payload.description,
+            ownership_scope=payload.ownership_scope,
+            learning_goal_id=payload.learning_goal_id,
+            target_node_ids=payload.target_node_ids,
+            target_competency_ids=payload.target_competency_ids,
+            required_evidence_types=payload.required_evidence_types,
+            confidence_threshold=payload.confidence_threshold,
+            status=payload.status,
+        )
+        session.commit()
+        session.refresh(target_model)
+        target = serialize_capability_target(target_model)
+    except ValueError as exc:
+        session.rollback()
+        return _overview_surface(session=session, learner_id=learner_id, error=str(exc))
     return _detail_surface(
         session=session, target=target, notice="Saved your personal capability target."
     )
@@ -128,10 +149,12 @@ async def recompute_estimate_action(request: Request, session: SessionDep) -> st
     form = _parse_form((await request.body()).decode())
     target_id = _one(form, "target_id")
     try:
-        recompute_capability_estimate_route(
-            CapabilityEstimateRecompute(target_id=target_id), session
-        )
-    except (ValidationError, HTTPException) as exc:
+        payload = CapabilityEstimateRecompute(target_id=target_id)
+        estimate = recompute_capability_estimate(session, target_id=payload.target_id)
+        session.commit()
+        session.refresh(estimate)
+    except (ValidationError, ValueError) as exc:
+        session.rollback()
         return _action_error(session=session, target_id=target_id, exc=exc)
     return _detail_after_action(
         session=session,
@@ -146,8 +169,13 @@ async def create_gap_analysis_action(request: Request, session: SessionDep) -> s
     form = _parse_form((await request.body()).decode())
     target_id = _one(form, "target_id")
     try:
-        create_gap_analysis_route(GapAnalysisCreate(estimate_id=_one(form, "estimate_id")), session)
-    except (ValidationError, HTTPException) as exc:
+        payload = GapAnalysisCreate(estimate_id=_one(form, "estimate_id"))
+        analysis = create_gap_analysis(session, estimate_id=payload.estimate_id)
+        session.commit()
+        session.refresh(analysis)
+        target_id = analysis.target_id
+    except (ValidationError, ValueError) as exc:
+        session.rollback()
         return _action_error(session=session, target_id=target_id, exc=exc)
     return _detail_after_action(
         session=session,
@@ -162,10 +190,13 @@ async def create_maintenance_plan_action(request: Request, session: SessionDep) 
     form = _parse_form((await request.body()).decode())
     target_id = _one(form, "target_id")
     try:
-        create_maintenance_plan_route(
-            MaintenancePlanCreate(gap_analysis_id=_one(form, "gap_analysis_id")), session
-        )
-    except (ValidationError, HTTPException) as exc:
+        payload = MaintenancePlanCreate(gap_analysis_id=_one(form, "gap_analysis_id"))
+        plan = create_maintenance_plan(session, gap_analysis_id=payload.gap_analysis_id)
+        session.commit()
+        session.refresh(plan)
+        target_id = plan.target_id
+    except (ValidationError, ValueError) as exc:
+        session.rollback()
         return _action_error(session=session, target_id=target_id, exc=exc)
     return _detail_after_action(
         session=session,
@@ -175,7 +206,10 @@ async def create_maintenance_plan_action(request: Request, session: SessionDep) 
 
 
 def _overview_surface(*, session: Session, learner_id: str, error: str | None) -> str:
-    targets = list_capability_targets_route(session, learner_id=learner_id)
+    targets = [
+        serialize_capability_target(target)
+        for target in list_capability_targets(session, learner_id=learner_id)
+    ]
     if targets:
         cards = "".join(_target_card(target) for target in targets)
         target_list = f"<ul class='capability-target-list'>{cards}</ul>"
@@ -203,9 +237,9 @@ def _overview_surface(*, session: Session, learner_id: str, error: str | None) -
 
 def _detail_surface(*, session: Session, target: dict[str, object], notice: str | None) -> str:
     target_id = _s(target["id"])
-    estimates = list_capability_estimates_route(session, target_id=target_id)
-    analyses = list_gap_analyses_route(session, target_id=target_id)
-    plans = list_maintenance_plans_route(session, target_id=target_id)
+    estimates = _estimate_payloads(session, target_id)
+    analyses = _analysis_payloads(session, target_id)
+    plans = _plan_payloads(session, target_id)
     latest_estimate = estimates[0] if estimates else None
     latest_analysis = analyses[0] if analyses else None
     latest_plan = plans[0] if plans else None
@@ -227,27 +261,25 @@ def _detail_surface(*, session: Session, target: dict[str, object], notice: str 
 
 
 def _detail_after_action(*, session: Session, target_id: str, notice: str) -> str:
-    try:
-        target = get_capability_target_route(target_id, session)
-    except HTTPException:
+    target = _target_payload(session, target_id)
+    if target is None:
         return _not_found_page()
     return _detail_surface(session=session, target=target, notice=notice)
 
 
-def _action_error(*, session: Session, target_id: str, exc: ValidationError | HTTPException) -> str:
-    try:
-        target = get_capability_target_route(target_id, session)
-    except HTTPException:
+def _action_error(*, session: Session, target_id: str, exc: ValidationError | ValueError) -> str:
+    target = _target_payload(session, target_id)
+    if target is None:
         return _not_found_page()
-    detail = str(exc.detail) if isinstance(exc, HTTPException) else "Check the form and try again."
+    detail = str(exc) if isinstance(exc, ValueError) else "Check the form and try again."
     return _detail_surface_with_error(session=session, target=target, error=detail)
 
 
 def _detail_surface_with_error(*, session: Session, target: dict[str, object], error: str) -> str:
     target_id = _s(target["id"])
-    estimates = list_capability_estimates_route(session, target_id=target_id)
-    analyses = list_gap_analyses_route(session, target_id=target_id)
-    plans = list_maintenance_plans_route(session, target_id=target_id)
+    estimates = _estimate_payloads(session, target_id)
+    analyses = _analysis_payloads(session, target_id)
+    plans = _plan_payloads(session, target_id)
     return _page(
         title="Capability target",
         eyebrow="Personal capability",
@@ -272,6 +304,32 @@ def _detail_surface_with_error(*, session: Session, target: dict[str, object], e
         }
         """,
     )
+
+
+def _target_payload(session: Session, target_id: str) -> dict[str, object] | None:
+    target = get_capability_target(session, target_id)
+    return serialize_capability_target(target) if target is not None else None
+
+
+def _estimate_payloads(session: Session, target_id: str) -> list[dict[str, object]]:
+    return [
+        serialize_capability_estimate(estimate)
+        for estimate in list_capability_estimates(session, target_id=target_id)
+    ]
+
+
+def _analysis_payloads(session: Session, target_id: str) -> list[dict[str, object]]:
+    return [
+        serialize_gap_analysis(analysis)
+        for analysis in list_gap_analyses(session, target_id=target_id)
+    ]
+
+
+def _plan_payloads(session: Session, target_id: str) -> list[dict[str, object]]:
+    return [
+        serialize_maintenance_plan(plan)
+        for plan in list_maintenance_plans(session, target_id=target_id)
+    ]
 
 
 def _target_card(target: dict[str, object]) -> str:
@@ -633,20 +691,22 @@ def _action_form(*, action: str, fields: dict[str, str], label: str) -> str:
 def _resolve_node_titles(session: Session, node_ids: list[str]) -> str:
     if not node_ids:
         return "none linked yet"
-    labels: list[str] = []
-    for node_id in node_ids:
-        node = session.get(KnowledgeNode, node_id)
-        labels.append(escape(node.title) if node is not None else escape(node_id))
+    nodes = list(session.scalars(select(KnowledgeNode).where(KnowledgeNode.id.in_(node_ids))))
+    titles_by_id = {node.id: node.title for node in nodes}
+    labels = [escape(titles_by_id.get(node_id, node_id)) for node_id in node_ids]
     return ", ".join(labels)
 
 
 def _resolve_competency_titles(session: Session, competency_ids: list[str]) -> str:
     if not competency_ids:
         return "none linked yet"
-    labels: list[str] = []
-    for competency_id in competency_ids:
-        competency = session.get(Competency, competency_id)
-        labels.append(escape(competency.title) if competency is not None else escape(competency_id))
+    competencies = list(
+        session.scalars(select(Competency).where(Competency.id.in_(competency_ids)))
+    )
+    titles_by_id = {competency.id: competency.title for competency in competencies}
+    labels = [
+        escape(titles_by_id.get(competency_id, competency_id)) for competency_id in competency_ids
+    ]
     return ", ".join(labels)
 
 
@@ -716,6 +776,10 @@ def _optional_float(raw: str) -> float | None:
         return float(text)
     except ValueError:
         return None
+
+
+def _float_or_default(value: float | None, default: float) -> float:
+    return default if value is None else value
 
 
 def _s(value: object) -> str:
