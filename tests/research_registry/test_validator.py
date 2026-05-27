@@ -107,7 +107,10 @@ def test_cli_validates_registry(
 
     main()
 
-    assert "research registry valid:" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "research registry valid:" in output
+    assert "research scans" in output
+    assert "evidence reviews" in output
 
 
 def test_cli_reports_registry_validation_failure(

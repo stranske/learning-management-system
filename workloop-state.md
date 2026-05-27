@@ -1,5 +1,39 @@
 # Workloop State
 
+## 2026-05-27T10:24Z - codex closer resolved PR #171 conflict and review thread
+
+- Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#107](https://github.com/stranske/learning-management-system/issues/107) / [#171](https://github.com/stranske/learning-management-system/pull/171) `Extend research registry with scan and evidence-review YAML`.
+- Branch: `claude/issue-107-research-registry-reviews`; detached worktree `~/.codex/automations/imi-merge-verify-closer/worktrees/lms-pr171-conflict-20260527T1024Z` from PR head `76f8adf`.
+- Batch context: merged key PR #169/#119, applied `verify:compare`, reopened #119 for verifier sequencing, cleared key PR pressure, and cleared scoped blocker #120 because support/admin routes are now on `main`.
+- Conflict resolution: merged current `origin/main` (`2e4b0b6`, the #169 merge) into PR head. Code files from the support/admin merge applied cleanly; only `workloop-state.md` conflicted and was resolved by preserving both append-only histories.
+- Review fix: clarified `validate-research-registry --registry-dir` help text so `research-scans.yml` and `evidence-reviews.yml` are described as optional, matching `load_registry(required=False)` behavior and addressing the remaining Copilot thread.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-171 uv run pytest tests/research_registry/ -q --no-cov` -> 11 passed; `uv run ruff check src/lms/__main__.py workloop-state.md` -> passed; `uv run ruff format --check src/lms/__main__.py` -> already formatted.
+- Next action: push the merge/review-fix commit to PR #171, resolve the Copilot thread, remove stale `agent:retry`, then wait for fresh Gate/CI before merge.
+
+## 2026-05-27T10:10Z - keepalive completed issue #107 tasks
+
+- Automation: `pd-workloop-resume` (claude keepalive lane).
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#107](https://github.com/stranske/learning-management-system/issues/107) / [#171](https://github.com/stranske/learning-management-system/pull/171).
+- All 4 PR tasks confirmed implemented by commit `604b2cb`: `ResearchScan`/`EvidenceReview` schemas, validator cross-reference checks, seed YAML, CLI counts.
+- Improvement: strengthened `test_cli_validates_registry` to assert `"research scans"` and `"evidence reviews"` in CLI output, directly verifying task 4's "reports scan/review counts" requirement (was only checking `"research registry valid:"`).
+- Validation: `pytest tests/research_registry/ --no-cov` -> 11 passed; `ruff check`/`ruff format --check` clean.
+- Commit: `1f96197` pushed to `claude/issue-107-research-registry-reviews`.
+- Next action: keepalive owns Gate/CI follow-up; closer owns post-merge verifier disposition.
+
+## 2026-05-27T09:55Z - claude opener materialized issue #107 (research registry reviews)
+
+- Automation: `pd-workloop-resume` (claude opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#107](https://github.com/stranske/learning-management-system/issues/107) / new PR `Extend research registry review YAML` (priority:low, milestone:M5, repo-review-approved).
+- Selection context: raw opener cap 2/5 (not reached). Normal-tier candidates excluded — #112-#118 addressed by merged PRs (#162/#163/#164/#165/#166/#167/#168, closer issue-close territory), #119→open PR #169, #121 scoped-blocked (M6 gate). #120 newly scope-blocked this round (acceptance needs support+admin snapshots from unmerged #119/PR #169). Workflows #2159 already fixed by merged PR #2161 (closer issue-close). Oldest opener-actionable remaining = low-tier #107 (no PR any state, no branch, self-contained M5 validator work, no unmet dependency).
+- Worktree: `/private/tmp/lms-issue-107-claude`, branch `claude/issue-107-research-registry-reviews`, off `origin/main` `0d02f68`.
+- Changes: added `ResearchScan` and `EvidenceReview` Pydantic schemas (+ `ResearchDecision`/`EvidenceReviewStatus` enums, decision vocabulary aligned to the domain-model Experiment `decision` enum) to `src/lms/research_registry/schemas.py`; extended `validator.py` to load `research-scans.yml`/`evidence-reviews.yml` (optional-if-missing) and cross-check their source/claim references with unique-id checks; added seed YAML under `docs/research/registry/` (paraphrase-only summaries, stable ids); updated the `validate-research-registry` CLI help/counts; added `tests/research_registry/test_research_reviews.py`.
+- Validation: `tests/research_registry/test_research_reviews.py` -> 5 passed; full `tests/research_registry/` -> 11 passed (no regression); `ruff check`/`ruff format --check` clean; `mypy src/lms/research_registry/ src/lms/__main__.py` -> success (existing pyproject unused-section note only); CLI `validate-research-registry` -> "4 principles, 3 claims, 4 evidence sources, 2 research scans, 2 evidence reviews". No SQLAlchemy model and no `/research` route added (existing `test_research_api_routes_are_not_added` still passes).
+- Next action: push branch, open ready-for-review PR with `agent:claude`/`agents:keepalive`/`autofix`/`repo-review-approved`/`priority:low`, emit `pr_opened`; keepalive owns Gate/CI follow-up.
+
 ## 2026-05-27T10:06Z - codex opener key-PR recovery for PR #169
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
