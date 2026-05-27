@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from lms.auth.models import utc_now
 from lms.evidence.models import Attempt
+from lms.evidence.repository import create_attempt
 from lms.feedback.repository import create_rubric
 from lms.feedback.scoring import score_attempt_with_rubric
 from lms.graphs.models import KnowledgeNode
@@ -199,6 +200,41 @@ def test_attempt_start_flags_already_submitted_attempt(
     assert f"{FEEDBACK_PATH}?learner_id=learner-1&prompt_id=prompt-1" in html
 
 
+def test_attempt_start_url_encodes_feedback_link(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    learner_id = "learner & one"
+    prompt_id = "prompt&admin=true"
+    with session_factory() as session:
+        _seed_prompt(
+            session,
+            visibility="public",
+            locator="https://example.test/source",
+            prompt_id=prompt_id,
+        )
+        create_attempt(
+            session,
+            learner_id=learner_id,
+            prompt_id=prompt_id,
+            response_text="Previous response.",
+            confidence_rating=3,
+            feedback={"goal": "Record", "next_action": "Review feedback."},
+        )
+        session.commit()
+
+    response = client.get(
+        f"{ATTEMPTS_PATH}?learner_id=learner+%26+one&prompt_id=prompt%26admin%3Dtrue"
+    )
+
+    assert response.status_code == 200
+    assert (
+        f"{FEEDBACK_PATH}?learner_id=learner+%26+one&prompt_id=prompt%26admin%3Dtrue"
+        in response.text
+    )
+    assert f"{FEEDBACK_PATH}?learner_id=learner &amp; one" not in response.text
+
+
 def test_attempt_flow_rejects_empty_response_inline(
     api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
@@ -223,12 +259,64 @@ def test_attempt_flow_rejects_empty_response_inline(
     assert attempts == []
 
 
+def test_attempt_flow_rejects_invalid_numeric_fields_inline(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        _seed_prompt(session, visibility="public", locator="https://example.test/source")
+
+    response = client.post(
+        ATTEMPTS_PATH,
+        data={
+            "learner_id": "learner-1",
+            "prompt_id": "prompt-1",
+            "response_text": "A response with invalid numeric fields.",
+            "confidence_rating": "not-a-number",
+            "elapsed_seconds": "also-bad",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Enter a response" in response.text
+    with session_factory() as session:
+        attempts = session.scalars(select(Attempt)).all()
+    assert attempts == []
+
+
+def test_feedback_route_rejects_attempt_id_for_other_learner(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        _seed_prompt(session, visibility="public", locator="https://example.test/source")
+        attempt = create_attempt(
+            session,
+            learner_id="learner-2",
+            prompt_id="prompt-1",
+            response_text="Other learner response.",
+            confidence_rating=4,
+            feedback={"goal": "Record", "next_action": "Review feedback."},
+        )
+        session.commit()
+        attempt_id = attempt.id
+
+    response = client.get(
+        f"{FEEDBACK_PATH}?learner_id=learner-1&prompt_id=prompt-1&attempt_id={attempt_id}"
+    )
+
+    assert response.status_code == 200
+    assert "No attempt yet" in response.text
+    assert "Other learner response." not in response.text
+
+
 def _seed_prompt(
     session: Session,
     *,
     visibility: str,
     locator: str,
     status: str = "published",
+    prompt_id: str = "prompt-1",
 ) -> None:
     source = SourceReference(
         id="source-1",
@@ -241,7 +329,7 @@ def _seed_prompt(
     )
     published = status == "published"
     prompt = Prompt(
-        id="prompt-1",
+        id=prompt_id,
         target_node_id="node-1",
         learning_goal_id="goal-1",
         knowledge_type="conceptual",

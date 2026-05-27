@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from html import escape
 from typing import Annotated
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote_plus
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
@@ -72,7 +72,7 @@ async def submit_attempt_route(request: Request, session: SessionDep) -> str:
                 next_action="Review feedback and continue practice.",
             ),
         )
-    except ValidationError:
+    except (ValidationError, ValueError):
         return _attempt_start_surface(
             session=session,
             learner_id=learner_id or "learner-1",
@@ -146,7 +146,7 @@ def _attempt_start_surface(
           <section class="notice" aria-labelledby="resubmit-heading">
             <h2 id="resubmit-heading">You already submitted an attempt for this prompt</h2>
             <p>Your most recent confidence was {escape(_confidence_label(latest.confidence_rating))}.</p>
-            <p><a href="{FEEDBACK_PATH}?learner_id={escape(learner_id)}&prompt_id={escape(prompt.id)}">
+            <p><a href="{_feedback_url(learner_id=learner_id, prompt_id=prompt.id)}">
               View your feedback and next action</a>, or submit another attempt below.</p>
           </section>
         """
@@ -353,7 +353,12 @@ def _resolve_attempt(
     attempt_id: str | None,
 ) -> Attempt | None:
     if attempt_id is not None:
-        return session.get(Attempt, attempt_id)
+        attempt = session.get(Attempt, attempt_id)
+        if attempt is None or attempt.learner_id != learner_id:
+            return None
+        if prompt_id is not None and attempt.prompt_id != prompt_id:
+            return None
+        return attempt
     return _latest_attempt(session, learner_id=learner_id, prompt_id=prompt_id)
 
 
@@ -456,10 +461,11 @@ def _read_form(body: str) -> dict[str, str]:
     return {key: values[-1] for key, values in raw_form.items()}
 
 
+def _feedback_url(*, learner_id: str, prompt_id: str) -> str:
+    return f"{FEEDBACK_PATH}?learner_id={quote_plus(learner_id)}&prompt_id={quote_plus(prompt_id)}"
+
+
 def _optional_int(value: str | None) -> int | None:
     if value is None or value == "":
         return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
+    return int(value)
