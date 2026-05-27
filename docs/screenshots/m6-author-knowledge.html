@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Author Knowledge</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner">Learner</a></li><li><a href="/app/author" aria-current="page">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface author-surface">
+          
+          <header>
+            <p class="eyebrow">Author</p>
+            <h1>Knowledge graph</h1>
+          </header>
+          <section aria-labelledby="node-form-heading">
+            <h2 id="node-form-heading">Node</h2>
+            <form method="post" action="/app/author/knowledge/nodes">
+              <label for="node-ownership_scope">ownership scope</label><select id="node-ownership_scope" name="ownership_scope"><option value="personal" selected>personal</option><option value="institutional">institutional</option></select>
+              <label for="node-title">Title</label>
+              <input id="node-title" name="title" required>
+              <label for="node-description">Description</label>
+              <textarea id="node-description" name="description" rows="3"></textarea>
+              <label for="node-knowledge_type">knowledge type</label><select id="node-knowledge_type" name="knowledge_type"><option value="factual">factual</option><option value="conceptual" selected>conceptual</option><option value="procedural">procedural</option><option value="judgment">judgment</option><option value="metacognitive">metacognitive</option><option value="social">social</option><option value="compliance">compliance</option></select>
+              <label for="node-status">status</label><select id="node-status" name="status"><option value="draft" selected>draft</option><option value="published">published</option><option value="deprecated">deprecated</option></select>
+              <label for="source-reference-id">Source reference id</label>
+              <input id="source-reference-id" name="source_reference_id">
+              <button type="submit">Save node</button>
+            </form>
+          </section>
+          <section aria-labelledby="edge-form-heading">
+            <h2 id="edge-form-heading">Edge</h2>
+            <form method="post" action="/app/author/knowledge/edges">
+              <label for="edge-ownership_scope">ownership scope</label><select id="edge-ownership_scope" name="ownership_scope"><option value="personal" selected>personal</option><option value="institutional">institutional</option></select>
+              <label for="source-node-id">Source node id</label>
+              <input id="source-node-id" name="source_node_id" required>
+              <label for="target-node-id">Target node id</label>
+              <input id="target-node-id" name="target_node_id" required>
+              <label for="edge-target_scope">target scope</label><select id="edge-target_scope" name="target_scope"><option value="personal" selected>personal</option><option value="institutional">institutional</option></select>
+              <label for="edge-edge_type">edge type</label><select id="edge-edge_type" name="edge_type"><option value="prerequisite" selected>prerequisite</option><option value="key-prerequisite">key-prerequisite</option><option value="encompassing">encompassing</option><option value="interference-risk">interference-risk</option><option value="analogy">analogy</option><option value="contrast">contrast</option><option value="transfer-context">transfer-context</option><option value="supports-competency">supports-competency</option></select>
+              <label for="edge-status">status</label><select id="edge-status" name="status"><option value="draft" selected>draft</option><option value="published">published</option><option value="deprecated">deprecated</option></select>
+              <label for="confidence">Confidence</label>
+              <input id="confidence" name="confidence" inputmode="decimal">
+              <label class="check">
+                <input type="checkbox" name="is_graph_reference" value="true">
+                Allow explicit cross-scope graph reference
+              </label>
+              <button type="submit">Save edge</button>
+            </form>
+          </section>
+          <section aria-labelledby="node-list-heading">
+            <h2 id="node-list-heading">Nodes</h2>
+            <ul><li><strong>Explain spacing effects</strong><span>published; conceptual; personal; id d33e2d44-e38d-4759-991c-7fae192f0ffe</span></li></ul>
+          </section>
+          <section aria-labelledby="edge-list-heading">
+            <h2 id="edge-list-heading">Edges</h2>
+            <ul><li class='empty'>No knowledge edges yet.</li></ul>
+          </section>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

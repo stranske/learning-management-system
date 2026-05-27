@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Support</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner">Learner</a></li><li><a href="/app/author">Author</a></li><li><a href="/app/support" aria-current="page">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface support-surface">
+          <header>
+            <p class="eyebrow">Testing support view</p>
+            <h1>Support</h1>
+            <p>Read-only learner support signals grouped by reason and uncertainty.</p>
+          </header>
+          <section aria-label="Support signals">
+            <article class="support-signal">
+              <h2>Rae Learner</h2>
+              <p>Learner id: <code>learner-1</code></p>
+              <h3>Reasons</h3>
+              <ul><li>Open feedback action: Revise with one cited reason</li><li>Evidence suggests review context: support=hint, confidence=2</li><li>Capability estimate needs context: score 0.40, confidence 0.47</li></ul>
+              <h3>Uncertainty</h3>
+              <ul><li>Action status is open; support need is not a ranking.</li><li>Evidence is directional and should be confirmed with learner-facing context.</li><li>Estimate commentary is learner-facing-inferred-mastery; avoid labels.</li></ul>
+              <h3>Sensitivity</h3>
+              <ul><li>Support/hint/reference metadata present.</li></ul>
+              <h3>Recommended next action</h3>
+              <ul><li>Add the source-backed reason before resubmitting.</li><li>Review the recent evidence and choose a low-stakes next task.</li><li>Collect another evidence point before changing the plan.</li></ul>
+            </article>
+            </section>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

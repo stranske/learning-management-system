@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Author Goals</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner">Learner</a></li><li><a href="/app/author" aria-current="page">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface author-surface">
+          
+          <header>
+            <p class="eyebrow">Author</p>
+            <h1>Goals</h1>
+          </header>
+          <form method="post" action="/app/author/goals">
+            <input type="hidden" name="learner_id" value="learner-1">
+            <label for="ownership_scope">ownership scope</label><select id="ownership_scope" name="ownership_scope"><option value="personal" selected>personal</option><option value="institutional">institutional</option></select>
+            <label for="goal-title">Goal title</label>
+            <input id="goal-title" name="title" required>
+            <label for="knowledge_type">knowledge type</label><select id="knowledge_type" name="knowledge_type"><option value="factual">factual</option><option value="conceptual" selected>conceptual</option><option value="procedural">procedural</option><option value="judgment">judgment</option><option value="metacognitive">metacognitive</option><option value="social">social</option><option value="compliance">compliance</option></select>
+            <label for="status">status</label><select id="status" name="status"><option value="active" selected>active</option><option value="paused">paused</option><option value="completed">completed</option><option value="archived">archived</option></select>
+            <label for="target-node-ids">Target node ids</label>
+            <input id="target-node-ids" name="target_node_ids"
+              aria-describedby="available-nodes">
+            <small id="available-nodes">Explain spacing effects (d33e2d44-e38d-4759-991c-7fae192f0ffe)</small>
+            <button type="submit">Save goal</button>
+          </form>
+          <section aria-labelledby="goal-list-heading">
+            <h2 id="goal-list-heading">Current goals</h2>
+            <ul><li><strong>Use spacing to retain key ideas</strong><span>active; conceptual; 1 target nodes</span></li></ul>
+          </section>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

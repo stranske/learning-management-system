@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Admin</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner">Learner</a></li><li><a href="/app/author">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin" aria-current="page">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface admin-surface">
+          <header>
+            <p class="eyebrow">Local admin inspection</p>
+            <h1>Admin</h1>
+            <p>User, audit, permission-label, and health state for the local prototype.</p>
+          </header>
+          <section aria-labelledby="users-heading"><h2 id="users-heading">Users</h2><p><a href="/auth/users">Create user API</a></p><ul><li>Rae Learner (<code>rae</code>) rae@example.test local</li></ul></section>
+          <section aria-labelledby="audit-heading">
+            <h2 id="audit-heading">Audit events</h2>
+            <ol><li>create KnowledgeNode <code>d33e2d44-e38d-4759-991c-7fae192f0ffe</code> by user:rae via author-ui</li><li>create KnowledgeNode <code>d33e2d44-e38d-4759-991c-7fae192f0ffe</code> by 28d792de-2bef-470f-9732-eaef1d5eb2b4 via api</li></ol>
+          </section>
+          <section aria-labelledby="state-heading">
+            <h2 id="state-heading">Health and route state</h2>
+            <ul>
+              <li>Health: ok for lms 0.1.0</li>
+              <li>Auth mode: local identity routes are available when enabled.</li>
+              <li>Permission labels: personal-scope defaults; no production role editor here.</li>
+              <li>Mapped table count: 47</li>
+            </ul>
+          </section>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

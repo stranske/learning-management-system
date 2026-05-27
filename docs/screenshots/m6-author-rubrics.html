@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6feb">
+  <title>LMS Author rubrics</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/ui/pico.min.css">
+  <link rel="stylesheet" href="/static/ui/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <nav aria-label="Application sections">
+      <ul><li><strong>LMS</strong></li></ul>
+      <ul><li><a href="/app/learner">Learner</a></li><li><a href="/app/author" aria-current="page">Author</a></li><li><a href="/app/support">Support</a></li><li><a href="/app/admin">Admin</a></li></ul>
+    </nav>
+  </header>
+
+        <main class="surface author-surface">
+          
+      <header>
+        <p class="eyebrow">Authoring workspace</p>
+        <h1>Rubrics</h1>
+      </header>
+      <nav class="subnav" aria-label="Authoring tools">
+        <a href="/app/author/goals">Goals</a>
+        <a href="/app/author/knowledge">Knowledge graph</a>
+        <a href="/app/author/prompts">Prompts</a>
+        <a href="/app/author/rubrics">Rubrics</a>
+        <a href="/app/author/feedback-templates">Feedback templates</a>
+        <a href="/app/author/cases">Cases</a>
+      </nav>
+    
+          
+          <form method="post" action="/app/author/rubrics">
+            <label for="title">Rubric title</label>
+            <input id="title" name="title" required>
+            <label for="description">Description</label>
+            <textarea id="description" name="description" rows="2"></textarea>
+            
+      <label for="ownership_scope">Ownership scope</label>
+      <select id="ownership_scope" name="ownership_scope">
+        <option value="personal">personal</option>
+        <option value="institutional">institutional</option>
+      </select>
+      <label for="status">Status</label>
+      <select id="status" name="status">
+        <option value="draft">draft</option>
+        <option value="published">published</option>
+      </select>
+      
+        <label for="authoring_actor">Authoring actor</label>
+        <input id="authoring_actor" name="authoring_actor" value="author-1" required>
+        
+    
+            <label for="prompt_id">Linked prompt</label>
+            <input id="prompt_id" name="prompt_id">
+            <label for="knowledge_node_id">Linked source node</label>
+            <input id="knowledge_node_id" name="knowledge_node_id">
+            <fieldset>
+              <legend>Criterion</legend>
+              <label for="criterion_order">Order</label>
+              <input id="criterion_order" name="criterion_order" type="number" min="1" value="1" required>
+              <label for="criterion_description">Description</label>
+              <textarea id="criterion_description" name="criterion_description" rows="3" required></textarea>
+              <label for="max_points">Max points</label>
+              <input id="max_points" name="max_points" type="number" min="0.1" step="0.1" value="4" required>
+              <label for="validity_scope">Validity scope</label>
+              <input id="validity_scope" name="validity_scope">
+              <label for="performance_levels">Performance levels JSON</label>
+              <textarea id="performance_levels" name="performance_levels" rows="3">{"meets": "Complete and sourced"}</textarea>
+            </fieldset>
+            <button type="submit">Create rubric</button>
+          </form>
+          <section aria-labelledby="rubrics-list-heading">
+            <h2 id="rubrics-list-heading">Rubric library</h2>
+            <ul class='author-list'><li><strong>Evidence use</strong><span>personal scope; published; 1 criteria</span><small>Linked prompt: none | source node: none</small></li></ul>
+          </section>
+        </main>
+        
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js");
+    }
+  </script>
+</body>
+</html>

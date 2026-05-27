@@ -40,7 +40,13 @@ def test_all_pyproject_dependencies_are_in_lock() -> None:
     for entry in project.get("dependencies", []):
         declared.add(_split_spec(entry).lower())
 
-    for group in project.get("optional-dependencies", {}).values():
+    # requirements.lock is compiled with `--extra dev` (see its header), so
+    # deferred, browser-only extras that are intentionally never installed in CI
+    # are not captured there. Exclude them from the lock-coverage check.
+    deferred_groups = {"visual"}
+    for name, group in project.get("optional-dependencies", {}).items():
+        if name in deferred_groups:
+            continue
         for entry in group:
             declared.add(_split_spec(entry).lower())
 
