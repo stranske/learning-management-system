@@ -12,12 +12,16 @@ from lms.cases.repository import (
     add_decision_point,
     add_evidence_packet,
     create_case,
+    create_work_product,
     get_case,
+    get_work_product,
     list_cases,
+    list_work_products,
     serialize_case,
     serialize_case_step,
     serialize_decision_point,
     serialize_evidence_packet,
+    serialize_work_product,
 )
 from lms.cases.schemas import (
     CaseCreate,
@@ -30,6 +34,9 @@ from lms.cases.schemas import (
     EvidencePacketCreate,
     EvidencePacketRead,
     OwnershipScope,
+    WorkProductCreate,
+    WorkProductRead,
+    WorkProductStatus,
 )
 from lms.db.session import get_session
 
@@ -47,7 +54,9 @@ def create_case_route(payload: CaseCreate, session: SessionDep) -> dict[str, obj
         case = get_case(session, case.id) or case
     except ValueError as exc:
         session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     return serialize_case(case)
 
 
@@ -94,7 +103,9 @@ def add_case_step_route(
         session.refresh(step)
     except ValueError as exc:
         session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     return serialize_case_step(step)
 
 
@@ -113,7 +124,9 @@ def add_evidence_packet_route(
         session.refresh(packet)
     except ValueError as exc:
         session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     return serialize_evidence_packet(packet)
 
 
@@ -130,6 +143,62 @@ def add_decision_point_route(
         session.refresh(decision)
     except ValueError as exc:
         session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     return serialize_decision_point(decision)
 
+
+@router.post(
+    "/cases/{case_id}/work-products",
+    response_model=WorkProductRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def submit_work_product_route(
+    case_id: str, payload: WorkProductCreate, session: SessionDep
+) -> dict[str, object]:
+    """Submit a learner work product for a transfer case."""
+    if get_case(session, case_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found.")
+    try:
+        work_product = create_work_product(session, case_id=case_id, **payload.model_dump())
+        session.commit()
+        session.refresh(work_product)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return serialize_work_product(work_product)
+
+
+@router.get("/cases/{case_id}/work-products", response_model=list[WorkProductRead])
+def list_work_products_route(
+    case_id: str,
+    session: SessionDep,
+    learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    case_step_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    work_product_status: Annotated[WorkProductStatus | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[dict[str, object]]:
+    """List work products submitted for a transfer case."""
+    if get_case(session, case_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found.")
+    work_products = list_work_products(
+        session,
+        case_id=case_id,
+        learner_id=learner_id,
+        case_step_id=case_step_id,
+        status=work_product_status,
+        limit=limit,
+    )
+    return [serialize_work_product(work_product) for work_product in work_products]
+
+
+@router.get("/work-products/{work_product_id}", response_model=WorkProductRead)
+def get_work_product_route(work_product_id: str, session: SessionDep) -> dict[str, object]:
+    """Return one work product."""
+    work_product = get_work_product(session, work_product_id)
+    if work_product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work product not found.")
+    return serialize_work_product(work_product)

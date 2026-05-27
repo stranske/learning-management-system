@@ -5,11 +5,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 OwnershipScope = Literal["personal", "institutional"]
 CaseStatus = Literal["draft", "published", "archived"]
 DecisionPointType = Literal["single-choice", "free-response", "evidence-selection"]
+WorkProductSubmissionType = Literal[
+    "memo", "rationale", "classification", "analysis", "artifact", "other"
+]
+WorkProductStatus = Literal[
+    "draft", "submitted", "scored", "revision-requested", "accepted", "withdrawn"
+]
 
 
 class CaseStepCreate(BaseModel):
@@ -93,3 +99,39 @@ class CaseRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
+class WorkProductCreate(BaseModel):
+    learner_id: str = Field(min_length=1, max_length=36)
+    submission_type: WorkProductSubmissionType
+    case_step_id: str | None = Field(default=None, min_length=1, max_length=36)
+    rubric_id: str | None = Field(default=None, min_length=1, max_length=36)
+    prompt_id: str | None = Field(default=None, min_length=1, max_length=36)
+    body: str | None = Field(default=None, min_length=1)
+    artifact_ref: str | None = Field(default=None, min_length=1, max_length=1024)
+    status: WorkProductStatus = "submitted"
+
+    @model_validator(mode="after")
+    def _require_body_or_artifact(self) -> WorkProductCreate:
+        if self.body is None and self.artifact_ref is None:
+            raise ValueError("work product must include a body or an artifact_ref")
+        return self
+
+
+class WorkProductRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    case_id: str
+    case_step_id: str | None
+    learner_id: str
+    rubric_id: str | None
+    prompt_id: str | None
+    submission_type: str
+    body: str | None
+    artifact_ref: str | None
+    status: str
+    rubric_score_id: str | None
+    revision_request_id: str | None
+    submitted_at: datetime
+    created_at: datetime
+    updated_at: datetime
