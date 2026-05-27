@@ -1,5 +1,16 @@
 # Workloop State
 
+## 2026-05-27T07:06Z - opener rebased PR #163 after #161 merge
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#113](https://github.com/stranske/learning-management-system/issues/113) / [#163](https://github.com/stranske/learning-management-system/pull/163) `Build review schedule UI`.
+- Branch: `codex/issue-113-review-schedule-ui`.
+- Cap-drain trigger: fresh opener sweep showed #163 `mergeStateStatus=DIRTY` / `mergeable=CONFLICTING` after #161 merged to `main`; prior Gate checks were green, so this was bounded branch-local conflict recovery.
+- Recovery: created detached automation worktree `~/.codex/automations/pd-workloop-resume/worktrees/lms-pr163-rebase`, rebased `origin/codex/issue-113-review-schedule-ui` onto `origin/main` (`e8103bb`), and resolved the lone conflict in `workloop-state.md` by preserving both historical entries. `src/lms/ui/api.py` auto-merged.
+- Validation before push: `UV_CACHE_DIR=/tmp/uv-cache-pd-workloop-lms-163 uv run pytest tests/ui/test_review_schedule_surface.py tests/ui/test_review_surface.py -q --no-cov` -> 4 passed; `uv run ruff check src/lms/ui/api.py tests/ui/test_review_schedule_surface.py tests/ui/test_review_surface.py` -> passed; `uv run ruff format --check ...` -> passed; `uv run mypy src/lms/ui/api.py tests/ui/test_review_schedule_surface.py` -> passed with existing pyproject unused-section note only.
+- Next action: push the rebased head to #163 and wait for fresh Gate/keepalive checks.
+
 ## 2026-05-27T06:02:40Z - codex closer rebased PR #161 after #159 merge
 
 - Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
