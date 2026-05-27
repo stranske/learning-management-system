@@ -13,6 +13,7 @@ from lms.evidence.models import Attempt
 from lms.feedback.models import (
     FeedbackAction,
     FeedbackRecord,
+    FeedbackTemplate,
     MisconceptionPattern,
     Rubric,
     RubricCriterion,
@@ -272,6 +273,111 @@ def list_misconception_patterns(
             ).limit(limit)
         )
     )
+
+
+def create_feedback_template(
+    session: Session,
+    *,
+    name: str,
+    template_body: str,
+    placeholder_schema: dict[str, Any] | None,
+    feedback_level: str,
+    action_type: str,
+    ownership_scope: str,
+    authoring_actor: str,
+    status: str = "draft",
+    misconception_pattern_id: str | None = None,
+    feedback_action_id: str | None = None,
+    knowledge_node_ids: list[str] | None = None,
+) -> FeedbackTemplate:
+    """Create a reusable feedback template with deterministic validation."""
+    _require_ownership_scope(ownership_scope)
+    _validate_template_copy(template_body)
+    normalized_schema = _normalize_placeholder_schema(placeholder_schema or {})
+    _validate_template_placeholders(template_body, normalized_schema)
+    _validate_feedback_template_links(
+        session,
+        ownership_scope=ownership_scope,
+        misconception_pattern_id=misconception_pattern_id,
+        feedback_action_id=feedback_action_id,
+        knowledge_node_ids=knowledge_node_ids or [],
+    )
+    template = FeedbackTemplate(
+        name=name,
+        template_body=template_body,
+        placeholder_schema=normalized_schema,
+        feedback_level=feedback_level,
+        action_type=action_type,
+        ownership_scope=ownership_scope,
+        status=status,
+        authoring_actor=authoring_actor,
+        misconception_pattern_id=misconception_pattern_id,
+        feedback_action_id=feedback_action_id,
+        knowledge_node_ids=knowledge_node_ids or [],
+    )
+    session.add(template)
+    session.flush()
+    return template
+
+
+def get_feedback_template(session: Session, template_id: str) -> FeedbackTemplate | None:
+    """Return one feedback template by id."""
+    return session.get(FeedbackTemplate, template_id)
+
+
+def list_feedback_templates(
+    session: Session,
+    *,
+    ownership_scope: str | None = None,
+    feedback_level: str | None = None,
+    action_type: str | None = None,
+    status: str | None = None,
+    knowledge_node_id: str | None = None,
+    limit: int = 100,
+) -> Sequence[FeedbackTemplate]:
+    """List reusable feedback templates with authoring filters."""
+    statement = select(FeedbackTemplate)
+    if ownership_scope is not None:
+        _require_ownership_scope(ownership_scope)
+        statement = statement.where(FeedbackTemplate.ownership_scope == ownership_scope)
+    if feedback_level is not None:
+        statement = statement.where(FeedbackTemplate.feedback_level == feedback_level)
+    if action_type is not None:
+        statement = statement.where(FeedbackTemplate.action_type == action_type)
+    if status is not None:
+        statement = statement.where(FeedbackTemplate.status == status)
+    candidates = session.scalars(
+        statement.order_by(FeedbackTemplate.created_at.desc(), FeedbackTemplate.id).limit(limit)
+    )
+    if knowledge_node_id is None:
+        return list(candidates)
+    return [template for template in candidates if knowledge_node_id in template.knowledge_node_ids]
+
+
+def archive_feedback_template(
+    session: Session,
+    template: FeedbackTemplate,
+) -> FeedbackTemplate:
+    """Archive a feedback template without mutating historic rendered records."""
+    template.status = "archived"
+    session.flush()
+    return template
+
+
+def render_feedback_template(
+    template: FeedbackTemplate,
+    values: dict[str, Any],
+) -> str:
+    """Render a template after checking required placeholders are present."""
+    required = _required_placeholders(template.placeholder_schema)
+    missing = sorted(name for name in required if values.get(name) in (None, ""))
+    if missing:
+        raise ValueError(f"missing required placeholder values: {', '.join(missing)}")
+    try:
+        return template.template_body.format(**{key: str(value) for key, value in values.items()})
+    except KeyError as exc:
+        missing_key = str(exc).strip("'")
+        raise ValueError(f"missing required placeholder values: {missing_key}") from exc
 
 
 def create_rubric(
@@ -569,6 +675,72 @@ def _validate_rubric_links(
 def _require_ownership_scope(scope: str) -> None:
     if scope not in OWNERSHIP_SCOPES:
         raise ValueError(f"unknown ownership scope {scope!r}; expected one of {OWNERSHIP_SCOPES}")
+
+
+def _validate_feedback_template_links(
+    session: Session,
+    *,
+    ownership_scope: str,
+    misconception_pattern_id: str | None,
+    feedback_action_id: str | None,
+    knowledge_node_ids: list[str],
+) -> None:
+    if misconception_pattern_id is not None:
+        pattern = session.get(MisconceptionPattern, misconception_pattern_id)
+        if pattern is None:
+            raise ValueError("referenced misconception pattern was not found")
+        if pattern.ownership_scope != ownership_scope:
+            raise ValueError("feedback template pattern must match ownership scope")
+    if feedback_action_id is not None and session.get(FeedbackAction, feedback_action_id) is None:
+        raise ValueError("referenced feedback action was not found")
+    for node_id in knowledge_node_ids:
+        node = session.get(KnowledgeNode, node_id)
+        if node is None:
+            raise ValueError("referenced knowledge node was not found")
+        if not _scope_matches_or_has_graph_reference(session, ownership_scope, node):
+            raise ValueError(
+                "feedback template knowledge nodes must match ownership scope "
+                "or have a published graph reference"
+            )
+
+
+def _normalize_placeholder_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    required = schema.get("required", [])
+    if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
+        raise ValueError("placeholder_schema.required must be a list of strings")
+    return {**schema, "required": sorted(set(required))}
+
+
+def _validate_template_placeholders(template_body: str, schema: dict[str, Any]) -> None:
+    missing_from_body = sorted(
+        placeholder
+        for placeholder in _required_placeholders(schema)
+        if f"{{{placeholder}}}" not in template_body
+    )
+    if missing_from_body:
+        raise ValueError(
+            "template_body must include required placeholders: " + ", ".join(missing_from_body)
+        )
+
+
+def _required_placeholders(schema: dict[str, Any]) -> list[str]:
+    required = schema.get("required", [])
+    return [item for item in required if isinstance(item, str)]
+
+
+def _validate_template_copy(template_body: str) -> None:
+    lower_body = template_body.lower()
+    fixed_label_phrases = (
+        "low ability",
+        "high ability",
+        "not a math person",
+        "naturally smart",
+        "lazy learner",
+        "weak student",
+    )
+    for phrase in fixed_label_phrases:
+        if phrase in lower_body:
+            raise ValueError("feedback template copy must avoid fixed ability labels")
 
 
 def _scope_matches_or_has_graph_reference(

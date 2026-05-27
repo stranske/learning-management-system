@@ -10,23 +10,28 @@ from sqlalchemy.orm import Session
 from lms.db.session import get_session
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.repository import (
+    archive_feedback_template,
     archive_rubric,
     create_feedback_action,
     create_feedback_record,
+    create_feedback_template,
     create_misconception_pattern,
     create_rubric,
     create_rubric_criterion,
     get_feedback_action,
     get_feedback_record,
+    get_feedback_template,
     get_rubric,
     get_rubric_criterion,
     get_rubric_score,
     list_feedback_actions,
     list_feedback_records,
+    list_feedback_templates,
     list_misconception_patterns,
     list_rubric_criteria,
     list_rubric_scores,
     list_rubrics,
+    render_feedback_template,
     update_rubric,
     update_rubric_criterion,
 )
@@ -35,6 +40,10 @@ from lms.feedback.schemas import (
     FeedbackActionRead,
     FeedbackRecordCreate,
     FeedbackRecordRead,
+    FeedbackTemplateCreate,
+    FeedbackTemplateRead,
+    FeedbackTemplateRenderRead,
+    FeedbackTemplateRenderRequest,
     MisconceptionPatternCreate,
     MisconceptionPatternRead,
     OwnershipScope,
@@ -211,6 +220,109 @@ def list_misconception_patterns_route(
         limit=limit,
     )
     return [MisconceptionPatternRead.model_validate(pattern) for pattern in patterns]
+
+
+@router.post(
+    "/feedback-templates",
+    response_model=FeedbackTemplateRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_feedback_template_route(
+    payload: FeedbackTemplateCreate,
+    session: SessionDep,
+) -> FeedbackTemplateRead:
+    """Create reusable deterministic feedback language."""
+    try:
+        template = create_feedback_template(session, **payload.model_dump())
+        session.commit()
+        session.refresh(template)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return FeedbackTemplateRead.model_validate(template)
+
+
+@router.get("/feedback-templates", response_model=list[FeedbackTemplateRead])
+def list_feedback_templates_route(
+    session: SessionDep,
+    ownership_scope: Annotated[OwnershipScope | None, Query()] = None,
+    feedback_level: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
+    action_type: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
+    template_status: Annotated[
+        str | None, Query(alias="status", min_length=1, max_length=32)
+    ] = None,
+    knowledge_node_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[FeedbackTemplateRead]:
+    """Return feedback templates with common authoring filters."""
+    templates = list_feedback_templates(
+        session,
+        ownership_scope=ownership_scope,
+        feedback_level=feedback_level,
+        action_type=action_type,
+        status=template_status,
+        knowledge_node_id=knowledge_node_id,
+        limit=limit,
+    )
+    return [FeedbackTemplateRead.model_validate(template) for template in templates]
+
+
+@router.get("/feedback-templates/{template_id}", response_model=FeedbackTemplateRead)
+def get_feedback_template_route(template_id: str, session: SessionDep) -> FeedbackTemplateRead:
+    """Return one feedback template."""
+    template = get_feedback_template(session, template_id)
+    if template is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback template not found."
+        )
+    return FeedbackTemplateRead.model_validate(template)
+
+
+@router.post(
+    "/feedback-templates/{template_id}/render",
+    response_model=FeedbackTemplateRenderRead,
+)
+def render_feedback_template_route(
+    template_id: str,
+    payload: FeedbackTemplateRenderRequest,
+    session: SessionDep,
+) -> FeedbackTemplateRenderRead:
+    """Render a feedback template with deterministic placeholder validation."""
+    template = get_feedback_template(session, template_id)
+    if template is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback template not found."
+        )
+    try:
+        rendered = render_feedback_template(template, payload.values)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return FeedbackTemplateRenderRead(
+        template_id=template.id,
+        rendered_body=rendered,
+        values=payload.values,
+    )
+
+
+@router.post("/feedback-templates/{template_id}/archive", response_model=FeedbackTemplateRead)
+def archive_feedback_template_route(
+    template_id: str,
+    session: SessionDep,
+) -> FeedbackTemplateRead:
+    """Archive reusable feedback language no longer used for authoring."""
+    template = get_feedback_template(session, template_id)
+    if template is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Feedback template not found."
+        )
+    archived = archive_feedback_template(session, template)
+    session.commit()
+    session.refresh(archived)
+    return FeedbackTemplateRead.model_validate(archived)
 
 
 @router.post(

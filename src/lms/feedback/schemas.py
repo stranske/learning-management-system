@@ -21,6 +21,7 @@ FeedbackActionStatus = Literal["open", "in-progress", "completed", "dismissed"]
 OwnershipScope = Literal["personal", "institutional"]
 RubricStatus = Literal["draft", "published", "archived"]
 RubricCriterionStatus = Literal["active", "archived"]
+FeedbackTemplateStatus = Literal["draft", "published", "archived"]
 
 
 class FeedbackRecordCreate(BaseModel):
@@ -94,6 +95,46 @@ class MisconceptionPatternRead(MisconceptionPatternCreate):
     id: str
     created_at: datetime
     updated_at: datetime
+
+
+class FeedbackTemplateCreate(BaseModel):
+    """Input for creating reusable feedback template language."""
+
+    name: str = Field(min_length=1, max_length=255)
+    template_body: str = Field(min_length=1)
+    placeholder_schema: dict[str, object] = Field(default_factory=dict)
+    feedback_level: FeedbackLevel
+    action_type: FeedbackActionType
+    ownership_scope: OwnershipScope
+    status: FeedbackTemplateStatus = "draft"
+    authoring_actor: str = Field(min_length=1, max_length=255)
+    misconception_pattern_id: str | None = Field(default=None, min_length=1, max_length=36)
+    feedback_action_id: str | None = Field(default=None, min_length=1, max_length=36)
+    knowledge_node_ids: list[str] = Field(default_factory=list)
+
+
+class FeedbackTemplateRead(FeedbackTemplateCreate):
+    """Serializable feedback template."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class FeedbackTemplateRenderRequest(BaseModel):
+    """Placeholder values for deterministic template rendering."""
+
+    values: dict[str, object]
+
+
+class FeedbackTemplateRenderRead(BaseModel):
+    """Rendered template body with input values preserved for audit."""
+
+    template_id: str
+    rendered_body: str
+    values: dict[str, object]
 
 
 class RubricCriterionCreate(BaseModel):
