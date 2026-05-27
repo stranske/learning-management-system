@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from itertools import islice
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -346,12 +347,15 @@ def list_feedback_templates(
         statement = statement.where(FeedbackTemplate.action_type == action_type)
     if status is not None:
         statement = statement.where(FeedbackTemplate.status == status)
-    candidates = session.scalars(
-        statement.order_by(FeedbackTemplate.created_at.desc(), FeedbackTemplate.id).limit(limit)
-    )
+    statement = statement.order_by(FeedbackTemplate.created_at.desc(), FeedbackTemplate.id)
     if knowledge_node_id is None:
-        return list(candidates)
-    return [template for template in candidates if knowledge_node_id in template.knowledge_node_ids]
+        return list(session.scalars(statement.limit(limit)))
+    matches = (
+        template
+        for template in session.scalars(statement)
+        if knowledge_node_id in template.knowledge_node_ids
+    )
+    return list(islice(matches, limit))
 
 
 def archive_feedback_template(
@@ -377,7 +381,7 @@ def render_feedback_template(
         return template.template_body.format(**{key: str(value) for key, value in values.items()})
     except KeyError as exc:
         missing_key = str(exc).strip("'")
-        raise ValueError(f"missing required placeholder values: {missing_key}") from exc
+        raise ValueError(f"missing placeholder values: {missing_key}") from exc
 
 
 def create_rubric(

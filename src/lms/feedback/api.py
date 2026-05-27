@@ -44,6 +44,7 @@ from lms.feedback.schemas import (
     FeedbackTemplateRead,
     FeedbackTemplateRenderRead,
     FeedbackTemplateRenderRequest,
+    FeedbackTemplateStatus,
     MisconceptionPatternCreate,
     MisconceptionPatternRead,
     OwnershipScope,
@@ -250,9 +251,7 @@ def list_feedback_templates_route(
     ownership_scope: Annotated[OwnershipScope | None, Query()] = None,
     feedback_level: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
     action_type: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
-    template_status: Annotated[
-        str | None, Query(alias="status", min_length=1, max_length=32)
-    ] = None,
+    template_status: Annotated[FeedbackTemplateStatus | None, Query(alias="status")] = None,
     knowledge_node_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[FeedbackTemplateRead]:
