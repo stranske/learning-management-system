@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from html import escape
 from importlib.resources import files
 from json import JSONDecodeError, loads
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -14,15 +15,19 @@ from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from lms.capability.models import CapabilityTarget, MaintenancePlan
+from lms.capability.repository import list_capability_targets, list_maintenance_plans
 from lms.cases.repository import add_decision_point, create_case, get_case, list_cases
 from lms.db.session import get_session
-from lms.evidence.models import Attempt
+from lms.evidence.models import Attempt, EvidenceRecord
 from lms.evidence.repository import create_attempt
 from lms.evidence.schemas import AttemptCreate, StructuredFeedback
+from lms.feedback.models import FeedbackAction
 from lms.feedback.repository import (
     create_feedback_template,
     create_rubric,
     get_feedback_template,
+    list_feedback_actions,
     list_feedback_templates,
     list_rubrics,
     render_feedback_template,
@@ -40,11 +45,17 @@ from lms.graphs.repository import (
     list_knowledge_edges,
     list_knowledge_nodes,
 )
-from lms.learners.models import GOAL_STATUSES
+from lms.learners.models import GOAL_STATUSES, LearningGoal
 from lms.learners.repository import create_learning_goal, list_learning_goals_for_learner
+from lms.mastery.service import mastery_estimates_for_learner
 from lms.prompts.models import ANSWER_FORMS, COGNITIVE_ACTIONS, DEMAND_LEVELS, Prompt
 from lms.prompts.repository import create_prompt, list_prompts
-from lms.scheduling.service import DEFAULT_DAILY_CAP, SchedulerSettings, get_review_queue_overview
+from lms.scheduling.service import (
+    DEFAULT_DAILY_CAP,
+    ReviewQueueOverview,
+    SchedulerSettings,
+    get_review_queue_overview,
+)
 from lms.sources.models import SourceReference
 from lms.sources.repository import list_source_references
 from lms.ui.shell import empty_state, render_page, surface_stub
@@ -72,10 +83,9 @@ def service_worker_route() -> Response:
 def learner_app_route(
     session: SessionDep,
     learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
-    prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
 ) -> str:
-    """Return the canonical learner app route."""
-    return _learn_surface(session=session, learner_id=learner_id, prompt_id=prompt_id)
+    """Return the learner home dashboard."""
+    return _dashboard_surface(session=session, learner_id=learner_id)
 
 
 @router.get("/learn", response_class=HTMLResponse)
@@ -638,6 +648,333 @@ def admin_app_route() -> str:
         "Admin inspection surfaces will use this route for local prototype operations.",
         active_path="/app/admin",
     )
+
+
+def _dashboard_surface(*, session: Session, learner_id: str) -> str:
+    """Return the learner home dashboard aggregating the learner's own state."""
+    goals = list_learning_goals_for_learner(session, learner_id=learner_id)
+    mastery = mastery_estimates_for_learner(session, learner_id)
+    review = get_review_queue_overview(session, learner_id=learner_id)
+    actions = list_feedback_actions(session, learner_id=learner_id, status="open")
+    evidence = _recent_evidence(session, learner_id=learner_id)
+    targets = list_capability_targets(session, learner_id=learner_id)
+    plans = list_maintenance_plans(session, learner_id=learner_id)
+
+    return render_page(
+        "Learner",
+        f"""
+        <main class="surface learner-dashboard">
+          <header>
+            <p class="eyebrow">Your learning home</p>
+            <h1>Learner dashboard</h1>
+            <p>Everything below reflects your own evidence and goals. Counts are
+            informational, not scores.</p>
+          </header>
+          {_dashboard_quick_links()}
+          <div class="dashboard-grid">
+            {_next_actions_panel(actions)}
+            {_reviews_panel(review)}
+            {_recent_evidence_panel(evidence)}
+            {_goals_panel(goals)}
+            {_mastery_panel(session, mastery)}
+            {_capability_panel(targets)}
+            {_maintenance_panel(plans)}
+          </div>
+        </main>
+        """,
+        active_path="/app/learner",
+    )
+
+
+def _dashboard_quick_links() -> str:
+    return (
+        '<nav class="dashboard-links" aria-label="Dashboard quick links"><ul>'
+        '<li><a href="/learn">Start or continue an attempt</a></li>'
+        '<li><a href="/app/learner/review">Open the review queue</a></li>'
+        '<li><a href="#next-actions">See feedback actions</a></li>'
+        '<li><a href="#capability">See capability targets</a></li>'
+        "</ul></nav>"
+    )
+
+
+def _panel(*, panel_id: str, heading: str, intro: str, body: str) -> str:
+    heading_id = f"{panel_id}-heading"
+    intro_html = f"<p>{intro}</p>" if intro else ""
+    return (
+        f'<section class="panel" id="{panel_id}" aria-labelledby="{heading_id}">'
+        f'<h2 id="{heading_id}">{escape(heading)}</h2>{intro_html}{body}</section>'
+    )
+
+
+def _next_actions_panel(actions: Sequence[FeedbackAction]) -> str:
+    if not actions:
+        return _panel(
+            panel_id="next-actions",
+            heading="Next actions",
+            intro="",
+            body=empty_state(
+                "No next actions",
+                "You have no open follow-up actions right now. New next actions appear "
+                "here after you get feedback on an attempt.",
+            ),
+        )
+    items = []
+    for action in actions:
+        due = _due_suffix(action.due_at)
+        instructions = escape(action.instructions or "")
+        items.append(
+            "<li class='panel-item'>"
+            f"<strong>{escape(action.title)}</strong>"
+            f"<span>{escape(action.action_type)} · {escape(action.status)}{due}</span>"
+            + (f"<small>{instructions}</small>" if instructions else "")
+            + "</li>"
+        )
+    return _panel(
+        panel_id="next-actions",
+        heading="Next actions",
+        intro='<a href="/learn">Start or continue an attempt</a>',
+        body=f'<ul class="panel-list">{"".join(items)}</ul>',
+    )
+
+
+def _reviews_panel(review: ReviewQueueOverview) -> str:
+    items = review.items
+    if not items:
+        return _panel(
+            panel_id="reviews",
+            heading="Due reviews",
+            intro="",
+            body=empty_state(
+                "No reviews due",
+                "Nothing is due for review today. Scheduled reviews show up here; the "
+                "backlog total is informational, not an obligation score.",
+            ),
+        )
+    rendered = []
+    for item in items:
+        rendered.append(
+            "<li class='panel-item'>"
+            f"<strong>{escape(item.reason_code)}</strong>"
+            f"<span>{escape(item.reason_explanation)}</span>"
+            f"<small>node {escape(item.knowledge_node_id)}; priority {item.priority:.2f}</small>"
+            "</li>"
+        )
+    intro = (
+        '<a href="/app/learner/review">Open the review queue</a>'
+        f"<br><span class='note'>{escape(review.backlog_note)}</span>"
+    )
+    return _panel(
+        panel_id="reviews",
+        heading="Due reviews",
+        intro=intro,
+        body=f'<ul class="panel-list">{"".join(rendered)}</ul>',
+    )
+
+
+def _recent_evidence_panel(evidence: list[EvidenceRecord]) -> str:
+    if not evidence:
+        return _panel(
+            panel_id="recent-evidence",
+            heading="Recent evidence",
+            intro="",
+            body=empty_state(
+                "No recent evidence",
+                "No attempts are recorded yet. Your recent evidence will appear here "
+                "after your first attempt.",
+            ),
+        )
+    items = []
+    for record in evidence:
+        items.append(
+            "<li class='panel-item'>"
+            f"<strong>{escape(record.knowledge_node_id)}</strong>"
+            f"<span>{escape(_evidence_outcome(record))}</span>"
+            f"<small>{escape(_support_note(record))}observed "
+            f"{escape(_format_day(record.observed_at))}</small>"
+            "</li>"
+        )
+    return _panel(
+        panel_id="recent-evidence",
+        heading="Recent evidence",
+        intro="",
+        body=f'<ul class="panel-list">{"".join(items)}</ul>',
+    )
+
+
+def _goals_panel(goals: Sequence[LearningGoal]) -> str:
+    if not goals:
+        return _panel(
+            panel_id="goals",
+            heading="Goals",
+            intro="",
+            body=empty_state(
+                "No goals yet",
+                "You have not set any learning goals yet. Add a goal whenever you are "
+                "ready to focus your practice.",
+            ),
+        )
+    items = []
+    for goal in goals:
+        items.append(
+            "<li class='panel-item'>"
+            f"<strong>{escape(goal.title)}</strong>"
+            f"<span>{escape(goal.knowledge_type)} · {escape(goal.status)}</span>"
+            "</li>"
+        )
+    return _panel(
+        panel_id="goals",
+        heading="Goals",
+        intro="",
+        body=f'<ul class="panel-list">{"".join(items)}</ul>',
+    )
+
+
+def _mastery_panel(session: Session, mastery: list[dict[str, Any]]) -> str:
+    if not mastery:
+        return _panel(
+            panel_id="mastery",
+            heading="Mastery summary",
+            intro="",
+            body=empty_state(
+                "No mastery estimates yet",
+                "Mastery estimates appear once you have collected evidence. Estimates "
+                "are model-based and update as you practice.",
+            ),
+        )
+    items = []
+    for estimate in mastery:
+        node_id = str(estimate["knowledge_node_id"])
+        title = _node_title(session, node_id)
+        current = float(estimate["current_estimate"])
+        evidence_count = estimate["evidence_count"]
+        items.append(
+            "<li class='panel-item'>"
+            f"<strong>{escape(title)}</strong>"
+            f"<span>estimate {current:.0%}; evidence count {escape(str(evidence_count))}</span>"
+            "</li>"
+        )
+    attribution = escape(str(mastery[0]["model_attribution"]))
+    return _panel(
+        panel_id="mastery",
+        heading="Mastery summary",
+        intro="",
+        body=(
+            f'<ul class="panel-list">{"".join(items)}</ul>'
+            f'<p class="note">Model attribution: {attribution}</p>'
+        ),
+    )
+
+
+def _capability_panel(targets: Sequence[CapabilityTarget]) -> str:
+    if not targets:
+        return _panel(
+            panel_id="capability",
+            heading="Capability targets",
+            intro="",
+            body=empty_state(
+                "No capability targets yet",
+                "No capability targets yet. Targets help you track transfer-ready "
+                "capabilities at your own pace.",
+            ),
+        )
+    items = []
+    for target in targets:
+        description = escape(target.description or "")
+        items.append(
+            "<li class='panel-item'>"
+            f"<strong>{escape(target.title)}</strong>"
+            f"<span>{escape(target.status)} · confidence threshold "
+            f"{float(target.confidence_threshold):.0%}</span>"
+            + (f"<small>{description}</small>" if description else "")
+            + "</li>"
+        )
+    return _panel(
+        panel_id="capability",
+        heading="Capability targets",
+        intro="",
+        body=f'<ul class="panel-list">{"".join(items)}</ul>',
+    )
+
+
+def _maintenance_panel(plans: Sequence[MaintenancePlan]) -> str:
+    steps: list[dict[str, Any]] = []
+    for plan in plans:
+        steps.extend(plan.plan_steps)
+    if not steps:
+        return _panel(
+            panel_id="maintenance",
+            heading="Maintenance plan",
+            intro="",
+            body=empty_state(
+                "No maintenance-plan steps yet",
+                "No maintenance-plan steps yet. Steps are generated from a gap analysis "
+                "when there is something specific to maintain.",
+            ),
+        )
+    items = []
+    for step in steps:
+        number = escape(str(step.get("step_number", "")))
+        action_type = escape(str(step.get("action_type", "review")))
+        rationale = escape(str(step.get("rationale", "")))
+        status = escape(str(step.get("status", "planned")))
+        items.append(
+            "<li class='panel-item'>"
+            f"<strong>Step {number}: {action_type}</strong>"
+            f"<span>{rationale}</span>"
+            f"<small>status {status}</small>"
+            "</li>"
+        )
+    return _panel(
+        panel_id="maintenance",
+        heading="Maintenance plan",
+        intro="",
+        body=f'<ul class="panel-list">{"".join(items)}</ul>',
+    )
+
+
+def _recent_evidence(session: Session, *, learner_id: str, limit: int = 5) -> list[EvidenceRecord]:
+    return list(
+        session.scalars(
+            select(EvidenceRecord)
+            .where(EvidenceRecord.learner_id == learner_id)
+            .order_by(EvidenceRecord.observed_at.desc(), EvidenceRecord.id)
+            .limit(limit)
+        )
+    )
+
+
+def _evidence_outcome(record: EvidenceRecord) -> str:
+    if record.normalized_score is not None:
+        return f"score {float(record.normalized_score):.0%}"
+    if record.correctness is True:
+        return "marked correct"
+    if record.correctness is False:
+        return "needs another pass"
+    return "evidence recorded"
+
+
+def _support_note(record: EvidenceRecord) -> str:
+    markers: list[str] = []
+    if record.hint_used:
+        markers.append("hint")
+    if record.reference_accessed:
+        markers.append("reference")
+    if record.support_level not in ("none", ""):
+        markers.append(f"support {record.support_level}")
+    return f"used {', '.join(markers)}; " if markers else ""
+
+
+def _node_title(session: Session, node_id: str) -> str:
+    node = session.get(KnowledgeNode, node_id)
+    return node.title if node is not None else node_id
+
+
+def _due_suffix(due_at: datetime | None) -> str:
+    return f"; due {_format_day(due_at)}" if due_at is not None else ""
+
+
+def _format_day(value: datetime | None) -> str:
+    return value.date().isoformat() if value is not None else "unknown"
 
 
 def _prompt_body(prompt: Prompt) -> str:
