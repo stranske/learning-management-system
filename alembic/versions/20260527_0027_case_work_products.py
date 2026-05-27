@@ -1,7 +1,7 @@
 """Add case work products.
 
 Revision ID: 20260527_0027_case_work_products
-Revises: 20260526_0026_revision_requests
+Revises: 20260527_0027_merge_revision_requests_llm_feedback_events
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260527_0027_case_work_products"
-down_revision = "20260526_0026_revision_requests"
+down_revision = "20260527_0027_merge_revision_requests_llm_feedback_events"
 branch_labels = None
 depends_on = None
 
