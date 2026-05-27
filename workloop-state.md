@@ -1,5 +1,30 @@
 # Workloop State
 
+## 2026-05-27T09:28Z - codex closer resolved PR #168 conflicts and review threads
+
+- Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#118](https://github.com/stranske/learning-management-system/issues/118) / [#168](https://github.com/stranske/learning-management-system/pull/168) `Build capability and gap-analysis UI`.
+- Branch: `claude/issue-118-capability-gap-ui`; worktree `~/.codex/automations/imi-merge-verify-closer/worktrees/lms-pr168-reviewfix-20260527T0921Z`.
+- Batch context: closed #117 after PR #167 received durable PASS/PASS provider verification; emitted `issue_closed` for #117. Deferred #112/#113/#115 non-PASS verifier audits and selected #168 as the oldest normal-priority dirty issue-linked PR.
+- Conflict resolution: merged current `origin/main` (`a8ed6f0`) into PR head `e8f7286`; kept all five UI routers registered in `src/lms/main.py` (attempt flow, capability gap, learner feedback, graph design, LLM study) and preserved append-only `workloop-state.md` histories.
+- Review fixes: capability UI now calls repository/service helpers directly with explicit commit/rollback instead of FastAPI route handlers; `confidence_threshold=0.0` is preserved instead of defaulting to `0.8`; gap-analysis and maintenance-plan actions render from the created analysis/plan `target_id`; node and competency title rendering now batches lookups with `IN` queries.
+- Regression coverage: `tests/ui/test_capability_gap_surface.py` now covers zero confidence thresholds and tampered gap-analysis form target ids.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-168 uv run pytest tests/ui/test_capability_gap_surface.py -q --no-cov` -> 6 passed; `UV_CACHE_DIR=/private/tmp/uv-cache-imi-closer-168 uv run pytest tests/ui/ -q --no-cov` -> 54 passed; `uv run ruff check src/lms/ui/capability_gap.py tests/ui/test_capability_gap_surface.py src/lms/main.py` -> passed; `uv run ruff format --check ...` -> passed; `uv run mypy src/lms/ui/capability_gap.py src/lms/main.py tests/ui/test_capability_gap_surface.py` -> success with existing pyproject unused-section note only.
+- Next action: push merge/review-fix commit to PR #168, resolve the six Copilot threads, remove stale `agent:retry`, then wait for fresh Gate/CI before merge.
+
+## 2026-05-27T08:50Z - claude opener materialized issue #118 (capability & gap-analysis UI)
+
+- Automation: `pd-workloop-resume` (claude opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#118](https://github.com/stranske/learning-management-system/issues/118) / new PR `Build capability and gap-analysis UI`.
+- Branch: `claude/issue-118-capability-gap-ui` (isolated worktree `/private/tmp/lms-issue-118-claude` off `origin/main` `797b717`).
+- Selection: raw opener cap 3/5 (drainable after infra repair); scoped blocker #121 excluded; #115/#116/#117 linked to open PRs #165/#166/#167; Workflows #2159 fix already merged via #2161 (closer disposition). Oldest opener-actionable issue = normal-tier M6 surface #118.
+- Implementation: added `src/lms/ui/capability_gap.py` (`/app/learner/capability` overview + per-target detail, consuming `lms.capability.api`), registered in `src/lms/main.py`. Personal-scope-only target create form (node/competency selection); recompute-estimate action with evidence breakdown + weak/missing-evidence flags; gap-analysis creation grouped by missing evidence / weak mastery / stale / support dependence / transfer need; maintenance-plan creation with scheduled steps linking to the review queue and attempt flow. Cautious present-tense "current evidence" language; no institutional/manager/certification controls.
+- Tests: `tests/ui/test_capability_gap_surface.py` (4) including the two named acceptance tests plus institutional-controls-absent and empty-state coverage.
+- Validation before push: `uv run pytest tests/ui/test_capability_gap_surface.py -q --no-cov` -> 4 passed; `uv run pytest tests/ui/ -q --no-cov` -> 37 passed; `ruff check` + `ruff format --check` on touched files -> passed; `uv run mypy src/lms/ui/capability_gap.py src/lms/main.py` -> passed (existing pyproject unused-section note only).
+- Next action: open ready-for-review PR with `agent:claude` + `agents:keepalive` + `autofix`, emit `pr_opened`, hand to keepalive for CI; do not wait for CI.
+
 ## 2026-05-27T08:14Z - opener materialized issue #117 graph design UI
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
