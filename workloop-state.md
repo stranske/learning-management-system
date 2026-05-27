@@ -1,5 +1,16 @@
 # Workloop State
 
+## 2026-05-27T10:45Z - claude opener materialized issue #120 M6 snapshot tests + Playwright scaffold
+
+- Automation: `pd-workloop-resume` (claude_code opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#120](https://github.com/stranske/learning-management-system/issues/120) / [#172](https://github.com/stranske/learning-management-system/pull/172) `Add HTML snapshot tests and Playwright smoke scaffold`, branch `claude/issue-120-html-snapshots`.
+- Selection: key PR #169 was already merged (closer 10:26 sweep) and its key-PR pressure was cleared this round; cap-health showed 2/5 opener-owned PRs (`#471`, `#171`) both `draining`, so the cap was below 5 and a new materialization lane was eligible. The #120 scoped blocker had been cleared by the closer sweep. Priority discovery: high #121 scoped-blocked; normal #112/#113/#115 already have merged PRs (#162/#163/#165) and Workflows #2159 is fixed by merged #2161 — all closer/verifier territory; #120 was the only unmaterialized normal-tier LMS issue.
+- Implementation: `tests/ui/test_m6_screenshots.py` renders 18 M6 surfaces via FastAPI TestClient, writes `docs/screenshots/m6-*.html` artifacts, and asserts artifact existence + mobile viewport metadata; seeds sparse representative data (learner, goal, published node, prompt, attempt+feedback record, capability target with recomputed estimate, rubric, case, audit event). `tests/ui/test_playwright_smoke.py` adds the 375px learner-dashboard smoke gated on `PLAYWRIGHT_AVAILABLE` (skipped-by-default, lazy import). `pyproject.toml` declares `pytest-playwright` under `[project.optional-dependencies] visual`; `docs/development/web-prototype.md` documents both stages; `tests/test_dependency_version_alignment.py` excludes the deferred `visual` group from the dev-scoped lock check.
+- Validation (`.venv`): `pytest tests/ui/test_m6_screenshots.py` -> 3 passed; `tests/ui/test_playwright_smoke.py` -> 1 skipped with the required reason; `tests/ui/` -> 61 passed/1 skipped; full `pytest` -> 475 passed/1 skipped, coverage 86.11% (gate 80%); `ruff check`, `black --check`, `mypy` clean on changed files.
+- Labels/routing: PR #172 opened ready-for-review with `agent:claude` + `agents:keepalive` + `autofix` (+ `repo-review-approved`, `priority:normal`); branch prefix matches the Claude registry entry. Relay `pr_opened` fired (`active.source_pr=172`, `next_action=wait_for_keepalive`).
+- Next action: keepalive owns PR #172 from here (CI fixes / review comments); closer takes over post-merge. ACTION C outcome `new_issue`.
+
 ## 2026-05-27T10:24Z - codex closer resolved PR #171 conflict and review thread
 
 - Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
