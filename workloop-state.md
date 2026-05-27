@@ -1,5 +1,17 @@
 # Workloop State
 
+## 2026-05-27T08:50Z - claude opener materialized issue #118 (capability & gap-analysis UI)
+
+- Automation: `pd-workloop-resume` (claude opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#118](https://github.com/stranske/learning-management-system/issues/118) / new PR `Build capability and gap-analysis UI`.
+- Branch: `claude/issue-118-capability-gap-ui` (isolated worktree `/private/tmp/lms-issue-118-claude` off `origin/main` `797b717`).
+- Selection: raw opener cap 3/5 (drainable after infra repair); scoped blocker #121 excluded; #115/#116/#117 linked to open PRs #165/#166/#167; Workflows #2159 fix already merged via #2161 (closer disposition). Oldest opener-actionable issue = normal-tier M6 surface #118.
+- Implementation: added `src/lms/ui/capability_gap.py` (`/app/learner/capability` overview + per-target detail, consuming `lms.capability.api`), registered in `src/lms/main.py`. Personal-scope-only target create form (node/competency selection); recompute-estimate action with evidence breakdown + weak/missing-evidence flags; gap-analysis creation grouped by missing evidence / weak mastery / stale / support dependence / transfer need; maintenance-plan creation with scheduled steps linking to the review queue and attempt flow. Cautious present-tense "current evidence" language; no institutional/manager/certification controls.
+- Tests: `tests/ui/test_capability_gap_surface.py` (4) including the two named acceptance tests plus institutional-controls-absent and empty-state coverage.
+- Validation before push: `uv run pytest tests/ui/test_capability_gap_surface.py -q --no-cov` -> 4 passed; `uv run pytest tests/ui/ -q --no-cov` -> 37 passed; `ruff check` + `ruff format --check` on touched files -> passed; `uv run mypy src/lms/ui/capability_gap.py src/lms/main.py` -> passed (existing pyproject unused-section note only).
+- Next action: open ready-for-review PR with `agent:claude` + `agents:keepalive` + `autofix`, emit `pr_opened`, hand to keepalive for CI; do not wait for CI.
+
 ## 2026-05-27T08:05Z - codex closer resolved PR #164 review threads
 
 - Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
