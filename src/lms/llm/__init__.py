@@ -6,12 +6,20 @@ from lms.llm.exceptions import (
     SourceConstraintViolation,
     StructuredOutputValidationError,
 )
-from lms.llm.models import LLM_MODES, TRACE_CLASSES, LLMSession
+from lms.llm.models import (
+    LLM_MODES,
+    TRACE_CLASSES,
+    LearningInteractionSkill,
+    LLMFeedbackEvent,
+    LLMSession,
+)
 
 __all__ = [
     "LLM_MODES",
     "TRACE_CLASSES",
+    "LLMFeedbackEvent",
     "LLMSession",
+    "LearningInteractionSkill",
     "LLMError",
     "BudgetExceeded",
     "SourceConstraintViolation",
