@@ -44,6 +44,13 @@ RUBRIC_STATUSES: tuple[str, ...] = ("draft", "published", "archived")
 RUBRIC_CRITERION_STATUSES: tuple[str, ...] = ("active", "archived")
 MISCONCEPTION_ACTION_TYPES: tuple[str, ...] = FEEDBACK_ACTION_TYPES
 FEEDBACK_TEMPLATE_STATUSES: tuple[str, ...] = ("draft", "published", "archived")
+REVEAL_POLICIES: tuple[str, ...] = (
+    "after-attempt",
+    "always",
+    "instructor-only",
+    "system-triggered",
+)
+REVEAL_INITIATORS: tuple[str, ...] = ("learner", "system", "instructor", "test")
 
 
 class FeedbackRecord(Base):
@@ -269,6 +276,159 @@ class FeedbackTemplate(Base):
         onupdate=utc_now,
         server_default=func.now(),
         nullable=False,
+    )
+
+
+class Hint(Base):
+    """Ordered prompt support that can be revealed without exposing model answers."""
+
+    __tablename__ = "hints"
+    __table_args__ = (
+        CheckConstraint("reveal_order >= 1", name="hint_reveal_order_positive"),
+        CheckConstraint(
+            f"support_level IN ({_sql_values(('hint', 'reference', 'worked-example', 'coach'))})",
+            name="hint_support_level_valid",
+        ),
+        CheckConstraint(
+            f"reveal_policy IN ({_sql_values(REVEAL_POLICIES)})",
+            name="hint_reveal_policy_valid",
+        ),
+        UniqueConstraint("prompt_id", "reveal_order", name="hint_prompt_reveal_order_unique"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    prompt_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("prompts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    hint_text: Mapped[str] = mapped_column(Text, nullable=False)
+    reveal_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    support_level: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="hint", server_default=text("'hint'"), index=True
+    )
+    reveal_policy: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="after-attempt",
+        server_default=text("'after-attempt'"),
+        index=True,
+    )
+    source_citation_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    authoring_actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+
+class ModelAnswer(Base):
+    """Author-managed answer exemplar for a prompt."""
+
+    __tablename__ = "model_answers"
+    __table_args__ = (
+        CheckConstraint(
+            f"reveal_policy IN ({_sql_values(REVEAL_POLICIES)})",
+            name="model_answer_reveal_policy_valid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    prompt_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("prompts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    rubric_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("rubrics.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    answer_body: Mapped[str] = mapped_column(Text, nullable=False)
+    reveal_policy: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="after-attempt",
+        server_default=text("'after-attempt'"),
+        index=True,
+    )
+    source_citation_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    authoring_actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+
+class HintReveal(Base):
+    """Audit record for one hint reveal and its learner support signal."""
+
+    __tablename__ = "hint_reveals"
+    __table_args__ = (
+        CheckConstraint(
+            f"initiated_by IN ({_sql_values(REVEAL_INITIATORS)})",
+            name="hint_reveal_initiator_valid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    hint_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("hints.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    learner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    prompt_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    attempt_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("attempts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    initiated_by: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    revealed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+
+class ModelAnswerReveal(Base):
+    """Audit record for one model-answer reveal."""
+
+    __tablename__ = "model_answer_reveals"
+    __table_args__ = (
+        CheckConstraint(
+            f"initiated_by IN ({_sql_values(REVEAL_INITIATORS)})",
+            name="model_answer_reveal_initiator_valid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    model_answer_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("model_answers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    learner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    prompt_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    attempt_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("attempts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    initiated_by: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    revealed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
     )
 
 

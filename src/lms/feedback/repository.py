@@ -10,18 +10,23 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from lms.evidence.models import Attempt
+from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.models import (
     FeedbackAction,
     FeedbackRecord,
     FeedbackTemplate,
+    Hint,
+    HintReveal,
     MisconceptionPattern,
+    ModelAnswer,
+    ModelAnswerReveal,
     Rubric,
     RubricCriterion,
     RubricScore,
 )
 from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeEdge, KnowledgeNode
 from lms.prompts.models import Prompt
+from lms.prompts.repository import get_prompt
 
 
 def create_feedback_record(
@@ -382,6 +387,228 @@ def render_feedback_template(
     except KeyError as exc:
         missing_key = str(exc).strip("'")
         raise ValueError(f"missing placeholder values: {missing_key}") from exc
+
+
+def create_hint(
+    session: Session,
+    *,
+    prompt_id: str,
+    hint_text: str,
+    reveal_order: int,
+    authoring_actor: str,
+    support_level: str = "hint",
+    reveal_policy: str = "after-attempt",
+    source_citation_metadata: dict[str, Any] | None = None,
+) -> Hint:
+    """Create one ordered hint for a prompt."""
+    if session.get(Prompt, prompt_id) is None:
+        raise ValueError("referenced prompt was not found")
+    hint = Hint(
+        prompt_id=prompt_id,
+        hint_text=hint_text,
+        reveal_order=reveal_order,
+        support_level=support_level,
+        reveal_policy=reveal_policy,
+        source_citation_metadata=source_citation_metadata,
+        authoring_actor=authoring_actor,
+    )
+    session.add(hint)
+    session.flush()
+    return hint
+
+
+def get_hint(session: Session, hint_id: str) -> Hint | None:
+    """Return one hint by id."""
+    return session.get(Hint, hint_id)
+
+
+def list_hints(
+    session: Session,
+    *,
+    prompt_id: str | None = None,
+    limit: int = 100,
+) -> Sequence[Hint]:
+    """List hints ordered for learner reveal."""
+    statement = select(Hint)
+    if prompt_id is not None:
+        statement = statement.where(Hint.prompt_id == prompt_id)
+    statement = statement.order_by(Hint.prompt_id, Hint.reveal_order, Hint.id).limit(limit)
+    return list(session.scalars(statement))
+
+
+def reveal_hint(
+    session: Session,
+    hint: Hint,
+    *,
+    learner_id: str,
+    attempt_id: str | None = None,
+    initiated_by: str = "learner",
+) -> HintReveal:
+    """Record a hint reveal and mark related support-sensitive evidence."""
+    attempt: Attempt | None = None
+    if attempt_id is not None:
+        attempt = session.get(Attempt, attempt_id)
+        if attempt is None:
+            raise ValueError("referenced attempt was not found")
+        if attempt.prompt_id != hint.prompt_id:
+            raise ValueError("attempt does not match the hint prompt")
+        if attempt.learner_id != learner_id:
+            raise ValueError("attempt does not match learner")
+        attempt.hint_used = True
+        attempt.support_level = _stronger_support_level(attempt.support_level, hint.support_level)
+        _mark_attempt_evidence_hint_used(session, attempt, hint.support_level)
+    reveal = HintReveal(
+        hint_id=hint.id,
+        learner_id=learner_id,
+        prompt_id=hint.prompt_id,
+        attempt_id=attempt_id,
+        initiated_by=initiated_by,
+    )
+    session.add(reveal)
+    session.flush()
+    return reveal
+
+
+def create_model_answer(
+    session: Session,
+    *,
+    prompt_id: str,
+    answer_body: str,
+    authoring_actor: str,
+    rubric_id: str | None = None,
+    reveal_policy: str = "after-attempt",
+    source_citation_metadata: dict[str, Any] | None = None,
+) -> ModelAnswer:
+    """Create one model answer for a prompt."""
+    if session.get(Prompt, prompt_id) is None:
+        raise ValueError("referenced prompt was not found")
+    if rubric_id is not None and session.get(Rubric, rubric_id) is None:
+        raise ValueError("referenced rubric was not found")
+    answer = ModelAnswer(
+        prompt_id=prompt_id,
+        rubric_id=rubric_id,
+        answer_body=answer_body,
+        reveal_policy=reveal_policy,
+        source_citation_metadata=source_citation_metadata,
+        authoring_actor=authoring_actor,
+    )
+    session.add(answer)
+    session.flush()
+    return answer
+
+
+def get_model_answer(session: Session, model_answer_id: str) -> ModelAnswer | None:
+    """Return one model answer by id."""
+    return session.get(ModelAnswer, model_answer_id)
+
+
+def list_model_answers(
+    session: Session,
+    *,
+    prompt_id: str | None = None,
+    limit: int = 100,
+) -> Sequence[ModelAnswer]:
+    """List model answer metadata without implying learner reveal."""
+    statement = select(ModelAnswer)
+    if prompt_id is not None:
+        statement = statement.where(ModelAnswer.prompt_id == prompt_id)
+    statement = statement.order_by(ModelAnswer.created_at.desc(), ModelAnswer.id).limit(limit)
+    return list(session.scalars(statement))
+
+
+def reveal_model_answer(
+    session: Session,
+    model_answer: ModelAnswer,
+    *,
+    learner_id: str,
+    attempt_id: str | None = None,
+    initiated_by: str = "learner",
+    instructor_mode: bool = False,
+) -> ModelAnswerReveal:
+    """Record a model-answer reveal after attempt or explicit instructor/test mode."""
+    attempt: Attempt | None = None
+    if attempt_id is not None:
+        attempt = session.get(Attempt, attempt_id)
+        if attempt is None:
+            raise ValueError("referenced attempt was not found")
+        if attempt.prompt_id != model_answer.prompt_id:
+            raise ValueError("attempt does not match the model answer prompt")
+        if attempt.learner_id != learner_id:
+            raise ValueError("attempt does not match learner")
+    if model_answer.reveal_policy == "after-attempt" and attempt is None and not instructor_mode:
+        raise ValueError("model answer reveal requires a completed attempt")
+    if model_answer.reveal_policy == "instructor-only" and not instructor_mode:
+        raise ValueError("model answer reveal requires instructor mode")
+    reveal = ModelAnswerReveal(
+        model_answer_id=model_answer.id,
+        learner_id=learner_id,
+        prompt_id=model_answer.prompt_id,
+        attempt_id=attempt_id,
+        initiated_by=initiated_by,
+    )
+    session.add(reveal)
+    session.flush()
+    return reveal
+
+
+def learner_safe_source_citations(
+    session: Session,
+    prompt_id: str,
+    explicit_metadata: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Return public prompt citations without exposing local-only locators."""
+    prompt = get_prompt(session, prompt_id)
+    citations: list[dict[str, Any]] = []
+    if prompt is not None:
+        for reference in prompt.source_references:
+            citation: dict[str, Any] = {
+                "source_type": reference.source_type,
+                "passage_range": reference.passage_range,
+                "source_visibility": reference.source_visibility,
+                "stable_locator": None,
+            }
+            if reference.source_visibility == "public":
+                citation["stable_locator"] = reference.stable_locator
+            citations.append(citation)
+    if explicit_metadata:
+        citations.append(
+            {
+                "source_type": str(explicit_metadata.get("source_type", "metadata")),
+                "passage_range": explicit_metadata.get("passage_range"),
+                "source_visibility": str(explicit_metadata.get("source_visibility", "public")),
+                "stable_locator": explicit_metadata.get("stable_locator"),
+            }
+        )
+    return citations
+
+
+_SUPPORT_RANK = {
+    "none": 0,
+    "hint": 1,
+    "reference": 2,
+    "worked-example": 3,
+    "coach": 4,
+}
+
+
+def _stronger_support_level(current: str | None, candidate: str) -> str:
+    current_level = current or "none"
+    return (
+        candidate
+        if _SUPPORT_RANK[candidate] > _SUPPORT_RANK.get(current_level, 0)
+        else current_level
+    )
+
+
+def _mark_attempt_evidence_hint_used(
+    session: Session,
+    attempt: Attempt,
+    support_level: str,
+) -> None:
+    records = session.scalars(select(EvidenceRecord).where(EvidenceRecord.attempt_id == attempt.id))
+    for record in records:
+        record.hint_used = True
+        record.support_level = _stronger_support_level(record.support_level, support_level)
 
 
 def create_rubric(
