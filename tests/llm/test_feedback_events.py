@@ -97,3 +97,104 @@ def test_ephemeral_feedback_event_excludes_verbatim_body_by_default(
     body: dict[str, Any] = response.json()
     assert body["trace_class"] == "ephemeral"
     assert body["body_retained"] is False
+
+
+def _create_study_coach_session(client: TestClient, *, learner_id: str = "learner-1") -> str:
+    response = client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": learner_id,
+            "mode": "study-coach",
+            "user_message": "Explain spaced practice.",
+            "retrieval_active": False,
+        },
+    )
+    assert response.status_code == 200
+    return response.json()["session_id"]
+
+
+def test_feedback_event_learner_mismatch_returns_422(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """A feedback event whose learner differs from the linked session learner is rejected."""
+    client, _session_factory = api_client
+    llm_session_id = _create_study_coach_session(client, learner_id="learner-1")
+
+    response = client.post(
+        "/llm/feedback-events",
+        json={
+            "llm_session_id": llm_session_id,
+            "learner_id": "learner-2",
+            "event_type": "manual-review",
+            "trace_class": "formative",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_feedback_event_trace_class_outside_skill_allowed_returns_422(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """A feedback event trace class outside the linked skill's allowed set is rejected."""
+    client, _session_factory = api_client
+    llm_session_id = _create_study_coach_session(client)
+    skill_response = client.post(
+        "/llm/interaction-skills",
+        json={
+            "name": "evidence-only-skill",
+            "mode": "study-coach",
+            "policy_version": "v1",
+            "description": "Only evidence-grade traces permitted.",
+            "allowed_trace_classes": ["evidence-grade"],
+        },
+    )
+    assert skill_response.status_code == 201
+    skill_id = skill_response.json()["id"]
+
+    response = client.post(
+        "/llm/feedback-events",
+        json={
+            "llm_session_id": llm_session_id,
+            "learner_id": "learner-1",
+            "skill_id": skill_id,
+            "event_type": "manual-review",
+            "trace_class": "formative",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_feedback_event_inactive_skill_returns_422(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """A feedback event linked to an inactive skill is rejected."""
+    client, _session_factory = api_client
+    llm_session_id = _create_study_coach_session(client)
+    skill_response = client.post(
+        "/llm/interaction-skills",
+        json={
+            "name": "inactive-skill",
+            "mode": "study-coach",
+            "policy_version": "v1",
+            "description": "Inactive skill.",
+            "allowed_trace_classes": ["evidence-grade", "formative", "ephemeral"],
+            "active": False,
+        },
+    )
+    assert skill_response.status_code == 201
+    skill_id = skill_response.json()["id"]
+
+    response = client.post(
+        "/llm/feedback-events",
+        json={
+            "llm_session_id": llm_session_id,
+            "learner_id": "learner-1",
+            "skill_id": skill_id,
+            "event_type": "manual-review",
+            "trace_class": "formative",
+        },
+    )
+
+    assert response.status_code == 422

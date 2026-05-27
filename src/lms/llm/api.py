@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
@@ -24,13 +25,17 @@ from lms.llm.interaction_policy import (
     decide_interaction_policy,
     flag_uncited_claims,
 )
-from lms.llm.models import LearningInteractionSkill, LLMFeedbackEvent, LLMSession
+from lms.llm.models import (
+    LearningInteractionSkill,
+    LLMFeedbackEvent,
+    LLMSession,
+    TraceClassName,
+)
 from lms.llm.providers import FakeProvider
 from lms.llm.trace_controls import apply_trace_control
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 SessionDep = Annotated[Session, Depends(get_session)]
-TraceClassName = Literal["evidence-grade", "formative", "ephemeral"]
 
 
 def _default_allowed_trace_classes() -> list[TraceClassName]:
@@ -257,15 +262,46 @@ def _validate_feedback_event_links(
     skill_id: str | None = None,
     feedback_record_id: str | None = None,
     evidence_record_id: str | None = None,
-) -> None:
-    if llm_session_id is not None and session.get(LLMSession, llm_session_id) is None:
-        raise HTTPException(status_code=404, detail="LLM session not found")
-    if skill_id is not None and session.get(LearningInteractionSkill, skill_id) is None:
-        raise HTTPException(status_code=404, detail="Learning interaction skill not found")
+) -> tuple[LLMSession | None, LearningInteractionSkill | None]:
+    llm_session: LLMSession | None = None
+    if llm_session_id is not None:
+        llm_session = session.get(LLMSession, llm_session_id)
+        if llm_session is None:
+            raise HTTPException(status_code=404, detail="LLM session not found")
+    skill: LearningInteractionSkill | None = None
+    if skill_id is not None:
+        skill = session.get(LearningInteractionSkill, skill_id)
+        if skill is None:
+            raise HTTPException(status_code=404, detail="Learning interaction skill not found")
     if feedback_record_id is not None and session.get(FeedbackRecord, feedback_record_id) is None:
         raise HTTPException(status_code=404, detail="Feedback record not found")
     if evidence_record_id is not None and session.get(EvidenceRecord, evidence_record_id) is None:
         raise HTTPException(status_code=404, detail="Evidence record not found")
+    return llm_session, skill
+
+
+def _validate_skill_consistency(
+    skill: LearningInteractionSkill,
+    *,
+    mode: str | None = None,
+    trace_class: str | None = None,
+) -> None:
+    """Reject linking audit rows to an incompatible learning interaction skill."""
+    if not skill.active:
+        raise HTTPException(
+            status_code=422,
+            detail="Learning interaction skill is inactive",
+        )
+    if mode is not None and skill.mode != mode:
+        raise HTTPException(
+            status_code=422,
+            detail="Learning interaction skill mode does not match the requested mode",
+        )
+    if trace_class is not None and trace_class not in skill.allowed_trace_classes:
+        raise HTTPException(
+            status_code=422,
+            detail="Trace class is not permitted for the linked learning interaction skill",
+        )
 
 
 @router.post(
@@ -337,7 +373,14 @@ def create_interaction_skill_route(
         active=payload.active,
     )
     session.add(skill)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="A learning interaction skill with that name and policy version already exists.",
+        ) from exc
     session.refresh(skill)
     return LearningInteractionSkillRead.model_validate(skill)
 
@@ -368,13 +411,24 @@ def create_feedback_event_route(
     session: SessionDep,
 ) -> LLMFeedbackEventRead:
     """Persist a redacted per-turn LLM feedback event."""
-    _validate_feedback_event_links(
+    llm_session, skill = _validate_feedback_event_links(
         session,
         llm_session_id=payload.llm_session_id,
         skill_id=payload.skill_id,
         feedback_record_id=payload.feedback_record_id,
         evidence_record_id=payload.evidence_record_id,
     )
+    if (
+        llm_session is not None
+        and llm_session.learner_id is not None
+        and llm_session.learner_id != payload.learner_id
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Feedback event learner does not match the linked LLM session learner",
+        )
+    if skill is not None:
+        _validate_skill_consistency(skill, trace_class=payload.trace_class)
     event = LLMFeedbackEvent(
         llm_session_id=payload.llm_session_id,
         learner_id=payload.learner_id,
@@ -418,7 +472,7 @@ def list_feedback_events_route(
 @router.post("/sessions", response_model=LLMSessionRead)
 def create_llm_session_route(payload: LLMSessionCreate, session: SessionDep) -> LLMSessionRead:
     """Create and persist a fake-provider study/practice LLM turn."""
-    _validate_feedback_event_links(
+    _, skill = _validate_feedback_event_links(
         session,
         skill_id=payload.skill_id,
         feedback_record_id=payload.feedback_record_id,
@@ -439,6 +493,8 @@ def create_llm_session_route(payload: LLMSessionCreate, session: SessionDep) -> 
         coaching_intensity=payload.coaching_intensity,
     )
     decision = decide_interaction_policy(context)
+    if skill is not None:
+        _validate_skill_consistency(skill, mode=payload.mode, trace_class=decision.trace_class)
     client = _default_client()
     prompt = build_policy_prompt(context, decision)
     flags: tuple[str, ...] = ()

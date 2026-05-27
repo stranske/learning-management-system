@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal, get_args
 
 from sqlalchemy import (
     JSON,
@@ -24,7 +24,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from lms.auth.models import new_uuid, utc_now
 from lms.db.base import Base
 
-TRACE_CLASSES: tuple[str, ...] = ("evidence-grade", "formative", "ephemeral")
+TraceClassName = Literal["evidence-grade", "formative", "ephemeral"]
+TRACE_CLASSES: tuple[str, ...] = get_args(TraceClassName)
 LLM_MODES: tuple[str, ...] = ("study-coach", "practice", "transfer", "authoring-assist")
 COACHING_INTENSITIES: tuple[str, ...] = ("full", "light", "quiet")
 TRACE_CONTROL_STATES: tuple[str, ...] = ("default", "kept", "forgotten")
