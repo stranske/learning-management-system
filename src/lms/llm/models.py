@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -12,11 +14,12 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     false,
     func,
     true,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lms.auth.models import new_uuid, utc_now
 from lms.db.base import Base
@@ -25,6 +28,12 @@ TRACE_CLASSES: tuple[str, ...] = ("evidence-grade", "formative", "ephemeral")
 LLM_MODES: tuple[str, ...] = ("study-coach", "practice", "transfer", "authoring-assist")
 COACHING_INTENSITIES: tuple[str, ...] = ("full", "light", "quiet")
 TRACE_CONTROL_STATES: tuple[str, ...] = ("default", "kept", "forgotten")
+LLM_FEEDBACK_EVENT_TYPES: tuple[str, ...] = (
+    "learning-policy-nudge",
+    "feedback-outcome",
+    "source-citation-check",
+    "manual-review",
+)
 
 
 def _sql_values(values: tuple[str, ...]) -> str:
@@ -107,4 +116,114 @@ class LLMSession(Base):
         default=utc_now,
         server_default=func.now(),
         nullable=False,
+    )
+    feedback_events: Mapped[list[LLMFeedbackEvent]] = relationship(
+        "LLMFeedbackEvent",
+        back_populates="llm_session",
+        cascade="all, delete-orphan",
+    )
+
+
+class LearningInteractionSkill(Base):
+    """Named learning-policy skill that can be audited across LLM turns."""
+
+    __tablename__ = "learning_interaction_skills"
+    __table_args__ = (
+        CheckConstraint(
+            f"mode IN ({_sql_values(LLM_MODES)})",
+            name="learning_interaction_skill_mode_valid",
+        ),
+        UniqueConstraint("name", "policy_version", name="learning_interaction_skill_name_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    policy_version: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    allowed_trace_classes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    source_citation_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true(), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    feedback_events: Mapped[list[LLMFeedbackEvent]] = relationship(
+        "LLMFeedbackEvent",
+        back_populates="skill",
+    )
+
+
+class LLMFeedbackEvent(Base):
+    """Per-turn feedback fact emitted by an LLM session."""
+
+    __tablename__ = "llm_feedback_events"
+    __table_args__ = (
+        CheckConstraint(
+            f"event_type IN ({_sql_values(LLM_FEEDBACK_EVENT_TYPES)})",
+            name="llm_feedback_event_type_valid",
+        ),
+        CheckConstraint(
+            f"trace_class IN ({_sql_values(TRACE_CLASSES)})",
+            name="llm_feedback_event_trace_class_valid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    llm_session_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("llm_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    learner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    skill_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("learning_interaction_skills.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    feedback_record_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("feedback_records.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    evidence_record_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("evidence_records.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    trace_class: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    source_reference_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    unverified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false(), index=True
+    )
+    cost_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    event_summary: Mapped[str | None] = mapped_column(Text)
+    event_body: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    llm_session: Mapped[LLMSession] = relationship(
+        "LLMSession",
+        back_populates="feedback_events",
+    )
+    skill: Mapped[LearningInteractionSkill | None] = relationship(
+        "LearningInteractionSkill",
+        back_populates="feedback_events",
     )
