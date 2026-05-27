@@ -13,18 +13,48 @@ from sqlalchemy import Column, Table, inspect, select
 from sqlalchemy.orm import Session, selectinload
 
 import lms.audit.models  # noqa: F401  # register metadata
+import lms.capability.models  # noqa: F401  # register metadata
+import lms.cases.models  # noqa: F401  # register metadata
+import lms.competencies.models  # noqa: F401  # register metadata
 import lms.evidence.models  # noqa: F401  # register metadata
+import lms.feedback.models  # noqa: F401  # register metadata
 import lms.graphs.models  # noqa: F401  # register metadata
 import lms.learners.models  # noqa: F401  # register metadata
 import lms.llm.models  # noqa: F401  # register metadata
 import lms.prompts.models  # noqa: F401  # register metadata
+import lms.scheduling.models  # noqa: F401  # register metadata
 import lms.sources.models  # noqa: F401  # register metadata
 from lms.auth.models import User
+from lms.capability.models import (
+    CapabilityEstimate,
+    CapabilityTarget,
+    GapAnalysis,
+    MaintenancePlan,
+    capability_target_competencies,
+    capability_target_nodes,
+)
+from lms.cases.models import Case, CaseStep, DecisionPoint, EvidencePacket
+from lms.competencies.models import Competency, CompetencyEvidence
 from lms.evidence.models import Attempt, EvidenceRecord
+from lms.feedback.models import (
+    FeedbackAction,
+    FeedbackRecord,
+    MisconceptionPattern,
+    Rubric,
+    RubricCriterion,
+    RubricScore,
+)
 from lms.graphs.models import KnowledgeEdge, KnowledgeNode
 from lms.learners.models import Learner, LearningGoal, learning_goal_nodes
 from lms.llm.models import LLMSession
 from lms.prompts.models import Prompt, PromptVersion, prompt_source_references
+from lms.scheduling.models import (
+    RemediationTrigger,
+    ReviewPolicy,
+    ReviewQueueItem,
+    ReviewSchedule,
+    SchedulerDecision,
+)
 from lms.sources.models import SourceReference
 
 SCHEMA_VERSION = 1
@@ -38,9 +68,30 @@ MODEL_BY_TYPE = {
     "LearningGoal": LearningGoal,
     "Prompt": Prompt,
     "PromptVersion": PromptVersion,
+    "LLMSession": LLMSession,
     "Attempt": Attempt,
     "EvidenceRecord": EvidenceRecord,
-    "LLMSession": LLMSession,
+    "Competency": Competency,
+    "CompetencyEvidence": CompetencyEvidence,
+    "FeedbackRecord": FeedbackRecord,
+    "FeedbackAction": FeedbackAction,
+    "MisconceptionPattern": MisconceptionPattern,
+    "Rubric": Rubric,
+    "RubricCriterion": RubricCriterion,
+    "RubricScore": RubricScore,
+    "Case": Case,
+    "CaseStep": CaseStep,
+    "EvidencePacket": EvidencePacket,
+    "DecisionPoint": DecisionPoint,
+    "ReviewQueueItem": ReviewQueueItem,
+    "ReviewPolicy": ReviewPolicy,
+    "ReviewSchedule": ReviewSchedule,
+    "RemediationTrigger": RemediationTrigger,
+    "SchedulerDecision": SchedulerDecision,
+    "CapabilityTarget": CapabilityTarget,
+    "CapabilityEstimate": CapabilityEstimate,
+    "GapAnalysis": GapAnalysis,
+    "MaintenancePlan": MaintenancePlan,
 }
 
 EXPORT_ORDER = (
@@ -52,9 +103,30 @@ EXPORT_ORDER = (
     LearningGoal,
     Prompt,
     PromptVersion,
+    LLMSession,
     Attempt,
     EvidenceRecord,
-    LLMSession,
+    Competency,
+    CompetencyEvidence,
+    FeedbackRecord,
+    FeedbackAction,
+    MisconceptionPattern,
+    Rubric,
+    RubricCriterion,
+    RubricScore,
+    Case,
+    CaseStep,
+    EvidencePacket,
+    DecisionPoint,
+    ReviewQueueItem,
+    ReviewPolicy,
+    ReviewSchedule,
+    RemediationTrigger,
+    SchedulerDecision,
+    CapabilityTarget,
+    CapabilityEstimate,
+    GapAnalysis,
+    MaintenancePlan,
 )
 
 DEPENDENCIES = {
@@ -86,15 +158,111 @@ DEPENDENCIES = {
         "learner_id": "Learner",
         "parent_session_id": "LLMSession",
     },
+    "CompetencyEvidence": {
+        "competency_id": "Competency",
+        "knowledge_node_id": "KnowledgeNode",
+        "evidence_record_id": "EvidenceRecord",
+        "learner_id": "Learner",
+    },
+    "FeedbackRecord": {
+        "learner_id": "Learner",
+        "attempt_id": "Attempt",
+        "prompt_id": "Prompt",
+        "evidence_record_id": "EvidenceRecord",
+    },
+    "FeedbackAction": {
+        "feedback_record_id": "FeedbackRecord",
+        "learner_id": "Learner",
+        "attempt_id": "Attempt",
+        "prompt_id": "Prompt",
+    },
+    "MisconceptionPattern": {"target_knowledge_node_id": "KnowledgeNode"},
+    "Rubric": {
+        "prompt_id": "Prompt",
+        "knowledge_node_id": "KnowledgeNode",
+    },
+    "RubricCriterion": {"rubric_id": "Rubric"},
+    "RubricScore": {
+        "rubric_id": "Rubric",
+        "attempt_id": "Attempt",
+        "learner_id": "Learner",
+        "evidence_record_id": "EvidenceRecord",
+        "feedback_record_id": "FeedbackRecord",
+    },
+    "Case": {
+        "rubric_id": "Rubric",
+        "knowledge_node_id": "KnowledgeNode",
+    },
+    "CaseStep": {"case_id": "Case"},
+    "EvidencePacket": {
+        "case_id": "Case",
+        "source_reference_id": "SourceReference",
+    },
+    "DecisionPoint": {
+        "case_step_id": "CaseStep",
+        "evidence_packet_id": "EvidencePacket",
+    },
+    "ReviewQueueItem": {
+        "learner_id": "Learner",
+        "knowledge_node_id": "KnowledgeNode",
+        "source_attempt_id": "Attempt",
+        "source_evidence_record_id": "EvidenceRecord",
+    },
+    "ReviewSchedule": {
+        "learner_id": "Learner",
+        "knowledge_node_id": "KnowledgeNode",
+        "review_policy_id": "ReviewPolicy",
+        "review_queue_item_id": "ReviewQueueItem",
+        "source_evidence_record_id": "EvidenceRecord",
+    },
+    "RemediationTrigger": {
+        "pattern_id": "MisconceptionPattern",
+        "knowledge_node_id": "KnowledgeNode",
+    },
+    "SchedulerDecision": {
+        "learner_id": "Learner",
+        "knowledge_node_id": "KnowledgeNode",
+        "review_policy_id": "ReviewPolicy",
+        "review_schedule_id": "ReviewSchedule",
+        "review_queue_item_id": "ReviewQueueItem",
+        "source_evidence_record_id": "EvidenceRecord",
+    },
+    "CapabilityTarget": {
+        "learner_id": "Learner",
+        "learning_goal_id": "LearningGoal",
+    },
+    "CapabilityEstimate": {
+        "target_id": "CapabilityTarget",
+        "learner_id": "Learner",
+    },
+    "GapAnalysis": {
+        "target_id": "CapabilityTarget",
+        "estimate_id": "CapabilityEstimate",
+        "learner_id": "Learner",
+    },
+    "MaintenancePlan": {
+        "target_id": "CapabilityTarget",
+        "gap_analysis_id": "GapAnalysis",
+        "learner_id": "Learner",
+    },
 }
 
 RELATIONSHIP_KEYS = {
     "LearningGoal": ("target_node_ids",),
     "Prompt": ("source_reference_ids",),
+    "CapabilityTarget": ("target_node_ids", "target_competency_ids"),
 }
 
 PII_FIELDS = {"User": {"email"}}
 SOURCE_CONTENT_FIELDS = {"body", "content", "raw_content", "source_content", "text"}
+DEFAULT_REDACTED_FIELDS = {
+    "CapabilityEstimate": {"commentary"},
+    "EvidencePacket": {"packet_metadata"},
+}
+REDACTED_FIELD_VALUES: dict[tuple[str, str], Any] = {
+    ("CapabilityEstimate", "commentary"): "[redacted: inferred capability commentary]",
+    ("EvidencePacket", "packet_metadata"): {},
+}
 ALL_VALUE = "all"
 
 
@@ -205,6 +373,11 @@ def _export_statement(model: type[Any]) -> Any:
         return statement.options(selectinload(LearningGoal.target_nodes))
     if model is Prompt:
         return statement.options(selectinload(Prompt.source_references))
+    if model is CapabilityTarget:
+        return statement.options(
+            selectinload(CapabilityTarget.target_nodes),
+            selectinload(CapabilityTarget.target_competencies),
+        )
     return statement
 
 
@@ -212,20 +385,29 @@ def _model_to_record(row: Any, *, include_pii: str, include_source_content: str)
     mapper = inspect(row).mapper
     record_type = row.__class__.__name__
     record: dict[str, Any] = {}
-    redacted_fields = PII_FIELDS.get(record_type, set())
+    pii_fields = set(PII_FIELDS.get(record_type, set()))
+    redacted_fields = set()
+    if include_source_content != ALL_VALUE:
+        redacted_fields.update(DEFAULT_REDACTED_FIELDS.get(record_type, set()))
     source_content_fields = set()
     if record_type == "SourceReference" and include_source_content != ALL_VALUE:
         source_content_fields = SOURCE_CONTENT_FIELDS
     for column in mapper.columns:
-        if include_pii != ALL_VALUE and column.key in redacted_fields:
+        if include_pii != ALL_VALUE and column.key in pii_fields:
             continue
         if column.key in source_content_fields:
+            continue
+        if column.key in redacted_fields:
+            record[column.key] = REDACTED_FIELD_VALUES[(record_type, column.key)]
             continue
         record[column.key] = _dump_value(getattr(row, column.key))
     if isinstance(row, LearningGoal):
         record["target_node_ids"] = [node.id for node in row.target_nodes]
     if isinstance(row, Prompt):
         record["source_reference_ids"] = [reference.id for reference in row.source_references]
+    if isinstance(row, CapabilityTarget):
+        record["target_node_ids"] = [node.id for node in row.target_nodes]
+        record["target_competency_ids"] = [competency.id for competency in row.target_competencies]
     return record
 
 
@@ -295,7 +477,7 @@ def _validate_import(session: Session, entries: Sequence[dict[str, Any]]) -> Non
             values = record.get(key, [])
             if not isinstance(values, list):
                 raise ExportImportError(f"{record_type}:{record['id']} {key} must be a list")
-            dependency_type = "KnowledgeNode" if key == "target_node_ids" else "SourceReference"
+            dependency_type = _relationship_dependency_type(key)
             for dependency_id in values:
                 if not isinstance(dependency_id, str) or not _id_exists(
                     session, dependency_type, dependency_id, seen
@@ -317,20 +499,32 @@ def _id_exists(
     return session.get(MODEL_BY_TYPE[record_type], record_id) is not None
 
 
+def _relationship_dependency_type(key: str) -> str:
+    if key in {"target_node_ids", "knowledge_node_ids"}:
+        return "KnowledgeNode"
+    if key == "target_competency_ids":
+        return "Competency"
+    if key == "source_reference_ids":
+        return "SourceReference"
+    raise ExportImportError(f"unsupported relationship key {key!r}")
+
+
 def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
-    pending_relationships: list[tuple[str, str, list[str]]] = []
+    pending_relationships: list[tuple[str, str, str, list[str]]] = []
     for entry in entries:
         model = MODEL_BY_TYPE[entry["type"]]
         record = dict(entry["record"])
         for key in RELATIONSHIP_KEYS.get(entry["type"], ()):
-            pending_relationships.append((entry["type"], record["id"], list(record.pop(key, []))))
+            pending_relationships.append(
+                (entry["type"], key, record["id"], list(record.pop(key, [])))
+            )
         table = model.__table__
         if not isinstance(table, Table):
             raise ExportImportError(f"{entry['type']} does not map to a concrete table")
         values = _coerce_record(table, record)
         session.add(model(**values))
     session.flush()
-    for record_type, record_id, related_ids in pending_relationships:
+    for record_type, key, record_id, related_ids in pending_relationships:
         if record_type == "LearningGoal":
             _insert_associations(
                 session,
@@ -346,6 +540,24 @@ def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
                 prompt_source_references,
                 left_column="prompt_id",
                 right_column="source_reference_id",
+                left_id=record_id,
+                right_ids=related_ids,
+            )
+        elif record_type == "CapabilityTarget" and key == "target_node_ids":
+            _insert_associations(
+                session,
+                capability_target_nodes,
+                left_column="capability_target_id",
+                right_column="knowledge_node_id",
+                left_id=record_id,
+                right_ids=related_ids,
+            )
+        elif record_type == "CapabilityTarget" and key == "target_competency_ids":
+            _insert_associations(
+                session,
+                capability_target_competencies,
+                left_column="capability_target_id",
+                right_column="competency_id",
                 left_id=record_id,
                 right_ids=related_ids,
             )
