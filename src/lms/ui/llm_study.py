@@ -11,7 +11,7 @@ policy stay defined in one place.
 from __future__ import annotations
 
 from html import escape
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -35,8 +35,22 @@ router = APIRouter(tags=["learner-ui"])
 SessionDep = Annotated[Session, Depends(get_session)]
 
 _DEFAULT_LEARNER = "learner-1"
-_MODE_CHOICES = ("study-coach", "practice")
-_INTENSITY_CHOICES = ("full", "light", "quiet")
+
+_ModeChoice = Literal["study-coach", "practice"]
+_IntensityChoice = Literal["full", "light", "quiet"]
+_ActionChoice = Literal["keep", "forget"]
+
+_MODE_CHOICES: tuple[_ModeChoice, ...] = ("study-coach", "practice")
+_INTENSITY_CHOICES: tuple[_IntensityChoice, ...] = ("full", "light", "quiet")
+_ACTION_CHOICES: tuple[_ActionChoice, ...] = ("keep", "forget")
+
+
+def _narrow_choice[ChoiceT: str](value: str, choices: tuple[ChoiceT, ...]) -> ChoiceT | None:
+    """Return ``value`` typed as a member of ``choices``, or ``None`` if unsupported."""
+    for choice in choices:
+        if value == choice:
+            return choice
+    return None
 
 
 @router.get("/app/learner/llm-study", response_class=HTMLResponse)
@@ -52,12 +66,20 @@ async def create_llm_study_session_route(request: Request, session: SessionDep) 
     """Start one formative study/practice turn and render the result."""
     form = await _read_form(request)
     learner_id = form.get("learner_id") or _DEFAULT_LEARNER
+    mode = _narrow_choice(form.get("mode", "study-coach"), _MODE_CHOICES)
+    coaching_intensity = _narrow_choice(form.get("coaching_intensity", "full"), _INTENSITY_CHOICES)
+    if mode is None or coaching_intensity is None:
+        return _study_surface(
+            learner_id=learner_id,
+            result_html="",
+            error="Enter a message and a supported mode to start a study turn.",
+        )
     try:
         payload = LLMSessionCreate(
             learner_id=learner_id,
-            mode=form.get("mode", "study-coach"),  # type: ignore[arg-type]
+            mode=mode,
             user_message=form.get("user_message", ""),
-            coaching_intensity=form.get("coaching_intensity", "full"),  # type: ignore[arg-type]
+            coaching_intensity=coaching_intensity,
             source_constraints=_split_csv(form.get("source_constraints", "")),
             assessment_restricted=form.get("assessment_restricted") == "true",
             retrieval_active=form.get("retrieval_active") == "true",
@@ -80,6 +102,12 @@ async def create_llm_study_session_route(request: Request, session: SessionDep) 
             ),
             error="The daily LLM budget kill-switch stopped this turn.",
         )
+    except HTTPException as exc:
+        return _study_surface(
+            learner_id=learner_id,
+            result_html="",
+            error=str(exc.detail),
+        )
     return _study_surface(
         learner_id=learner_id,
         result_html=_session_result(read, learner_id=learner_id),
@@ -96,17 +124,14 @@ async def control_llm_study_trace_route(
     """Apply a learner keep/forget control and render the updated trace state."""
     form = await _read_form(request)
     learner_id = form.get("learner_id") or _DEFAULT_LEARNER
-    try:
-        payload = LLMTraceControlRequest(
-            action=form.get("action", ""),  # type: ignore[arg-type]
-            actor_id=learner_id,
-        )
-    except ValidationError:
+    action = _narrow_choice(form.get("action", ""), _ACTION_CHOICES)
+    if action is None:
         return _study_surface(
             learner_id=learner_id,
             result_html="",
             error="Choose keep or forget for this trace.",
         )
+    payload = LLMTraceControlRequest(action=action, actor_id=learner_id)
     try:
         read = control_llm_trace_route(session_id, payload, session)
     except HTTPException as exc:

@@ -40,8 +40,10 @@ def test_llm_study_surface_shows_trace_class_cost_and_model(
 
     assert response.status_code == 200
     html = response.text
-    assert "Trace class" in html
-    assert "formative" in html
+    # Target the session-result markup specifically: the standing "Trace handling"
+    # note also contains the word "formative", so a bare substring check would pass
+    # even if the session's displayed trace class were missing or wrong.
+    assert "<dt>Trace class</dt><dd>formative</dd>" in html
     assert "fake-learning-policy" in html
     assert "micro-USD" in html
     assert "Policy decision" in html
