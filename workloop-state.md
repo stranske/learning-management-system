@@ -1,5 +1,15 @@
 # Workloop State
 
+## 2026-05-27T11:20Z - codex opener quick-recovered PR #172 dependency scanner failure
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#120](https://github.com/stranske/learning-management-system/issues/120) / [#172](https://github.com/stranske/learning-management-system/pull/172), branch `claude/issue-120-html-snapshots`, base head `286a42f`.
+- Cap/drain context: raw opener cap below 5. Fleet cap-health initially reported Pension-Data #471 and LMS #172 as draining; direct Gate evidence then showed #172 had a completed failing Gate on run `26507376211`, with both Python CI matrix jobs failing at the `Auto-fix missing dependencies` step after a rebased/routing-repaired head.
+- Recovery action: added the lazily imported `playwright` package to the existing deferred `[project.optional-dependencies].visual` group alongside `pytest-playwright`. This keeps the browser harness out of default CI and the dev lock coverage while satisfying the repo's dependency scanner, which maps `from playwright.sync_api import ...` to the `playwright` package.
+- Validation: `python scripts/sync_test_dependencies.py` -> all dependencies declared; `pytest tests/test_dependency_version_alignment.py tests/ui/test_playwright_smoke.py --no-cov` -> 1 passed/1 skipped; `ruff check pyproject.toml tests/ui/test_playwright_smoke.py tests/test_dependency_version_alignment.py` -> passed; `black --check tests/ui/test_playwright_smoke.py tests/test_dependency_version_alignment.py` -> passed.
+- Next action: keepalive/Gate rerun from the pushed recovery commit; closer owns post-merge verification.
+
 ## 2026-05-27T11:10Z - codex opener repaired PR #172 routing and base
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
