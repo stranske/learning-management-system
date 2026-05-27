@@ -243,6 +243,29 @@ def test_author_ui_surfaces_validation_feedback(
         assert session.scalars(select(Prompt)).all() == []
 
 
+def test_author_ui_shows_error_for_invalid_node_knowledge_type(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+
+    response = client.post(
+        "/app/author/knowledge/nodes",
+        data={
+            "title": "Bad node",
+            "knowledge_type": "not-a-real-type",
+            "scope": "personal",
+            "status": "draft",
+            "actor_id": "author-1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Knowledge node created" not in response.text
+    assert 'aria-invalid="true"' in response.text
+    with session_factory() as session:
+        assert session.scalars(select(KnowledgeNode)).all() == []
+
+
 def test_author_surfaces_show_empty_states_and_no_curriculum_text(
     api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:

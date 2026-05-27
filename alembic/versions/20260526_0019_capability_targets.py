@@ -23,7 +23,9 @@ def upgrade() -> None:
         sa.Column("learner_id", sa.String(length=36), nullable=False),
         sa.Column("title", sa.String(length=255), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("ownership_scope", sa.String(length=32), server_default="personal", nullable=False),
+        sa.Column(
+            "ownership_scope", sa.String(length=32), server_default="personal", nullable=False
+        ),
         sa.Column("learning_goal_id", sa.String(length=36), nullable=True),
         sa.Column("required_evidence_types", sa.JSON(), nullable=False),
         sa.Column("confidence_threshold", sa.Float(), server_default="0.8", nullable=False),
