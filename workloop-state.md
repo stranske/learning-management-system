@@ -1,5 +1,15 @@
 # Workloop State
 
+## 2026-05-27T11:10Z - codex opener repaired PR #172 routing and base
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#120](https://github.com/stranske/learning-management-system/issues/120) / [#172](https://github.com/stranske/learning-management-system/pull/172), branch `claude/issue-120-html-snapshots`.
+- Action: continued the concurrently materialized #120 lane rather than opening a duplicate PR. Rebasing in detached automation worktree `/Users/teacher/.codex/automations/pd-workloop-resume/worktrees/lms-issue-120-rebase` resolved the `workloop-state.md` append-only conflict against current `origin/main`; pushed rebased head `da87aa7`.
+- Routing repair: removed stale `needs-human`, added `agent:retry`, dispatched `agents-81-gate-followups.yml` with `force_retry=true`, and wrote the handoff `pr_opened` event for `active.source_issue=120` / `active.source_pr=172`.
+- Evidence: direct PR view after repair shows non-draft, labels `agent:claude`, `agents:keepalive`, `autofix`, `agent:retry`, no `needs-human`, and head `da87aa7`; direct checks showed the failed jobs belonged to the superseded pre-rebase Gate while a fresh Gate was queued on the repaired head.
+- Next action: keepalive owns #172 while fresh Gate/CI runs; closer owns post-merge verification.
+
 ## 2026-05-27T10:45Z - claude opener materialized issue #120 M6 snapshot tests + Playwright scaffold
 
 - Automation: `pd-workloop-resume` (claude_code opener lane) from the neutral Code workspace.
