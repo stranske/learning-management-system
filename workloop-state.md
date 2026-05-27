@@ -1,5 +1,16 @@
 # Workloop State
 
+## 2026-05-27T10:06Z - codex opener key-PR recovery for PR #169
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Key PR: [#169](https://github.com/stranske/learning-management-system/pull/169) for issue [#119](https://github.com/stranske/learning-management-system/issues/119), branch `codex/issue-119-support-admin-dashboards`.
+- Reason for key status: PR #169 supplies the support/admin routes required by downstream M6 snapshot and end-to-end issues #120 and #121; those remain scoped-blocked until #169 is merged or otherwise no longer blocks support/admin route availability.
+- Cap/drain context: raw opener cap was below 5; `opener-cap-health.py` reported #471, #169, and #171 as `draining` with no non-drainable cap blocker. Direct sweep found #171 actively running Claude keepalive, #471 with repeated Codex keepalive no-output failures and bot-comment-handler work (not a branch-local deterministic opener fix), and #169 with stale keepalive merge-conflict/task-state evidence.
+- Recovery action: fast-forwarded the existing opener worktree to remote head `f2d6de5` (the closer merge/review-fix commit), confirmed local `merge-tree HEAD origin/main` has no textual conflict, and updated the PR automated status summary checkboxes from stale unchecked to checked after validating the issue-specific acceptance tests locally.
+- Validation (`UV_CACHE_DIR=/private/tmp/uv-cache-lms119-recovery`): `uv run pytest tests/ui/test_support_admin_surfaces.py -q --no-cov` -> 4 passed; `uv run ruff check src/lms/ui/support_admin.py tests/ui/test_support_admin_surfaces.py` -> passed; `uv run ruff format --check src/lms/ui/support_admin.py tests/ui/test_support_admin_surfaces.py` -> already formatted; `uv run mypy src/lms/ui/support_admin.py` -> success with existing pyproject unused-section note only.
+- Next action: push this state-only recovery commit, rerun/refresh cap-health, and hand the key PR to closer/keepalive if checks are still asynchronous or the PR remains blocked.
+
 ## 2026-05-27T10:00Z - claude closer resolved PR #169 conflicts and review threads
 
 - Automation: `imi-merge-verify-closer` (claude_code closer lane) from the neutral Code workspace.
