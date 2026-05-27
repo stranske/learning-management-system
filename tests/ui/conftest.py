@@ -27,7 +27,10 @@ from lms.main import create_app
 
 
 @pytest.fixture
-def api_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
+def api_client(
+    request: pytest.FixtureRequest,
+) -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
+    enable_local_identity_routes = bool(getattr(request, "param", False))
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -49,7 +52,7 @@ def api_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, No
         finally:
             request_session.close()
 
-    app = create_app()
+    app = create_app(enable_local_identity_routes=enable_local_identity_routes)
     app.dependency_overrides[get_session] = override_get_session
     client = TestClient(app)
     try:
