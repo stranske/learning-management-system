@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from html import escape
 from typing import Annotated
 from urllib.parse import parse_qs
@@ -20,6 +19,7 @@ from lms.graphs.repository import (
     create_knowledge_node,
     list_knowledge_edges,
     list_knowledge_nodes,
+    update_knowledge_edge,
     update_knowledge_node,
 )
 from lms.llm.proposals import LLMProposal
@@ -152,7 +152,8 @@ def _graph_surface(
         _node_item(node, evidence_counts=evidence_counts, mastery_by_node=mastery_by_node)
         for node in nodes
     )
-    edge_items = "".join(_edge_item(edge, nodes=nodes) for edge in edges)
+    node_titles = {node.id: node.title for node in nodes}
+    edge_items = "".join(_edge_item(edge, node_titles=node_titles) for edge in edges)
     proposal_items = "".join(_proposal_item(proposal, scope=scope) for proposal in proposals)
 
     return render_page(
@@ -258,8 +259,7 @@ def _node_item(
     )
 
 
-def _edge_item(edge: KnowledgeEdge, *, nodes: Sequence[KnowledgeNode]) -> str:
-    titles = {node.id: node.title for node in nodes}
+def _edge_item(edge: KnowledgeEdge, *, node_titles: dict[str, str]) -> str:
     marker = "graph-reference" if edge.is_graph_reference else "scope-pure"
     return (
         '<article class="graph-edge" data-edge-id="{id}">'
@@ -269,8 +269,8 @@ def _edge_item(edge: KnowledgeEdge, *, nodes: Sequence[KnowledgeNode]) -> str:
         "</article>"
     ).format(
         id=escape(edge.id),
-        source=escape(titles.get(edge.source_node_id, edge.source_node_id)),
-        target=escape(titles.get(edge.target_node_id, edge.target_node_id)),
+        source=escape(node_titles.get(edge.source_node_id, edge.source_node_id)),
+        target=escape(node_titles.get(edge.target_node_id, edge.target_node_id)),
         edge_type=escape(edge.edge_type),
         status=escape(edge.status),
         source_scope=escape(edge.source_scope),
@@ -359,8 +359,13 @@ def _set_proposal_status(
     if proposal.knowledge_edge_id is not None:
         edge = session.get(KnowledgeEdge, proposal.knowledge_edge_id)
         if edge is not None:
-            edge.status = edge_status
-            session.flush()
+            update_knowledge_edge(
+                session,
+                edge,
+                status=edge_status,
+                actor_id=actor_id,
+                source_subsystem="graph-ui",
+            )
     return f"Proposal {node_status}."
 
 

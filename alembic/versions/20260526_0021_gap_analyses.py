@@ -30,7 +30,9 @@ def upgrade() -> None:
         sa.Column("severity", sa.String(length=32), server_default="low", nullable=False),
         sa.Column("required_evidence", sa.JSON(), nullable=False),
         sa.Column("recommended_action_types", sa.JSON(), nullable=False),
-        sa.Column("ownership_scope", sa.String(length=32), server_default="personal", nullable=False),
+        sa.Column(
+            "ownership_scope", sa.String(length=32), server_default="personal", nullable=False
+        ),
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
@@ -47,9 +49,7 @@ def upgrade() -> None:
             name=op.f("ck_gap_analyses_severity_valid"),
         ),
         sa.ForeignKeyConstraint(["target_id"], ["capability_targets.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(
-            ["estimate_id"], ["capability_estimates.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["estimate_id"], ["capability_estimates.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["learner_id"], ["learners.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )

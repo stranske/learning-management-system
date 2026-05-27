@@ -5,9 +5,10 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
+from lms.audit.models import AuditLog
 from lms.evidence.models import EvidenceRecord
 from lms.graphs.models import KnowledgeEdge, KnowledgeNode
-from lms.graphs.repository import create_knowledge_node
+from lms.graphs.repository import create_knowledge_edge, create_knowledge_node
 from lms.llm.models import LLMSession
 from lms.llm.proposals import LLMProposal
 
@@ -138,6 +139,79 @@ def test_graph_view_shows_llm_proposals_pending_human_approval(
         approved_node = session.get(KnowledgeNode, node_id)
         assert approved_node is not None
         assert approved_node.status == "published"
+
+
+def test_graph_proposal_approval_audits_edge_status_change(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        source = create_knowledge_node(
+            session,
+            title="Draft source",
+            knowledge_type="judgment",
+            scope="personal",
+            actor_id="authoring-assist",
+            status="published",
+        )
+        target = create_knowledge_node(
+            session,
+            title="Draft target",
+            knowledge_type="judgment",
+            scope="personal",
+            actor_id="authoring-assist",
+            status="published",
+        )
+        edge = create_knowledge_edge(
+            session,
+            source_node_id=source.id,
+            target_node_id=target.id,
+            edge_type="prerequisite",
+            scope="personal",
+            actor_id="authoring-assist",
+            status="draft",
+        )
+        llm_session = LLMSession(
+            mode="authoring-assist",
+            trace_class="evidence-grade",
+            provider="openai",
+            model="gpt-test",
+        )
+        session.add(llm_session)
+        session.flush()
+        proposal = LLMProposal(
+            llm_session_id=llm_session.id,
+            llm_model="gpt-test",
+            proposed_by="authoring-assist",
+            knowledge_edge_id=edge.id,
+        )
+        session.add(proposal)
+        session.commit()
+        edge_id = edge.id
+        proposal_id = proposal.id
+
+    response = client.post(
+        f"/app/author/graph/proposals/{proposal_id}/approve",
+        data={"ownership_scope": "personal"},
+    )
+
+    assert response.status_code == 200
+    assert "Proposal published." in response.text
+    with session_factory() as session:
+        approved_edge = session.get(KnowledgeEdge, edge_id)
+        assert approved_edge is not None
+        assert approved_edge.status == "published"
+        audit = (
+            session.query(AuditLog)
+            .filter_by(entity_type="KnowledgeEdge", entity_id=edge_id, action="update")
+            .one()
+        )
+        assert audit.actor_id == "graph-ui"
+        assert audit.source_subsystem == "graph-ui"
+        assert audit.before_summary is not None
+        assert audit.before_summary["status"] == "draft"
+        assert audit.after_summary is not None
+        assert audit.after_summary["status"] == "published"
 
 
 def test_graph_view_blocks_cross_scope_normal_edges(
