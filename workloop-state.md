@@ -1,5 +1,15 @@
 # Workloop State
 
+## 2026-05-27T07:00Z - codex opener recovered PR #162 merge conflict
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#112](https://github.com/stranske/learning-management-system/issues/112) / [#162](https://github.com/stranske/learning-management-system/pull/162) `Build learner dashboard`.
+- Recovery trigger: opener cap was below 5, but the cap-drain sweep found #162 green on required checks with zero review threads and `mergeStateStatus=DIRTY` / `mergeable=CONFLICTING` after PR #161 merged to `main`.
+- Conflict resolution: rebased `claude/issue-112-learner-dashboard` onto `origin/main` (`e8103bb`), keeping the merged authoring rubrics/templates/cases UI, preserving the learner dashboard imports/routes/builders, unioning dashboard and author CSS, and retaining both workloop histories.
+- Validation before push: `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-resume uv run pytest tests/ui/ -q --no-cov` -> 20 passed; `uv run ruff check src/lms/ui/api.py tests/ui/test_learner_dashboard.py tests/ui/test_author_learning_objects.py tests/ui/test_author_feedback_cases.py` -> passed; `uv run ruff format --check ...` -> passed; `uv run mypy src/lms/ui/api.py tests/ui/test_learner_dashboard.py tests/ui/test_author_learning_objects.py tests/ui/test_author_feedback_cases.py` -> passed with the existing pyproject unused-section note only.
+- Next action: push the rebased head to #162 and wait for fresh GitHub checks/closer drain.
+
 ## 2026-05-27T06:02:40Z - codex closer rebased PR #161 after #159 merge
 
 - Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
