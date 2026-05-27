@@ -7,15 +7,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
-from lms.evidence.repository import create_attempt, get_attempt
-from lms.feedback.models import FeedbackRecord
+from lms.evidence.repository import create_attempt, get_attempt, list_evidence_records
+from lms.feedback.models import FeedbackRecord, RevisionRequest
 from lms.feedback.repository import (
     create_feedback_action,
     create_revision_request,
     list_feedback_records,
+    list_revision_requests,
     resolve_revision_request,
     submit_revision_request,
 )
+from lms.graphs.models import KnowledgeNode
 from lms.main import create_app
 
 
@@ -131,6 +133,42 @@ def test_revision_request_rejects_learner_mismatch(db_session: Session) -> None:
         )
 
 
+def test_revision_request_requires_context_linkage(db_session: Session) -> None:
+    """A learner-only revision request is rejected before it can become an orphan."""
+    with pytest.raises(ValueError, match="must link to feedback"):
+        create_revision_request(db_session, learner_id="learner-1")
+
+    client = _client(db_session)
+    resp = client.post("/revision-requests", json={"learner_id": "learner-1"})
+    assert resp.status_code == 422, resp.text
+
+
+def test_revision_request_rejects_inconsistent_action_record_link(
+    db_session: Session,
+) -> None:
+    """The linked revision action must belong to the linked feedback record."""
+    original_attempt_id, feedback_record = _seed_feedback(db_session)
+    _, other_record = _seed_feedback(db_session)
+    action = create_feedback_action(
+        db_session,
+        feedback_record_id=feedback_record.id,
+        learner_id="learner-1",
+        attempt_id=original_attempt_id,
+        prompt_id="prompt-1",
+        action_type="revision",
+        title="Revise your answer with the substitution check.",
+    )
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="must belong to the linked feedback record"):
+        create_revision_request(
+            db_session,
+            learner_id="learner-1",
+            feedback_record_id=other_record.id,
+            feedback_action_id=action.id,
+        )
+
+
 def test_closing_a_failed_revision_stages_remediation_hook(db_session: Session) -> None:
     """Closing an unaccepted revision stages remediation rather than review scheduling."""
     _, feedback_record = _seed_feedback(db_session)
@@ -162,6 +200,34 @@ def test_new_request_supersedes_prior_active_request(db_session: Session) -> Non
 
     assert first.status == "superseded"
     assert second.status == "open"
+
+
+def test_new_request_supersedes_all_prior_active_requests(db_session: Session) -> None:
+    """Superseding active requests is not capped by the public list default limit."""
+    _, feedback_record = _seed_feedback(db_session)
+    for _ in range(101):
+        db_session.add(
+            RevisionRequest(
+                learner_id="learner-1",
+                feedback_record_id=feedback_record.id,
+                prompt_id="prompt-1",
+                status="open",
+            )
+        )
+    db_session.commit()
+
+    current = create_revision_request(
+        db_session, learner_id="learner-1", feedback_record_id=feedback_record.id
+    )
+    db_session.commit()
+
+    active = list_revision_requests(
+        db_session,
+        feedback_record_id=feedback_record.id,
+        statuses=("open", "submitted"),
+        limit=None,
+    )
+    assert active == [current]
 
 
 def test_revision_requests_visible_from_feedback_detail_route(db_session: Session) -> None:
@@ -219,6 +285,48 @@ def test_revision_requests_visible_from_feedback_detail_route(db_session: Sessio
     # Accepting the request completes the linked revision action.
     db_session.refresh(action)
     assert action.status == "completed"
+
+
+def test_revision_request_submit_accepts_evidence_payload(db_session: Session) -> None:
+    """The submit API can create scored evidence for the revised attempt."""
+    _, feedback_record = _seed_feedback(db_session)
+    node = KnowledgeNode(
+        title="Linear equations",
+        knowledge_type="procedural",
+        ownership_scope="personal",
+        status="published",
+    )
+    db_session.add(node)
+    request = create_revision_request(
+        db_session,
+        learner_id="learner-1",
+        feedback_record_id=feedback_record.id,
+    )
+    db_session.commit()
+
+    client = _client(db_session)
+    submit_resp = client.post(
+        f"/revision-requests/{request.id}/submit",
+        json={
+            "response_text": "Revised answer that includes the substitution check.",
+            "confidence_rating": 5,
+            "evidence": {
+                "knowledge_node_id": node.id,
+                "correctness": True,
+                "normalized_score": 1.0,
+            },
+        },
+    )
+    assert submit_resp.status_code == 200, submit_resp.text
+    revised_attempt_id = submit_resp.json()["revised_attempt_id"]
+    assert revised_attempt_id is not None
+
+    evidence_records = list_evidence_records(
+        db_session, learner_id="learner-1", knowledge_node_id=node.id
+    )
+    assert len(evidence_records) == 1
+    assert evidence_records[0].attempt_id == revised_attempt_id
+    assert evidence_records[0].correctness is True
 
 
 def test_revision_request_create_rejects_missing_feedback_record(db_session: Session) -> None:

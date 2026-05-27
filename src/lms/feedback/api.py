@@ -221,18 +221,32 @@ def create_revision_request_route(
     payload: RevisionRequestCreate, session: SessionDep
 ) -> RevisionRequestRead:
     """Open a revision request from a feedback record and/or revision action."""
+    data = payload.model_dump()
+    if (
+        data.get("feedback_record_id") is not None
+        and get_feedback_record(session, data["feedback_record_id"]) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Referenced feedback record not found.",
+        )
+    if (
+        data.get("feedback_action_id") is not None
+        and get_feedback_action(session, data["feedback_action_id"]) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Referenced feedback action not found.",
+        )
     try:
-        request = create_revision_request(session, **payload.model_dump())
+        request = create_revision_request(session, **data)
         session.commit()
         session.refresh(request)
     except ValueError as exc:
         session.rollback()
-        status_code = (
-            status.HTTP_404_NOT_FOUND
-            if "was not found" in str(exc)
-            else status.HTTP_422_UNPROCESSABLE_ENTITY
-        )
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     return RevisionRequestRead.model_validate(request)
 
 

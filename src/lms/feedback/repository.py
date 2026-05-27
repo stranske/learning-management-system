@@ -219,6 +219,15 @@ _REVISION_REQUEST_TRANSITIONS: dict[str, frozenset[str]] = {
 }
 
 
+def _coalesce_revision_link(
+    field_name: str, current: str | None, incoming: str | None
+) -> str | None:
+    """Return the shared revision link value, rejecting inconsistent references."""
+    if current is not None and incoming is not None and current != incoming:
+        raise ValueError(f"revision request {field_name} must match linked feedback context")
+    return current or incoming
+
+
 def _require_revision_transition(request: RevisionRequest, target: str) -> None:
     """Raise when a revision request cannot move into ``target``."""
     if target not in _REVISION_REQUEST_TRANSITIONS.get(request.status, frozenset()):
@@ -252,14 +261,27 @@ def create_revision_request(
     work_product_id: str | None = None,
 ) -> RevisionRequest:
     """Open a revision request from a feedback record and/or revision action."""
+    if (
+        feedback_record_id is None
+        and feedback_action_id is None
+        and work_product_id is None
+        and (prompt_id is None or original_attempt_id is None)
+    ):
+        raise ValueError(
+            "revision request must link to feedback, a feedback action, a work product, "
+            "or an original prompt attempt"
+        )
+
     if feedback_record_id is not None:
         record = get_feedback_record(session, feedback_record_id)
         if record is None:
             raise ValueError("referenced feedback record was not found")
         if record.learner_id != learner_id:
             raise ValueError("revision request learner must match the feedback record learner")
-        prompt_id = prompt_id or record.prompt_id
-        original_attempt_id = original_attempt_id or record.attempt_id
+        prompt_id = _coalesce_revision_link("prompt id", prompt_id, record.prompt_id)
+        original_attempt_id = _coalesce_revision_link(
+            "original attempt id", original_attempt_id, record.attempt_id
+        )
 
     action: FeedbackAction | None = None
     if feedback_action_id is not None:
@@ -270,12 +292,23 @@ def create_revision_request(
             raise ValueError("linked feedback action must be a revision action")
         if action.learner_id != learner_id:
             raise ValueError("revision request learner must match the feedback action learner")
-        prompt_id = prompt_id or action.prompt_id
-        original_attempt_id = original_attempt_id or action.attempt_id
+        if (
+            feedback_record_id is not None
+            and action.feedback_record_id is not None
+            and action.feedback_record_id != feedback_record_id
+        ):
+            raise ValueError("feedback action must belong to the linked feedback record")
+        prompt_id = _coalesce_revision_link("prompt id", prompt_id, action.prompt_id)
+        original_attempt_id = _coalesce_revision_link(
+            "original attempt id", original_attempt_id, action.attempt_id
+        )
 
     if feedback_record_id is not None:
         for prior in list_revision_requests(
-            session, feedback_record_id=feedback_record_id, statuses=("open", "submitted")
+            session,
+            feedback_record_id=feedback_record_id,
+            statuses=("open", "submitted"),
+            limit=None,
         ):
             prior.status = "superseded"
             prior.resolved_at = utc_now()
@@ -368,7 +401,7 @@ def list_revision_requests(
     prompt_id: str | None = None,
     status: str | None = None,
     statuses: Sequence[str] | None = None,
-    limit: int = 100,
+    limit: int | None = 100,
 ) -> Sequence[RevisionRequest]:
     """List revision requests with common loop filters."""
     statement = select(RevisionRequest)
@@ -382,9 +415,9 @@ def list_revision_requests(
         statement = statement.where(RevisionRequest.status == status)
     if statuses is not None:
         statement = statement.where(RevisionRequest.status.in_(tuple(statuses)))
-    statement = statement.order_by(RevisionRequest.requested_at.desc(), RevisionRequest.id).limit(
-        limit
-    )
+    statement = statement.order_by(RevisionRequest.requested_at.desc(), RevisionRequest.id)
+    if limit is not None:
+        statement = statement.limit(limit)
     return list(session.scalars(statement))
 
 

@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from lms.evidence.schemas import AttemptEvidenceCreate
+
 FeedbackLevel = Literal["affirmation", "coaching", "remediation", "review"]
 FeedbackActionType = Literal[
     "retry",
@@ -99,6 +101,7 @@ class RevisionRequestSubmit(BaseModel):
     response_metadata: dict[str, object] | None = None
     confidence_rating: int | None = Field(default=None, ge=1, le=5)
     feedback: dict[str, object] | None = None
+    evidence: AttemptEvidenceCreate | None = None
 
 
 class RevisionRequestResolve(BaseModel):
