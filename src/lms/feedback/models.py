@@ -43,6 +43,7 @@ FEEDBACK_ACTION_STATUSES: tuple[str, ...] = ("open", "in-progress", "completed",
 RUBRIC_STATUSES: tuple[str, ...] = ("draft", "published", "archived")
 RUBRIC_CRITERION_STATUSES: tuple[str, ...] = ("active", "archived")
 MISCONCEPTION_ACTION_TYPES: tuple[str, ...] = FEEDBACK_ACTION_TYPES
+FEEDBACK_TEMPLATE_STATUSES: tuple[str, ...] = ("draft", "published", "archived")
 
 
 class FeedbackRecord(Base):
@@ -188,6 +189,73 @@ class MisconceptionPattern(Base):
     ownership_scope: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     confidence: Mapped[float | None] = mapped_column(Float)
     suggested_feedback_action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class FeedbackTemplate(Base):
+    """Reusable deterministic feedback language for author-managed patterns."""
+
+    __tablename__ = "feedback_templates"
+    __table_args__ = (
+        CheckConstraint(
+            "ownership_scope IN ('personal', 'institutional')",
+            name="feedback_template_ownership_scope_valid",
+        ),
+        CheckConstraint(
+            f"feedback_level IN ({_sql_values(FEEDBACK_LEVELS)})",
+            name="feedback_template_level_valid",
+        ),
+        CheckConstraint(
+            f"action_type IN ({_sql_values(FEEDBACK_ACTION_TYPES)})",
+            name="feedback_template_action_type_valid",
+        ),
+        CheckConstraint(
+            f"status IN ({_sql_values(FEEDBACK_TEMPLATE_STATUSES)})",
+            name="feedback_template_status_valid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    template_body: Mapped[str] = mapped_column(Text, nullable=False)
+    placeholder_schema: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    feedback_level: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    ownership_scope: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="draft",
+        server_default=text("'draft'"),
+        index=True,
+    )
+    authoring_actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    misconception_pattern_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("misconception_patterns.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    feedback_action_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("feedback_actions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    knowledge_node_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
