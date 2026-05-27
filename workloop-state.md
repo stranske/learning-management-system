@@ -11,6 +11,16 @@
 - Validation before push: `UV_CACHE_DIR=/tmp/uv-cache-pd-workloop-lms-163 uv run pytest tests/ui/test_review_schedule_surface.py tests/ui/test_review_surface.py -q --no-cov` -> 4 passed; `uv run ruff check src/lms/ui/api.py tests/ui/test_review_schedule_surface.py tests/ui/test_review_surface.py` -> passed; `uv run ruff format --check ...` -> passed; `uv run mypy src/lms/ui/api.py tests/ui/test_review_schedule_surface.py` -> passed with existing pyproject unused-section note only.
 - Next action: push the rebased head to #163 and wait for fresh Gate/keepalive checks.
 
+## 2026-05-27T07:00Z - codex opener recovered PR #162 merge conflict
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#112](https://github.com/stranske/learning-management-system/issues/112) / [#162](https://github.com/stranske/learning-management-system/pull/162) `Build learner dashboard`.
+- Recovery trigger: opener cap was below 5, but the cap-drain sweep found #162 green on required checks with zero review threads and `mergeStateStatus=DIRTY` / `mergeable=CONFLICTING` after PR #161 merged to `main`.
+- Conflict resolution: rebased `claude/issue-112-learner-dashboard` onto `origin/main` (`e8103bb`), keeping the merged authoring rubrics/templates/cases UI, preserving the learner dashboard imports/routes/builders, unioning dashboard and author CSS, and retaining both workloop histories.
+- Validation before push: `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-resume uv run pytest tests/ui/ -q --no-cov` -> 20 passed; `uv run ruff check src/lms/ui/api.py tests/ui/test_learner_dashboard.py tests/ui/test_author_learning_objects.py tests/ui/test_author_feedback_cases.py` -> passed; `uv run ruff format --check ...` -> passed; `uv run mypy src/lms/ui/api.py tests/ui/test_learner_dashboard.py tests/ui/test_author_learning_objects.py tests/ui/test_author_feedback_cases.py` -> passed with the existing pyproject unused-section note only.
+- Next action: push the rebased head to #162 and wait for fresh GitHub checks/closer drain.
+
 ## 2026-05-27T06:02:40Z - codex closer rebased PR #161 after #159 merge
 
 - Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.
@@ -49,6 +59,20 @@
   - `opener-repair-infra-stalls.py` removed a stale `agent:needs-attention` blocker from #161 and added `agent:retry` + dispatched Gate Followups for #163 after initial `needs-dispatch-evidence`.
   - Post-repair cap-health at `2026-05-27T06:21:13Z`: raw cap 3/5, #161/#162/#163 all `draining`, `non_drainable_count=0`; #163 had an active Gate run after the dispatch.
 - Next action: keepalive owns CI/check follow-up for #163; closer can drain #161/#162 when they are merge-ready.
+
+## 2026-05-27T05:49Z - opener materialized issue #112 learner dashboard (claude lane)
+
+- Automation: `pd-workloop-resume` (Claude Code opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#112](https://github.com/stranske/learning-management-system/issues/112) `Build learner dashboard` (priority:normal, repo-review-approved, milestone:M6).
+- Branch: `claude/issue-112-learner-dashboard` (worktree `~/.codex/automations/pd-workloop-resume/worktrees/lms-issue-112`).
+- PR: [#162](https://github.com/stranske/learning-management-system/pull/162) `Issue #112: Build learner dashboard`.
+- Selection rationale: high-tier #121 is the M6 end-to-end acceptance gate; its body says not to start until the individual M6 surfaces (#112-#120) and M5 foundations are in place. Recorded a scoped blocker for #121 and selected the oldest unlinked normal implementation candidate, #112. (#110/#111 already linked to PRs #159/#161; Workflows #2159 already merged via #2161.)
+- Implementation: repurposed `/app/learner` from the attempt shell into the learner home dashboard (the attempt shell stays at `/learn`, which the dashboard links to). Dashboard aggregates the learner's own state by `learner_id`: next actions (open feedback actions), due reviews (review-queue overview + backlog note), recent evidence, goals, mastery summary (with model attribution + evidence count), capability targets, and maintenance-plan steps. Nonpunitive, specific empty states for every panel; mobile-first grid in `app.css` with no horizontal overflow.
+- Files: `src/lms/ui/api.py` (dashboard route + builders), `src/lms/ui/static/app.css` (dashboard grid/panel styles), `tests/ui/test_learner_dashboard.py` (3 tests incl. the two required acceptance tests).
+- Validation: `pytest tests/ui/ -q --no-cov` -> 12 passed (3 new + 9 existing, no regressions); `ruff check` + `ruff format --check` on touched files -> pass; `mypy src/lms/ui/api.py tests/ui/test_learner_dashboard.py` -> Success.
+- Post-open: opened PR #162 ready-for-review with `agent:claude` + `agents:keepalive` + `autofix` + `repo-review-approved` + `priority:normal` + `milestone:M6`; emitted `pr_opened`; `opener-repair-infra-stalls.py` dispatched Gate Followups + added `agent:retry`. Then PR #159 (issue #110 author UI) merged to main as `74de9c1` and #162 went `CONFLICTING`; rebased onto `origin/main`, resolved union conflicts in `src/lms/ui/api.py` imports and this file, re-validated, and force-pushed with lease.
+- Next action: keepalive owns CI/check follow-up for PR #162.
 
 ## 2026-05-27T05:28:53Z - closer addressed PR #159 review threads
 
