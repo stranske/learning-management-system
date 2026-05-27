@@ -1,5 +1,53 @@
 # Workloop State
 
+## 2026-05-27T05:28:53Z - closer addressed PR #159 review threads
+
+- Automation: `imi-merge-verify-closer` (codex closer lane).
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#110](https://github.com/stranske/learning-management-system/issues/110) `Build authoring UI for goals, graph, and prompts`.
+- Branch/PR: `codex/issue-110-authoring-ui`, [#159](https://github.com/stranske/learning-management-system/pull/159).
+- Batch context before this complex lane:
+  - Closed #106 after merged PR #145 had a durable Provider Comparison Report with OpenAI PASS 84% and Anthropic PASS 82%.
+  - Merged `stranske/Manager-Database#1076` at `b47fd6a`, applied `verify:compare`, and reopened #1075 for verifier sequencing.
+  - Closed duplicate LMS PR #160 so #159 remains the canonical issue #110 PR.
+- Review-thread fixes on #159:
+  - Added prefixed select element ids for the author knowledge node and edge forms (`node-*` and `edge-*`) so labels no longer target duplicate `ownership_scope` / `status` ids.
+  - Stopped trusting browser-submitted `actor_id` / `authoring_actor` values for author UI creates; node/edge audit events and prompts now use server-owned `author-ui`.
+  - Redacted local-only source stable locators from the author prompt source hint, matching learner citation visibility.
+  - Added regression tests for unique select ids, server-owned actor identity, prompt provenance, and local-only source redaction.
+- Validation:
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run pytest tests/ui/test_author_learning_objects.py -q --no-cov` -> 5 passed.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run ruff check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run ruff format --check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed after formatting.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-imi-merge-verify-closer uv run mypy src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed; existing pyproject unused-section note only.
+- Next action: push the review-thread fix commit to #159, post evidence, resolve the three Copilot review threads, then wait for rerun checks before merge.
+
+## 2026-05-27T05:12Z - opener materialized issue #110 authoring UI
+
+- Automation: `pd-workloop-resume` (codex opener lane).
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#110](https://github.com/stranske/learning-management-system/issues/110) `Build authoring UI for goals, graph, and prompts`.
+- Branch: `codex/issue-110-authoring-ui`.
+- PR: [#159](https://github.com/stranske/learning-management-system/pull/159) `Issue #110: Build author learning object UI`.
+- Implementation:
+  - Added author index links plus `/app/author/goals`, `/app/author/knowledge`, and `/app/author/prompts` HTML routes.
+  - Wired form posts to existing learner, graph, source, and prompt repository helpers.
+  - Preserved ownership-scope controls, published-node prompt gating, source drift/provenance display, and cross-scope edge validation feedback.
+  - Added `tests/ui/test_author_learning_objects.py` for create goal/node/edge/prompt flow and cross-scope normal-edge rejection.
+- Validation:
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run pytest tests/ui/test_author_learning_objects.py tests/ui/test_app_shell.py -q --no-cov` -> 4 passed.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run ruff check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run ruff format --check src/lms/ui/api.py tests/ui/test_author_learning_objects.py` -> passed.
+  - `UV_CACHE_DIR=/private/tmp/uv-cache-lms-110 uv run mypy src/lms/ui tests/ui/test_author_learning_objects.py` -> passed; existing pyproject unused-section note only.
+- Post-open state:
+  - Opened PR #159 as ready-for-review, non-draft, linked with `Closes #110`.
+  - Labels applied: `agent:codex`, `agents:keepalive`, `autofix`, `agent:retry`, `repo-review-approved`, `priority:normal`, `milestone:M6`.
+  - `opener-repair-infra-stalls.py` added `agent:retry` and dispatched Gate Followups after cap-health initially reported `needs-dispatch-evidence`.
+  - Fresh cap-health classified PR #159 as `draining` with an active Gate run after the repair. Direct `gh pr checks` showed some earlier checks cancelled by the rerun, with the current Gate still queued/running.
+- Fleet drain note:
+  - Manager-Database PR #1076 briefly appeared as `runner-failed` in cap-health, but direct PR checks showed Gate, Postgres integration, ruff, mypy, Python 3.12, Python 3.13, and merge state all green/clean on head `81f9a7c`.
+- Next action: keepalive owns CI/check follow-up for PR #159; closer can drain Manager-Database #1076 when it next sweeps ready PRs.
+
 ## 2026-05-27T04:20Z - opener recovered PR #145 Alembic double-head
 
 - Automation: `pd-workloop-resume` (codex opener lane).
