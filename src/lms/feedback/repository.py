@@ -18,7 +18,7 @@ from lms.feedback.models import (
     RubricCriterion,
     RubricScore,
 )
-from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeNode
+from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeEdge, KnowledgeNode
 from lms.prompts.models import Prompt
 
 
@@ -218,8 +218,11 @@ def create_misconception_pattern(
         node = session.get(KnowledgeNode, target_knowledge_node_id)
         if node is None:
             raise ValueError("referenced knowledge node was not found")
-        if node.ownership_scope != ownership_scope:
-            raise ValueError("misconception pattern knowledge node must match ownership scope")
+        if not _scope_matches_or_has_graph_reference(session, ownership_scope, node):
+            raise ValueError(
+                "misconception pattern knowledge node must match ownership scope "
+                "or have a published graph reference"
+            )
     pattern = MisconceptionPattern(
         pattern_label=pattern_label,
         wrong_answer_signature=wrong_answer_signature,
@@ -566,6 +569,25 @@ def _validate_rubric_links(
 def _require_ownership_scope(scope: str) -> None:
     if scope not in OWNERSHIP_SCOPES:
         raise ValueError(f"unknown ownership scope {scope!r}; expected one of {OWNERSHIP_SCOPES}")
+
+
+def _scope_matches_or_has_graph_reference(
+    session: Session, ownership_scope: str, node: KnowledgeNode
+) -> bool:
+    if node.ownership_scope == ownership_scope:
+        return True
+    statement = (
+        select(KnowledgeEdge.id)
+        .where(
+            KnowledgeEdge.target_node_id == node.id,
+            KnowledgeEdge.source_scope == ownership_scope,
+            KnowledgeEdge.target_scope == node.ownership_scope,
+            KnowledgeEdge.is_graph_reference.is_(True),
+            KnowledgeEdge.status == "published",
+        )
+        .limit(1)
+    )
+    return session.scalar(statement) is not None
 
 
 def _require_unique_criterion_orders(criteria: list[dict[str, Any]]) -> None:
