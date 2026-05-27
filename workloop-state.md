@@ -1,5 +1,13 @@
 # Workloop State
 
+## 2026-05-27T07:08Z - codex opener advanced PR #165 feedback UI
+
+- Automation: `pd-workloop-resume` opener lane from the neutral Code workspace. ACTION A succeeded; cap/discovery found raw opener cap below 5. Existing opener-owned LMS PRs #162/#163/#164 were draining with fresh workflow evidence and no repairable infra stall. Liveness selected LMS #115 as the next normal-priority candidate after #112-#114; branch/PR `codex/issue-115-feedback-hint-revision-ui` / #165 already existed by the time this lane reached materialization, linked to #115, non-draft, and correctly labeled (`agent:codex`, `agents:keepalive`, `autofix`, `agent:retry`, `repo-review-approved`, `priority:normal`, `milestone:M6`), so this round treated it as concurrent productive materialization rather than opening a duplicate PR.
+- Local worktree: `~/.codex/automations/pd-workloop-resume/worktrees/lms-issue-115`.
+- Advanced the existing PR branch with focused cleanup to the learner feedback UI/tests: typed the feedback UI panel helpers with concrete feedback model types and tightened `tests/ui/test_feedback_surface.py` around goal/gap/next-action/rubric rendering, hint reveal without model-answer exposure, and revision submission. No workflow or infrastructure files changed.
+- Validation: `UV_CACHE_DIR=/private/tmp/uv-cache-pd-workloop-lms115 uv run pytest tests/ui/ -q --no-cov` -> 20 passed; `uv run ruff check src/lms/ui/feedback.py src/lms/main.py tests/ui/test_feedback_surface.py` -> pass; `uv run ruff format --check ...` -> pass; `uv run mypy src/lms/ui/feedback.py src/lms/main.py tests/ui/test_feedback_surface.py` -> pass (existing pyproject unused-section note only).
+- Next action: push the cleanup commit to PR #165 and leave it to Gate/keepalive; do not open a duplicate #115 PR. Post-push review should re-open #165 after async checks settle and handle any branch-local deterministic failure.
+
 ## 2026-05-27T07:06Z - opener materialized issue #115 feedback/hint/revision UI
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
