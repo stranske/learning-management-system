@@ -32,7 +32,12 @@
   - Cap-health before selection: raw cap 2/5; LMS #161 and #162 draining/active-moving, no non-drainable blocker.
   - Closed accidentally materialized duplicate `stranske/trip-planner#1238` after proving #1235/#1236 already implemented the approved high-priority queue item.
   - `stranske/Manager-Database#1075/#1076` already completed/merged; `stranske/Workflows#2159/#2161` already merged but source issue remains open for closer/verifier disposition.
-- Next action: commit, push, open a ready-for-review PR with `agent:codex`, `agents:keepalive`, `autofix`, `repo-review-approved`, `priority:normal`, and `milestone:M6`.
+- Post-open state:
+  - Opened PR [#163](https://github.com/stranske/learning-management-system/pull/163) as ready-for-review, non-draft, linked with `Closes #113`.
+  - Labels applied: `agent:codex`, `agents:keepalive`, `autofix`, `repo-review-approved`, `priority:normal`, `milestone:M6`.
+  - `opener-repair-infra-stalls.py` removed a stale `agent:needs-attention` blocker from #161 and added `agent:retry` + dispatched Gate Followups for #163 after initial `needs-dispatch-evidence`.
+  - Post-repair cap-health at `2026-05-27T06:21:13Z`: raw cap 3/5, #161/#162/#163 all `draining`, `non_drainable_count=0`; #163 had an active Gate run after the dispatch.
+- Next action: keepalive owns CI/check follow-up for #163; closer can drain #161/#162 when they are merge-ready.
 
 ## 2026-05-27T05:28:53Z - closer addressed PR #159 review threads
 
