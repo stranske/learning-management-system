@@ -8,7 +8,13 @@ from pathlib import Path
 from sqlalchemy.exc import SQLAlchemyError
 
 from lms.db.session import session_scope
-from lms.demo import build_minimum_demo_smoke_summary, render_minimum_demo_smoke
+from lms.demo import (
+    build_minimum_demo_smoke_summary,
+    compute_live_demo_summary,
+    render_live_demo_summary,
+    render_minimum_demo_smoke,
+)
+from lms.demo_seed import seed_minimum_demo
 from lms.export_import import ExportImportError, export_jsonl, export_to_path, import_jsonl
 from lms.importers.csv_graph import CsvGraphImportError, import_csv_graph
 from lms.importers.markdown import import_markdown_notes
@@ -271,6 +277,18 @@ def main() -> None:
         "smoke",
         help="exercise the M4 Minimum Demo path with CI-safe fake-provider data",
     )
+    demo_run_parser = demo_subparsers.add_parser(
+        "run",
+        help=(
+            "seed and summarize the Minimum Demo via the real repository writers; "
+            "counts come from select() queries, not the smoke fixtures (issue #181)"
+        ),
+    )
+    demo_run_parser.add_argument(
+        "--actor-id",
+        default="system:demo-run",
+        help="actor id recorded in audit events written by the seeder",
+    )
 
     # auth subcommands — bootstrap users for the deployed (AUTH_REQUIRED=true)
     # instance. See docs/architecture/auth.md.
@@ -515,6 +533,15 @@ def main() -> None:
     if args.command == "demo":
         if args.demo_command == "smoke":
             print(render_minimum_demo_smoke(build_minimum_demo_smoke_summary()))
+            return
+        if args.demo_command == "run":
+            with session_scope() as session:
+                seed_minimum_demo(session, actor_id=args.actor_id)
+                # Recompute counts AFTER the seed flush so the renderer reads
+                # what was actually persisted. We do this inside the same
+                # session_scope so the commit happens on a clean exit.
+                live_summary = compute_live_demo_summary(session)
+            print(render_live_demo_summary(live_summary))
             return
         parser.error("demo requires a subcommand")
 
