@@ -37,6 +37,21 @@ class LLMConfig:
             return self.mode_models[mode]
         raise KeyError(f"no model configured for mode '{mode}'")
 
+    def provider_and_model_for(self, mode: str) -> tuple[str | None, str]:
+        """Return ``(provider_name_or_None, model_name)`` for the given mode.
+
+        When the model string uses ``provider:model`` notation (e.g.
+        ``anthropic:claude-sonnet-4-5``), the provider prefix is split out and
+        returned as the first element. A bare model string (e.g.
+        ``claude-haiku-4-5``) returns ``None`` as the provider so the caller
+        falls back to ``config.default_provider``.
+        """
+        raw = self.model_for(mode)
+        if ":" in raw:
+            provider, _, model = raw.partition(":")
+            return provider, model
+        return None, raw
+
 
 def _env_var_for(mode: str) -> str:
     return f"LLM_MODEL_{mode.upper().replace('-', '_')}"

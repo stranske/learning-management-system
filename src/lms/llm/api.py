@@ -17,7 +17,7 @@ from lms.feedback.models import FeedbackRecord
 from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
-from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig
+from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig, load_llm_config_from_env
 from lms.llm.exceptions import SourceConstraintViolation
 from lms.llm.interaction_policy import (
     InteractionContext,
@@ -31,8 +31,9 @@ from lms.llm.models import (
     LLMSession,
     TraceClassName,
 )
-from lms.llm.providers import FakeProvider
+from lms.llm.providers import build_default_providers
 from lms.llm.trace_controls import apply_trace_control
+from lms.settings import get_settings
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -151,27 +152,46 @@ class LLMFeedbackEventRead(BaseModel):
     body_retained: bool
 
 
+def _fake_learning_policy_responder(_model: str, prompt: str) -> str:
+    """Deterministic stand-in used when no real provider is configured.
+
+    Centralized here (rather than as an inline lambda) so unit tests can
+    import and assert against the same fixture text.
+    """
+    if "Mode: authoring-assist" in prompt:
+        return prompt
+    if "retrieval-nudge" in prompt:
+        return "Try a retrieval attempt first, then compare it with the linked source."
+    return "Here is a concise explanation tied to the requested learning goal."
+
+
 @lru_cache(maxsize=1)
 def _default_client() -> LLMClient:
-    provider = FakeProvider(
-        responder=lambda _model, prompt: (
-            prompt
-            if "Mode: authoring-assist" in prompt
-            else (
-                "Try a retrieval attempt first, then compare it with the linked source."
-                if "retrieval-nudge" in prompt
-                else "Here is a concise explanation tied to the requested learning goal."
-            )
-        )
+    # Pull the Anthropic API key from settings (which reads CLAUDE_API_STRANSKE
+    # / ANTHROPIC_API_KEY / CLAUDE_API_KEY). When set, build_default_providers
+    # registers the real Anthropic adapter alongside the fake and selects it as
+    # the default; when unset, the fake provider stays the default so unit
+    # tests and dev-without-keys remain deterministic.
+    api_key = get_settings().anthropic_api_key
+    providers, default_provider = build_default_providers(
+        anthropic_api_key=api_key,
+        fake_responder=_fake_learning_policy_responder,
+    )
+    default_model = (
+        "claude-haiku-4-5" if default_provider == "anthropic" else "fake-learning-policy"
+    )
+    env_config = load_llm_config_from_env(
+        defaults=dict.fromkeys(DEFAULT_MODE_MODELS, default_model)
     )
     config = LLMConfig(
-        mode_models=dict.fromkeys(DEFAULT_MODE_MODELS, "fake-learning-policy"),
-        global_daily_cap_micro_usd=1_000_000,
-        default_provider="fake",
+        mode_models=env_config.mode_models,
+        global_daily_cap_micro_usd=env_config.global_daily_cap_micro_usd,
+        default_provider=default_provider,
+        default_timeout_seconds=env_config.default_timeout_seconds,
     )
     return LLMClient(
         config=config,
-        providers={"fake": provider},
+        providers=providers,
         budget=DailyBudgetTracker(
             mode_caps_micro_usd={},
             global_cap_micro_usd=1_000_000,

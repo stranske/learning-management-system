@@ -1,9 +1,10 @@
-"""Provider adapter interface and in-process fake for unit tests.
+"""Provider adapter interface, in-process fake, and real Anthropic adapter.
 
-The wrapper handles token/cost normalization on top of small per-provider
-adapters. Real provider adapters (Anthropic, OpenAI, Bedrock) implement the
-same ``complete`` interface; unit tests use ``FakeProvider`` to avoid network
-calls and stable across CI environments.
+The LLM wrapper handles budget preflight, trace classification, and token/cost
+normalization on top of small per-provider adapters. Real provider adapters
+(currently Anthropic; OpenAI and Bedrock are future work) implement the same
+``complete`` interface; unit tests use ``FakeProvider`` to stay deterministic
+and network-free.
 """
 
 from __future__ import annotations
@@ -85,3 +86,154 @@ class FakeProvider:
             cost_micro_usd=cost_micro_usd,
             raw_metadata={"timeout_seconds": timeout_seconds},
         )
+
+
+# Anthropic pricing table (USD per million tokens) used for cost normalization.
+# Values reflect public Anthropic API pricing as of 2026-05. The table is small
+# and explicit so a new model can be added by editing one entry rather than
+# touching the adapter logic. Unknown models fall back to ``_DEFAULT_PRICE``
+# (matches Sonnet pricing) so a typo or a freshly-released model still produces
+# a reasonable budget estimate.
+_ANTHROPIC_PRICES_USD_PER_MTOKENS: Mapping[str, tuple[float, float]] = {
+    # (input_usd_per_mtokens, output_usd_per_mtokens)
+    "claude-haiku-4-5": (1.00, 5.00),
+    "claude-sonnet-4-5": (3.00, 15.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-sonnet-4-7": (3.00, 15.00),
+    "claude-opus-4-7": (15.00, 75.00),
+    "claude-3-5-haiku-20241022": (1.00, 5.00),
+    "claude-3-5-sonnet-20241022": (3.00, 15.00),
+    "claude-3-opus-20240229": (15.00, 75.00),
+}
+_DEFAULT_PRICE: tuple[float, float] = (3.00, 15.00)
+
+
+def _anthropic_cost_micro_usd(
+    *,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+) -> int:
+    """Compute the cost of a completion in micro-USD using the price table.
+
+    Micro-USD (1e-6 USD) is the LMS-wide accounting unit because integer math
+    avoids float-drift in budget preflight comparisons.
+    """
+    input_price, output_price = _ANTHROPIC_PRICES_USD_PER_MTOKENS.get(model, _DEFAULT_PRICE)
+    # price is USD per million tokens; convert to micro-USD per token:
+    # (USD/M tokens) * 1e6 micro/USD / 1e6 tokens/M = micro-USD per token.
+    input_micro_per_token = input_price
+    output_micro_per_token = output_price
+    return int(round(input_tokens * input_micro_per_token + output_tokens * output_micro_per_token))
+
+
+@dataclass
+class AnthropicProvider:
+    """Real-network provider that calls Anthropic's Messages API.
+
+    Construction is lazy: the SDK client is built on the first ``complete``
+    call so the provider can be registered alongside ``FakeProvider`` without
+    requiring the ``anthropic`` package or a valid API key at import time.
+    Unit tests pass a stub ``client_factory`` to avoid both.
+    """
+
+    api_key: str
+    name: str = "anthropic"
+    input_token_cost_micro_usd: int = int(_DEFAULT_PRICE[0])
+    output_token_cost_micro_usd: int = int(_DEFAULT_PRICE[1])
+    client_factory: Callable[[str], Any] | None = None
+    # max_tokens default for calls that don't specify one; Anthropic requires
+    # the field on every Messages request.
+    default_max_tokens: int = 1024
+    _client: Any = field(default=None, init=False, repr=False)
+
+    def _build_client(self) -> Any:
+        if self.client_factory is not None:
+            return self.client_factory(self.api_key)
+        # Local import keeps the SDK as a runtime-only dependency and lets the
+        # rest of the module load even when ``anthropic`` is not installed.
+        from anthropic import Anthropic
+
+        return Anthropic(api_key=self.api_key)
+
+    def _client_or_build(self) -> Any:
+        if self._client is None:
+            self._client = self._build_client()
+        return self._client
+
+    def complete(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        max_tokens: int | None,
+        timeout_seconds: float | None,
+    ) -> ProviderResponse:
+        client = self._client_or_build()
+        # Anthropic's SDK accepts ``timeout`` as a top-level kwarg on each call;
+        # ``None`` means "use the SDK default" so we only pass it when set.
+        call_kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if timeout_seconds is not None:
+            call_kwargs["timeout"] = timeout_seconds
+        message = client.messages.create(**call_kwargs)
+
+        # The SDK returns a list of content blocks; the common case is one
+        # ``TextBlock`` whose ``.text`` is the model output. We concatenate
+        # all text blocks defensively so multi-block responses don't truncate.
+        text_parts: list[str] = []
+        for block in getattr(message, "content", []) or []:
+            text = getattr(block, "text", None)
+            if text is not None:
+                text_parts.append(text)
+        text = "".join(text_parts)
+
+        usage = getattr(message, "usage", None)
+        input_tokens = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
+        cost_micro_usd = _anthropic_cost_micro_usd(
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
+        return ProviderResponse(
+            text=text,
+            model=model,
+            provider=self.name,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_micro_usd=cost_micro_usd,
+            raw_metadata={
+                "timeout_seconds": timeout_seconds,
+                "stop_reason": getattr(message, "stop_reason", None),
+                "message_id": getattr(message, "id", None),
+            },
+        )
+
+
+def build_default_providers(
+    *,
+    anthropic_api_key: str | None = None,
+    fake_responder: Callable[[str, str], str] | None = None,
+) -> tuple[dict[str, ProviderAdapter], str]:
+    """Build the standard provider registry and pick the default name.
+
+    Returns ``(providers, default_provider_name)``.
+
+    The fake provider is always registered so unit tests and budget-preflight
+    paths can target it explicitly. When ``anthropic_api_key`` is provided,
+    ``AnthropicProvider`` is registered too and becomes the default; otherwise
+    the default falls back to the fake provider so dev environments without
+    keys still produce deterministic output.
+    """
+    fake = FakeProvider(responder=fake_responder) if fake_responder is not None else FakeProvider()
+    providers: dict[str, ProviderAdapter] = {fake.name: fake}
+    default = fake.name
+    if anthropic_api_key:
+        providers["anthropic"] = AnthropicProvider(api_key=anthropic_api_key)
+        default = "anthropic"
+    return providers, default
