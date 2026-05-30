@@ -46,6 +46,12 @@ dependencies = [
     # /login endpoint uses Form()). FastAPI declares it as an optional extra;
     # we depend on it directly so the form-based login works out of the box.
     "python-multipart>=0.0.20",
+    # Anthropic Python SDK powers the live LLM provider adapter
+    # (src/lms/llm/providers.py::AnthropicProvider). The adapter loads the
+    # SDK lazily so unit tests can run without an API key; the dependency
+    # is here so deployments that DO have CLAUDE_API_STRANSKE configured can
+    # call the real Messages API without an extra install step.
+    "anthropic>=0.40.0",
 ]
 
 [project.scripts]
@@ -173,4 +179,12 @@ ignore_missing_imports = true
 # in CI. The smoke scaffold imports it lazily inside a skipped-by-default test;
 # ignore the missing import so the browser-free suite stays type-clean.
 module = ["playwright.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# anthropic powers the live LLM provider in src/lms/llm/providers.py. The SDK
+# is imported lazily inside AnthropicProvider._build_client so tests can run
+# without it installed; ignore the missing import so dev environments without
+# the wheel still type-check cleanly.
+module = ["anthropic", "anthropic.*"]
 ignore_missing_imports = true

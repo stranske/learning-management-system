@@ -17,8 +17,9 @@ from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
 from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig
 from lms.llm.eval_sets import EvalSetError, load_eval_set, replay_eval_set
-from lms.llm.providers import FakeProvider
+from lms.llm.providers import build_default_providers
 from lms.research_registry import ResearchRegistryError, load_registry
+from lms.settings import get_settings
 from lms.sources.repository import scan_source_references
 
 
@@ -343,13 +344,22 @@ def main() -> None:
         parser.error("source-references requires a subcommand")
     if args.command == "authoring-assist":
         if args.authoring_assist_command == "propose":
+            # Build providers from settings: real Anthropic provider if a key
+            # is configured, otherwise the deterministic fake. The
+            # authoring-assist mode keeps a domain-specific model name so the
+            # cost/budget accounting and proposal records read cleanly.
+            api_key = get_settings().anthropic_api_key
+            providers, default_provider = build_default_providers(anthropic_api_key=api_key)
+            authoring_model = (
+                "claude-haiku-4-5" if default_provider == "anthropic" else "fake-authoring-model"
+            )
             client = LLMClient(
                 config=LLMConfig(
-                    mode_models={**DEFAULT_MODE_MODELS, "authoring-assist": "fake-authoring-model"},
+                    mode_models={**DEFAULT_MODE_MODELS, "authoring-assist": authoring_model},
                     global_daily_cap_micro_usd=1_000_000,
-                    default_provider="fake",
+                    default_provider=default_provider,
                 ),
-                providers={"fake": FakeProvider()},
+                providers=providers,
                 budget=DailyBudgetTracker(mode_caps_micro_usd={}, global_cap_micro_usd=1_000_000),
             )
             draft = ProposalDraft(
@@ -399,13 +409,18 @@ def main() -> None:
             if args.dry_run:
                 print("dry run: no provider calls issued")
                 return
+            # Build providers from settings for the real replay path. With an
+            # Anthropic key configured, eval replays exercise the live model;
+            # without one, the fake provider keeps replays runnable offline.
+            api_key = get_settings().anthropic_api_key
+            providers, default_provider = build_default_providers(anthropic_api_key=api_key)
             client = LLMClient(
                 config=LLMConfig(
                     mode_models=dict(DEFAULT_MODE_MODELS),
                     global_daily_cap_micro_usd=1_000_000,
-                    default_provider="fake",
+                    default_provider=default_provider,
                 ),
-                providers={"fake": FakeProvider()},
+                providers=providers,
                 budget=DailyBudgetTracker(mode_caps_micro_usd={}, global_cap_micro_usd=1_000_000),
             )
             outcomes = replay_eval_set(client, entries)

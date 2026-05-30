@@ -2,10 +2,28 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def read_anthropic_api_key_from_env() -> str | None:
+    """Read the Anthropic API key from any of the documented env var names.
+
+    Pydantic's ``AliasChoices`` handles this for the field declaration below;
+    this helper is public so non-Settings call sites (e.g. CLI utilities)
+    can resolve the same key without instantiating ``Settings``.
+    """
+    for name in ("CLAUDE_API_STRANSKE", "ANTHROPIC_API_KEY", "CLAUDE_API_KEY"):
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
+
+
+_read_anthropic_api_key_from_env = read_anthropic_api_key_from_env
 
 
 class Settings(BaseSettings):
@@ -61,6 +79,29 @@ class Settings(BaseSettings):
         description=(
             "Session cookie max-age in seconds (default: 14 days). Sessions silently "
             "extend on each request via SessionMiddleware's same_site/secure defaults."
+        ),
+    )
+
+    # LLM provider configuration. When ``anthropic_api_key`` is set, the LLM
+    # client wrapper registers the Anthropic provider and uses it as the
+    # default; when unset, the wrapper falls back to ``FakeProvider`` so dev
+    # environments without keys still produce deterministic output. The field
+    # accepts three env-var spellings (CLAUDE_API_STRANSKE is the project-owner
+    # convention; ANTHROPIC_API_KEY is the SDK convention; CLAUDE_API_KEY is
+    # an alias) so it works in both Render-deployed and local-dev contexts.
+    anthropic_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "anthropic_api_key",
+            "claude_api_stranske",
+            "claude_api_key",
+            "CLAUDE_API_STRANSKE",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_API_KEY",
+        ),
+        description=(
+            "Anthropic API key for the live LLM provider. Leave unset in CI / unit "
+            "tests to keep the fake provider as the default."
         ),
     )
 
