@@ -174,6 +174,25 @@ Useful endpoints once the server is running:
 
 Run the test suite with `uv run pytest`. The skeleton modules under `src/lms/` (`api`, `auth`, `curriculum`, `evidence`, `feedback`, `graphs`, `llm`, `mastery`, `scheduling`, `analytics`) are intentionally empty placeholders so later milestones can attach domain models, routers, and services without reshaping the package layout.
 
+## Deployment
+
+The LMS deploys on Render via the Blueprint at `render.yaml` (FastAPI web
+service + Postgres). See [`docs/development/deployment.md`](docs/development/deployment.md)
+for the one-time setup (connect repo, set secrets, create the first user)
+and [`docs/architecture/auth.md`](docs/architecture/auth.md) for the password
+authentication design.
+
+Once deployed, the service URL is shown in the Render dashboard
+(e.g. `https://learning-management-system.onrender.com`). The deployed
+instance enforces Argon2 password login; create the bootstrap user via:
+
+```bash
+python -m lms auth create-user --username YOU --display-name "Your Name" --password
+```
+
+For local development, [`docs/development/local-setup.md`](docs/development/local-setup.md)
+covers `docker compose up` and the native-venv flow.
+
 ## Development Workflow
 
 The project is intended to become a GitHub repository using the local Workflows system in `/Users/teacher/Library/CloudStorage/Dropbox/Learning/Code/Workflows`.

@@ -31,6 +31,39 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Auth + session configuration. ``auth_required`` is the master gate that
+    # the Render-deployed instance flips on; in local dev / pytest it stays
+    # off so the existing local-dev shortcut (``get_or_create_local_dev_user``)
+    # keeps working without a real login flow. See docs/architecture/auth.md.
+    auth_required: bool = Field(
+        default=False,
+        description=(
+            "When true, unauthenticated requests to non-login UI routes are redirected "
+            "to /login and unauthenticated API requests return 401. Enabled on the "
+            "deployed instance (Render) via the AUTH_REQUIRED env var; left off for "
+            "local dev and the test suite so the local-dev user shortcut keeps working."
+        ),
+    )
+    auth_secret_key: str = Field(
+        default="dev-secret-do-not-use-in-production-change-via-env-var",
+        description=(
+            "Secret key used by Starlette SessionMiddleware to sign session cookies. "
+            "MUST be overridden on deployed instances via AUTH_SECRET_KEY; the default "
+            "is only safe for local development."
+        ),
+    )
+    session_cookie_name: str = Field(
+        default="lms_session",
+        description="Name of the signed session cookie set by SessionMiddleware.",
+    )
+    session_max_age_seconds: int = Field(
+        default=60 * 60 * 24 * 14,
+        description=(
+            "Session cookie max-age in seconds (default: 14 days). Sessions silently "
+            "extend on each request via SessionMiddleware's same_site/secure defaults."
+        ),
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

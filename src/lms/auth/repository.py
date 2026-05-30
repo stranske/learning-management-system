@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lms.auth.models import User
+from lms.auth.passwords import hash_password, needs_rehash, verify_password
 
 LOCAL_DEV_USERNAME = "local-dev"
 
@@ -17,12 +18,53 @@ def create_local_user(
     username: str,
     display_name: str,
     email: str | None = None,
+    password: str | None = None,
 ) -> User:
-    """Create a local-development user."""
-    user = User(username=username, display_name=display_name, email=email, is_local=True)
+    """Create a local-development user.
+
+    When ``password`` is provided it is hashed via Argon2 before being stored;
+    the plaintext is never persisted. Pass ``None`` (the default) for the
+    local-dev shortcut user that doesn't need credentials.
+    """
+    user = User(
+        username=username,
+        display_name=display_name,
+        email=email,
+        is_local=True,
+        password_hash=hash_password(password) if password else None,
+    )
     session.add(user)
     session.flush()
     return user
+
+
+def authenticate(session: Session, *, username: str, password: str) -> User | None:
+    """Return the user when ``username`` + ``password`` match, else None.
+
+    On a successful login whose stored hash uses outdated cost parameters,
+    transparently re-hash with the current defaults and persist the upgrade
+    so users benefit from stronger settings without a password reset.
+    """
+    user = get_user_by_username(session, username)
+    if user is None:
+        return None
+    if not verify_password(user.password_hash, password):
+        return None
+    # Transparent upgrade path: rehash with current cost params if needed.
+    if user.password_hash is not None and needs_rehash(user.password_hash):
+        user.password_hash = hash_password(password)
+        session.flush()
+    return user
+
+
+def set_password(session: Session, user: User, *, password: str) -> None:
+    """Hash ``password`` and store it on ``user``.
+
+    Used by the bootstrap CLI to create the first credentialed user on a
+    fresh deployment. Empty passwords are rejected by ``hash_password``.
+    """
+    user.password_hash = hash_password(password)
+    session.flush()
 
 
 def get_user(session: Session, user_id: str) -> User | None:

@@ -6,11 +6,13 @@ from importlib.resources import files
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from lms.api.audit import router as audit_router
 from lms.api.health import router as health_router
 from lms.api.inspect import router as inspect_router
 from lms.auth.api import router as auth_router
+from lms.auth.login import router as login_router
 from lms.capability.api import router as capability_router
 from lms.cases.api import router as cases_router
 from lms.competencies.api import router as competencies_router
@@ -46,9 +48,33 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
         description="API-first backend for evidence-informed personal learning.",
         version="0.1.0",
     )
+    settings = get_settings()
     if enable_local_identity_routes is None:
-        enable_local_identity_routes = get_settings().enable_local_identity_routes
+        enable_local_identity_routes = settings.enable_local_identity_routes
     app.state.enable_local_identity_routes = enable_local_identity_routes
+
+    # SessionMiddleware ships signed cookies via itsdangerous. It is mounted
+    # unconditionally so /login can read/write session state even in local
+    # dev where ``auth_required`` is false; the gate that forces a login is
+    # the require_authenticated_user dependency, not this middleware.
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.auth_secret_key,
+        session_cookie=settings.session_cookie_name,
+        max_age=settings.session_max_age_seconds,
+        same_site="lax",
+        # Render serves over HTTPS in production; behind its TLS terminator
+        # FastAPI itself sees plain HTTP, so we only flip ``https_only`` on
+        # when auth is required (i.e. deployed mode). Local-dev keeps cookies
+        # working on http://localhost.
+        https_only=settings.auth_required,
+    )
+
+    # The login/logout routes are always mounted; the form is reachable on
+    # local dev too so the flow can be exercised end-to-end without flipping
+    # AUTH_REQUIRED on. The require_authenticated_user dependency is what
+    # actually gates downstream routes when AUTH_REQUIRED is true.
+    app.include_router(login_router)
 
     if enable_local_identity_routes:
         app.include_router(auth_router)

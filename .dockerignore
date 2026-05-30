@@ -1,0 +1,52 @@
+# Keep build context small and reproducible.
+#
+# Notes:
+# - We DO copy pyproject.toml, requirements.lock, alembic/, src/, scripts/,
+#   and README.md; everything below is excluded.
+# - .git is excluded; the Dockerfile doesn't need it (setuptools doesn't
+#   call git for our static version).
+
+# Version control / editor / OS noise
+.git
+.gitignore
+.gitattributes
+.github
+.vscode
+.idea
+.DS_Store
+
+# Python build artefacts
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+.eggs
+build
+dist
+htmlcov
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+coverage.xml
+
+# Local virtualenvs
+.venv
+venv
+env
+
+# Local secrets / dotenv files (never bake into image)
+.env
+.env.*
+!.env.example
+
+# Local data / artifacts
+docs/screenshots
+docs/handoff
+notes
+Numbers
+
+# Tests are useful inside the image (for sanity-check runs) but we keep them
+# out of the runtime layer; uncomment if image size becomes a concern.
+# tests

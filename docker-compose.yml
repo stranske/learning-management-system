@@ -1,0 +1,58 @@
+# Local development orchestration: FastAPI app + Postgres.
+#
+# Usage:
+#   docker compose up --build
+#
+# On first run, the entrypoint runs ``alembic upgrade head`` against the
+# Postgres container before uvicorn starts. The DB volume persists across
+# ``docker compose down`` (use ``docker compose down -v`` to reset).
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lms
+      POSTGRES_PASSWORD: lms
+      POSTGRES_DB: lms
+    ports:
+      - "5432:5432"
+    volumes:
+      - lms_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lms -d lms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://lms:lms@db:5432/lms
+      # Local dev keeps auth off so the existing test/dev shortcut works.
+      # Flip these on (and set AUTH_SECRET_KEY) to exercise the login flow.
+      AUTH_REQUIRED: "false"
+      AUTH_SECRET_KEY: dev-secret-do-not-use-in-production
+      ENABLE_LOCAL_IDENTITY_ROUTES: "true"
+      # Optional: surface LLM keys to the container.
+      CLAUDE_API_STRANSKE: ${CLAUDE_API_STRANSKE:-}
+    ports:
+      - "8000:8000"
+    command:
+      - sh
+      - -c
+      - |
+        alembic upgrade head && \
+        uvicorn lms.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      # Bind the source tree so `--reload` picks up edits without rebuilding.
+      - ./src:/app/src
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+
+volumes:
+  lms_pg_data:

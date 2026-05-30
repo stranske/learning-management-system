@@ -1,0 +1,58 @@
+# Render Blueprint for the LMS — a FastAPI web service + Postgres database.
+#
+# Mirrors the trip-planner/render.yaml shape (also stranske/*). Connect this
+# repo via the Render dashboard ("New +" → "Blueprint") and Render reads this
+# file to provision the service and DB. See docs/development/deployment.md.
+#
+# Secrets (everything with ``sync: false``) MUST be set in the Render dashboard
+# under the service's "Environment" tab — they are never committed here.
+
+services:
+  - type: web
+    name: learning-management-system
+    runtime: python
+    plan: free
+    # Build: install the project + locked deps into Render's managed venv.
+    buildCommand: >-
+      python -m pip install --upgrade pip &&
+      python -m pip install uv &&
+      uv pip sync --system requirements.lock &&
+      python -m pip install --no-deps -e .
+    # Pre-deploy migration: runs once before the new instance accepts traffic.
+    preDeployCommand: alembic upgrade head
+    startCommand: uvicorn lms.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # --- Required ---
+      - key: DATABASE_URL
+        fromDatabase:
+          name: lms-db
+          property: connectionString
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: AUTH_SECRET_KEY
+        # Render will autogenerate a strong value on first deploy. Rotate via
+        # the dashboard when needed.
+        generateValue: true
+      - key: ENABLE_LOCAL_IDENTITY_ROUTES
+        value: "false"
+
+      # --- Optional / set via dashboard ---
+      # Anthropic LLM provider (issue #179). Required only if the deployed
+      # study-coach path is exercised.
+      - key: CLAUDE_API_STRANSKE
+        sync: false
+      # LangSmith tracing key (M5).
+      - key: LANGSMITH_API_KEY
+        sync: false
+      # Daily LLM budget in USD; used by the budget guard.
+      - key: LLM_DAILY_BUDGET_USD
+        sync: false
+
+databases:
+  - name: lms-db
+    plan: free
+    databaseName: lms
+    # Render's free Postgres has a 90-day retention policy at the time of
+    # this writing. See docs/development/deployment.md for the upgrade path.
