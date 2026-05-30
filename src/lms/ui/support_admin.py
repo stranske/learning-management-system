@@ -214,8 +214,7 @@ def _support_signals(session: Session) -> list[SupportSignal]:
 def _support_signal_list(signals: list[SupportSignal]) -> str:
     cards: list[str] = []
     for signal in signals:
-        cards.append(
-            f"""
+        cards.append(f"""
             <article class="support-signal">
               <h2>{escape(signal.learner_name)}</h2>
               <p>Learner id: <code>{escape(signal.learner_id)}</code></p>
@@ -228,8 +227,7 @@ def _support_signal_list(signals: list[SupportSignal]) -> str:
               <h3>Recommended next action</h3>
               <ul>{_items(signal.next_actions or ["Review the learner context before acting."])}</ul>
             </article>
-            """
-        )
+            """)
     return '<section aria-label="Support signals">' + "".join(cards) + "</section>"
 
 

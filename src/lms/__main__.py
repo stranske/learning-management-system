@@ -271,6 +271,43 @@ def main() -> None:
         help="exercise the M4 Minimum Demo path with CI-safe fake-provider data",
     )
 
+    # auth subcommands — bootstrap users for the deployed (AUTH_REQUIRED=true)
+    # instance. See docs/architecture/auth.md.
+    auth_parser = subparsers.add_parser("auth", help="manage local auth users")
+    auth_sub = auth_parser.add_subparsers(dest="auth_command")
+    create_user_parser = auth_sub.add_parser(
+        "create-user",
+        help="create a local user with an Argon2-hashed password",
+    )
+    create_user_parser.add_argument("--username", required=True)
+    create_user_parser.add_argument("--display-name", required=True)
+    create_user_parser.add_argument("--email", default=None)
+    create_user_parser.add_argument(
+        "--password",
+        nargs="?",
+        const="__PROMPT__",
+        default=None,
+        help=(
+            "password literal (insecure: visible in shell history); pass --password "
+            "with no value to be prompted interactively."
+        ),
+    )
+    set_password_parser = auth_sub.add_parser(
+        "set-password",
+        help="rotate an existing user's password",
+    )
+    set_password_parser.add_argument("--username", required=True)
+    set_password_parser.add_argument(
+        "--password",
+        nargs="?",
+        const="__PROMPT__",
+        default=None,
+        help=(
+            "password literal (insecure: visible in shell history); pass --password "
+            "with no value to be prompted interactively."
+        ),
+    )
+
     args = parser.parse_args()
     if args.command == "validate-research-registry":
         try:
@@ -466,7 +503,65 @@ def main() -> None:
             return
         parser.error("demo requires a subcommand")
 
+    if args.command == "auth":
+        _dispatch_auth(args, parser=auth_parser)
+        return
+
     _run_dev_server()
+
+
+def _resolve_password(value: str | None) -> str:
+    """Resolve a ``--password`` argument that may be a literal or a prompt sentinel."""
+    import getpass
+
+    if value is None:
+        raise SystemExit(
+            "password is required: pass --password VALUE (insecure) or --password "
+            "with no value to be prompted"
+        )
+    if value == "__PROMPT__":
+        first = getpass.getpass("Password: ")
+        second = getpass.getpass("Confirm: ")
+        if first != second:
+            raise SystemExit("passwords did not match")
+        if not first:
+            raise SystemExit("password cannot be empty")
+        return first
+    return value
+
+
+def _dispatch_auth(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> None:
+    """Dispatch ``lms auth ...`` subcommands."""
+    from lms.auth.repository import (
+        create_local_user,
+        get_user_by_username,
+        set_password,
+    )
+
+    if args.auth_command == "create-user":
+        password = _resolve_password(args.password)
+        with session_scope() as session:
+            if get_user_by_username(session, args.username) is not None:
+                raise SystemExit(f"user already exists: {args.username}")
+            user = create_local_user(
+                session,
+                username=args.username,
+                display_name=args.display_name,
+                email=args.email,
+                password=password,
+            )
+            print(f"created user: id={user.id} username={user.username}")
+        return
+    if args.auth_command == "set-password":
+        password = _resolve_password(args.password)
+        with session_scope() as session:
+            found_user = get_user_by_username(session, args.username)
+            if found_user is None:
+                raise SystemExit(f"user not found: {args.username}")
+            set_password(session, found_user, password=password)
+            print(f"password updated: username={found_user.username}")
+        return
+    parser.error("auth requires a subcommand")
 
 
 def _run_dev_server() -> None:

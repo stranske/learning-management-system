@@ -31,6 +31,21 @@ dependencies = [
     "uvicorn[standard]>=0.48.0",
     "pandas>=3.0.3",
     "mistune>=3.0.0",
+    # Argon2 powers password hashing for the local login flow that gates the
+    # deployed Render instance (see docs/architecture/auth.md). Required for
+    # any environment where AUTH_REQUIRED is enabled.
+    "argon2-cffi>=23.1.0",
+    # starlette is FastAPI's underlying ASGI framework; we import SessionMiddleware
+    # directly so it is declared as an explicit dependency.
+    "starlette>=0.46.0",
+    # itsdangerous is the signed-cookie library Starlette's SessionMiddleware
+    # uses under the hood; declaring it explicitly keeps the dependency surface
+    # visible even though Starlette ships it transitively today.
+    "itsdangerous>=2.2.0",
+    # python-multipart is required by FastAPI for parsing form posts (the
+    # /login endpoint uses Form()). FastAPI declares it as an optional extra;
+    # we depend on it directly so the form-based login works out of the box.
+    "python-multipart>=0.0.20",
 ]
 
 [project.scripts]

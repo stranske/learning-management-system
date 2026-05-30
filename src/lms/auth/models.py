@@ -40,6 +40,11 @@ class User(Base):
         server_default=true(),
         nullable=False,
     )
+    # Argon2 password hash for local login. Nullable so the existing local-dev
+    # user (created via get_or_create_local_dev_user) can exist without a
+    # password — that path is gated by ``Settings.auth_required`` being false.
+    # Real users created via the bootstrap CLI will always have a hash set.
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
