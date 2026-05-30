@@ -231,10 +231,14 @@ def test_default_provider_is_fake_when_env_var_absent() -> None:
 
 def test_default_api_client_honors_mode_model_env_override(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """The API route default client keeps Segment 10 per-mode env overrides."""
     from lms.llm import api as llm_api
     from lms.settings import get_settings
+
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    request.addfinalizer(get_settings.cache_clear)
 
     monkeypatch.delenv("CLAUDE_API_STRANSKE", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
