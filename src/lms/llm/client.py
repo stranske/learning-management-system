@@ -106,8 +106,11 @@ class LLMClient:
         self._validate_trace_class(trace_class)
         self._validate_coaching_intensity(coaching_intensity)
 
-        model = self.config.model_for(mode)
-        provider = self._resolve_provider(provider_name)
+        derived_provider, model = self.config.provider_and_model_for(mode)
+        # Resolution order: explicit per-call provider_name > provider embedded
+        # in the model config string (e.g. "anthropic:claude-sonnet-4-5") >
+        # config.default_provider fallback (handled inside _resolve_provider).
+        provider = self._resolve_provider(provider_name or derived_provider)
 
         projected_cost = self._estimate_cost(provider, prompt=prompt, max_tokens=max_tokens)
         self.budget.preflight(mode, projected_cost)
