@@ -49,7 +49,7 @@ jobs:
       classification_rationale: ${{ steps.classify.outputs.classification-rationale || 'path classifier unavailable' }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Classify changed paths
         id: classify
@@ -94,7 +94,7 @@ jobs:
       description: ${{ steps.summarize.outputs.description }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           sparse-checkout: |
             .github/scripts
@@ -155,7 +155,7 @@ jobs:
 
       - name: Report Gate commit status
         if: ${{ always() }}
-        uses: actions/github-script@v9.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           STATE: ${{ steps.summarize.outputs.state || 'pending' }}
           DESCRIPTION: ${{ steps.summarize.outputs.description || 'Gate status pending' }}
