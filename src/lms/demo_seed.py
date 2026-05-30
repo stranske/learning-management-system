@@ -56,9 +56,13 @@ SEED_REASON_CODES: tuple[str, ...] = (
 )
 
 # Default seed dimensions. Exposed as constants so the test can assert exact
-# counts without re-computing the cross product inline.
+# counts without re-computing the cross product inline. Derive the
+# prompts-per-note from SEED_COGNITIVE_ACTIONS so the seed dimensions stay
+# self-consistent: the seeding loop emits exactly one prompt per cognitive
+# action per note, so hardcoding a separate count could drift from the actual
+# number of created prompts and trip the zip(..., strict=True) loop below.
 SEED_NOTE_COUNT: int = 10
-SEED_PROMPTS_PER_NOTE: int = 3
+SEED_PROMPTS_PER_NOTE: int = len(SEED_COGNITIVE_ACTIONS)
 SEED_PROMPT_COUNT: int = SEED_NOTE_COUNT * SEED_PROMPTS_PER_NOTE
 
 
