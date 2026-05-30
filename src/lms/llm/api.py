@@ -17,7 +17,7 @@ from lms.feedback.models import FeedbackRecord
 from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
-from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig
+from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig, load_llm_config_from_env
 from lms.llm.exceptions import SourceConstraintViolation
 from lms.llm.interaction_policy import (
     InteractionContext,
@@ -177,18 +177,17 @@ def _default_client() -> LLMClient:
         anthropic_api_key=api_key,
         fake_responder=_fake_learning_policy_responder,
     )
-    # When the live Anthropic provider is selected, route every mode to a
-    # production-grade default model. The mode-model mapping can still be
-    # overridden per-mode via LLM_MODEL_STUDY_COACH / LLM_MODEL_PRACTICE /
-    # LLM_MODEL_TRANSFER / LLM_MODEL_AUTHORING_ASSIST env vars per
-    # docs/product/early-design-decisions.md Segment 10.
     default_model = (
         "claude-haiku-4-5" if default_provider == "anthropic" else "fake-learning-policy"
     )
+    env_config = load_llm_config_from_env(
+        defaults=dict.fromkeys(DEFAULT_MODE_MODELS, default_model)
+    )
     config = LLMConfig(
-        mode_models=dict.fromkeys(DEFAULT_MODE_MODELS, default_model),
-        global_daily_cap_micro_usd=1_000_000,
+        mode_models=env_config.mode_models,
+        global_daily_cap_micro_usd=env_config.global_daily_cap_micro_usd,
         default_provider=default_provider,
+        default_timeout_seconds=env_config.default_timeout_seconds,
     )
     return LLMClient(
         config=config,

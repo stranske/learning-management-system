@@ -139,6 +139,8 @@ class AnthropicProvider:
 
     api_key: str
     name: str = "anthropic"
+    input_token_cost_micro_usd: int = int(_DEFAULT_PRICE[0])
+    output_token_cost_micro_usd: int = int(_DEFAULT_PRICE[1])
     client_factory: Callable[[str], Any] | None = None
     # max_tokens default for calls that don't specify one; Anthropic requires
     # the field on every Messages request.

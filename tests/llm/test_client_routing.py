@@ -227,3 +227,23 @@ def test_default_provider_is_fake_when_env_var_absent() -> None:
     """Without ``LLM_DEFAULT_PROVIDER``, default_provider falls back to ``fake``."""
     config = load_llm_config_from_env({})
     assert config.default_provider == "fake"
+
+
+def test_default_api_client_honors_mode_model_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The API route default client keeps Segment 10 per-mode env overrides."""
+    from lms.llm import api as llm_api
+    from lms.settings import get_settings
+
+    monkeypatch.delenv("CLAUDE_API_STRANSKE", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_MODEL_STUDY_COACH", "fake-env-coach")
+    get_settings.cache_clear()
+    llm_api._default_client.cache_clear()
+
+    client = llm_api._default_client()
+
+    assert client.config.mode_models["study-coach"] == "fake-env-coach"
+    assert client.config.mode_models["practice"] == "fake-learning-policy"

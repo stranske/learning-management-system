@@ -238,6 +238,8 @@ def test_build_default_providers_registers_anthropic_when_key_set() -> None:
     assert set(providers.keys()) == {"fake", "anthropic"}
     assert isinstance(providers["anthropic"], AnthropicProvider)
     assert providers["anthropic"].api_key == "sk-ant-test-key"
+    assert providers["anthropic"].input_token_cost_micro_usd == 3
+    assert providers["anthropic"].output_token_cost_micro_usd == 15
 
 
 def test_build_default_providers_accepts_custom_fake_responder() -> None:
@@ -280,3 +282,15 @@ def test_settings_reads_anthropic_key_from_any_documented_env_var(
 
     settings = Settings()
     assert settings.anthropic_api_key == "sk-ant-from-" + env_var
+
+
+def test_public_anthropic_key_helper_reads_documented_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lms.settings import read_anthropic_api_key_from_env
+
+    for name in ("CLAUDE_API_STRANSKE", "ANTHROPIC_API_KEY", "CLAUDE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-public-helper")
+
+    assert read_anthropic_api_key_from_env() == "sk-ant-public-helper"
