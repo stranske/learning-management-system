@@ -113,10 +113,15 @@ def auth_required_client() -> Generator[tuple[TestClient, sessionmaker[Session]]
         engine.dispose()
 
 
-def test_unauthenticated_html_request_redirects_to_login(
+def test_unauthenticated_request_redirects_to_login(
     auth_required_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
-    """A browser-style request (Accept: text/html) to a protected route 302s to /login."""
+    """An unauthenticated browser request to a protected route 302s to /login.
+
+    This is the acceptance-criteria test named in issue #180. HTML requests
+    (``Accept: text/html``) trigger a redirect; the original path is preserved
+    in the ``next`` query param so the user lands back there after logging in.
+    """
     client, _ = auth_required_client
     response = client.get(
         "/protected-html",
@@ -126,9 +131,15 @@ def test_unauthenticated_html_request_redirects_to_login(
     assert response.status_code == 302
     location = response.headers["location"]
     assert location.startswith("/login")
-    # The original path is preserved so the user lands back there after login.
     assert "next=" in location
     assert "%2Fprotected-html" in location
+
+
+def test_unauthenticated_html_request_redirects_to_login(
+    auth_required_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """Alias kept for backwards compatibility; delegates to the AC-named test."""
+    test_unauthenticated_request_redirects_to_login(auth_required_client)
 
 
 def test_unauthenticated_api_request_returns_401(
