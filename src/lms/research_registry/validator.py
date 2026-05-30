@@ -108,7 +108,9 @@ def validate_registry(registry: ResearchRegistry) -> None:
 
 def _load_collection[
     T: (EvidenceSource, LearningClaim, LearningPrinciple, ResearchScan, EvidenceReview)
-](path: Path, model_type: type[T], *, required: bool = True) -> list[T]:
+](
+    path: Path, model_type: type[T], *, required: bool = True
+) -> list[T]:
     if not path.exists():
         if not required:
             return []
@@ -132,7 +134,9 @@ def _load_collection[
 
 def _parse_record[
     T: (EvidenceSource, LearningClaim, LearningPrinciple, ResearchScan, EvidenceReview)
-](path: Path, index: int, item: dict[str, Any], model_type: type[T]) -> T:
+](
+    path: Path, index: int, item: dict[str, Any], model_type: type[T]
+) -> T:
     try:
         return model_type.model_validate(item)
     except ValidationError as exc:
