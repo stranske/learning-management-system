@@ -359,7 +359,9 @@ sqlalchemy==2.0.50
 stack-data==0.6.3
     # via ipython
 starlette==1.1.0
-    # via fastapi
+    # via
+    #   fastapi
+    #   lms (pyproject.toml)
 terminado==0.18.1
     # via
     #   jupyter-server
