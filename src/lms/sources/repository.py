@@ -208,15 +208,26 @@ def compute_source_hash_for_reference(
     base_path: str | Path | None = None,
 ) -> str:
     """Compute the hash for a reference from content or its locator."""
+    if source_type == "markdown-file":
+        try:
+            return compute_source_hash(
+                markdown_path=stable_locator,
+                passage_range=passage_range,
+                hash_algorithm=hash_algorithm,
+                base_path=base_path,
+            )
+        except FileNotFoundError:
+            # The markdown file takes precedence so create-time and scan-time hash
+            # the same bytes (free-text passage ranges otherwise false-positive as
+            # stale). But a local-only source may not be present on every machine
+            # (CI, another author's checkout): fall back to the cached content so
+            # the reference stays creatable. ``scan_source_references`` re-reads
+            # with ``content=None``, so a still-missing file re-raises here and is
+            # recorded as "missing" rather than masked.
+            if content is None:
+                raise
     if content is not None:
         return compute_source_hash(content, hash_algorithm=hash_algorithm)
-    if source_type == "markdown-file":
-        return compute_source_hash(
-            markdown_path=stable_locator,
-            passage_range=passage_range,
-            hash_algorithm=hash_algorithm,
-            base_path=base_path,
-        )
     if source_type in ("internal-note", "url"):
         raise ValueError(f"{source_type!r} references require resolved content to compute a hash")
     raise ValueError("content or content_hash is required for non-file source references")

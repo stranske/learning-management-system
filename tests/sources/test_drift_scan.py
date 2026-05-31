@@ -8,7 +8,9 @@ import pytest
 from sqlalchemy.orm import Session
 
 from lms.audit.models import AuditLog
+from lms.sources.models import SourceReference
 from lms.sources.repository import (
+    compute_source_hash,
     compute_source_hash_for_reference,
     create_source_reference,
     scan_source_references,
@@ -68,6 +70,58 @@ def test_missing_markdown_file_marks_reference_missing(
 
     assert summary.missing == 1
     assert reference.drift_status == "missing"
+
+
+def test_freetext_passage_range_not_false_stale(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Free-text markdown ranges hash consistently and do not false-positive as stale."""
+    note = tmp_path / "research.md"
+    note.write_text("# Heading\npassage scoped text\ntrailing context\n", encoding="utf-8")
+
+    reference = create_source_reference(
+        db_session,
+        source_type="markdown-file",
+        stable_locator=str(note),
+        passage_range="Section 1",
+        content="passage scoped text",
+        actor_id="user:alice",
+    )
+    db_session.commit()
+
+    summary = scan_source_references(db_session, actor_id="system:test")
+    db_session.commit()
+
+    assert summary.scanned == 1
+    assert summary.current == 1
+    assert summary.stale == 0
+    assert reference.drift_status == "current"
+
+
+def test_scan_rejects_legacy_freetext_passage_range(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Legacy free-text ranges are scanned consistently against whole-file hashes."""
+    note = tmp_path / "research.md"
+    note.write_text("# Heading\npassage scoped text\ntrailing context\n", encoding="utf-8")
+    reference = SourceReference(
+        source_type="markdown-file",
+        stable_locator=str(note),
+        passage_range="Section 1",
+        content_hash=compute_source_hash("passage scoped text"),
+        hash_algorithm="sha256",
+    )
+    db_session.add(reference)
+    db_session.commit()
+
+    summary = scan_source_references(db_session, actor_id="system:test")
+    db_session.commit()
+
+    assert summary.scanned == 1
+    assert summary.current == 0
+    assert summary.stale == 1
 
 
 def test_changed_internal_note_marks_reference_stale(db_session: Session) -> None:
