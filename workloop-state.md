@@ -1,5 +1,15 @@
 # Workloop State
 
+## 2026-05-31T22:17Z - codex opener opening PR for #206 (HTTP error branch coverage)
+
+- Automation: `pd-workloop-resume` opener lane from the neutral Code workspace. ACTION A zero exit; full discovery ran. Cap-health after repair helper reported raw cap below 5: LMS #227 `draining` with fresh Gate/Gate Followups evidence, Trend #5353 `runner-failed` under the existing scoped owner/product blocker, and Counter_Risk #665 as a human-authored draft/non-registry PR outside opener routing.
+- Liveness: priority searches plus `opener-liveness-guard.py` left high/normal candidates scoped, linked, or merged-awaiting-verifier. LMS #204 is linked to open PR #227; the highest unlinked implementation candidate was **#206**.
+- Source issue: [#206](https://github.com/stranske/learning-management-system/issues/206) "Test coverage: HTTP 404/422 branches + standalone case sub-resource routes".
+- Branch/worktree: `codex/issue-206-http-error-coverage` in `/Users/teacher/.codex/automations/pd-workloop-resume/worktrees/lms-206-http-error-coverage`, based on fresh `origin/main` `061fa77`.
+- Implementation: added direct API coverage for standalone case step/evidence-packet routes, missing case/work-product 404s, missing feedback/action/template/revision-request 404s, and feedback template render ValueError -> 422 handling. Production code unchanged.
+- Validation: `pytest tests/api/test_cases.py::test_get_missing_case_returns_404 tests/api/test_feedback_http_errors.py::test_get_missing_feedback_returns_404 -q --no-cov` -> 2 passed; deliberate-break gate temporarily changed `get_feedback_route` to return a stub 200 and `test_get_missing_feedback_returns_404` failed with `assert 200 == 404`, then restored; `pytest tests/api/ -q --no-cov` -> 70 passed; `ruff check tests/api/test_cases.py tests/api/test_feedback_http_errors.py` -> passed; `git diff --check` -> passed.
+- Next action: push/open ready-for-review PR closing #206 with `agent:codex`, `agents:keepalive`, and `autofix`; then keepalive owns CI/review.
+
 ## 2026-05-31T21:01Z - codex opener opening PR for #201 (Inspect scheduler panel)
 
 - Automation: `pd-workloop-resume` opener lane from the neutral Code workspace. ACTION A zero exit; full discovery ran. Initial cap-health raw cap was 2/5: Trend #5367 `draining` with active Gate evidence and Trend #5353 `runner-failed`/scoped terminal owner-product blocker. Repair helper made 0 repairs.
