@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy.orm import Session
 
 from lms.audit.models import AuditLog
-from lms.sources.repository import create_source_reference, scan_source_references
+from lms.sources.repository import (
+    compute_source_hash_for_reference,
+    create_source_reference,
+    scan_source_references,
+)
 
 
 def test_changed_markdown_passage_marks_reference_stale(
@@ -213,3 +218,78 @@ def test_pdf_and_kindle_counted_as_explicit_unsupported(db_session: Session) -> 
     assert summary.unsupported_kindle == 1
     assert summary.scanned == 0
     assert summary.skipped == 0
+
+
+def test_url_reference_stays_current_when_fetched_content_unchanged(db_session: Session) -> None:
+    """A url whose fetched content hash matches stays current."""
+    reference = create_source_reference(
+        db_session,
+        source_type="url",
+        stable_locator="https://example.org/stable",
+        content="<html>v1</html>",
+        actor_id="user:alice",
+    )
+    db_session.commit()
+
+    summary = scan_source_references(
+        db_session,
+        actor_id="system:test",
+        allow_network=True,
+        url_fetcher=lambda url: "<html>v1</html>",
+    )
+    db_session.commit()
+
+    assert summary.scanned == 1
+    assert summary.current == 1
+    assert reference.drift_status == "current"
+
+
+def test_url_fetcher_exception_marks_reference_missing(db_session: Session) -> None:
+    """When the url fetcher raises the reference is marked missing (unreachable URL)."""
+    reference = create_source_reference(
+        db_session,
+        source_type="url",
+        stable_locator="https://example.org/gone",
+        content="<html>v1</html>",
+        actor_id="user:alice",
+    )
+    db_session.commit()
+
+    def _broken_fetcher(url: str) -> str:
+        raise ConnectionError("unreachable")
+
+    summary = scan_source_references(
+        db_session,
+        actor_id="system:test",
+        allow_network=True,
+        url_fetcher=_broken_fetcher,
+    )
+    db_session.commit()
+
+    assert summary.scanned == 1
+    assert summary.missing == 1
+    assert reference.drift_status == "missing"
+
+
+def test_compute_source_hash_for_reference_raises_for_internal_note_without_content() -> None:
+    """compute_source_hash_for_reference raises a clear ValueError for internal-note without content."""
+    with pytest.raises(ValueError, match="internal-note.*require.*resolved content"):
+        compute_source_hash_for_reference(
+            source_type="internal-note",
+            stable_locator="note://research/x",
+            passage_range=None,
+            content=None,
+            hash_algorithm="sha256",
+        )
+
+
+def test_compute_source_hash_for_reference_raises_for_url_without_content() -> None:
+    """compute_source_hash_for_reference raises a clear ValueError for url without content."""
+    with pytest.raises(ValueError, match="url.*require.*resolved content"):
+        compute_source_hash_for_reference(
+            source_type="url",
+            stable_locator="https://example.org/page",
+            passage_range=None,
+            content=None,
+            hash_algorithm="sha256",
+        )
