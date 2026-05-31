@@ -115,6 +115,14 @@ class KnowledgeNode(Base):
 class KnowledgeEdge(Base):
     """A typed relationship between two ``KnowledgeNode`` records.
 
+    Edge direction is canonical and reads source -> target. For ``prerequisite``
+    (and ``key-prerequisite``) edges this means *"source has prerequisite
+    target"*: the ``target`` node must be learned before the ``source`` node.
+    Both graph importers follow this convention -- the CSV importer writes
+    ``source=node, target=each listed prerequisite``, and the Markdown importer
+    writes ``source=nested subsection, target=parent section`` because a
+    subsection depends on (is downstream of) the section that contains it.
+
     A normal edge cannot cross ownership scopes; cross-scope linkage requires an
     explicit ``is_graph_reference`` marker so that personal evidence does not
     silently flow into institutional analytics (and vice versa). The check
