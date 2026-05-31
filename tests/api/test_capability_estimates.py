@@ -12,8 +12,8 @@ from lms.capability.api import (
     list_capability_estimates_route,
     recompute_capability_estimate_route,
 )
-from lms.capability.schemas import CapabilityEstimateRecompute
 from lms.capability.repository import create_capability_target
+from lms.capability.schemas import CapabilityEstimateRecompute
 from lms.evidence.repository import create_evidence_record
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.repository import create_learner_for_user
