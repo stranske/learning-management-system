@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect
@@ -16,8 +17,10 @@ import lms.graphs.models  # noqa: F401
 import lms.sources.models  # noqa: F401
 from lms.db.base import Base
 from lms.db.session import get_session
+from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_evidence_record
 from lms.main import create_app
+from lms.mastery.service import mastery_estimates_with_evidence_for_learner
 
 
 @contextmanager
@@ -94,3 +97,71 @@ def test_no_mastery_estimate_table_is_required() -> None:
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+def test_mastery_estimate_orders_same_observed_at_records_deterministically(
+    db_session: Session,
+) -> None:
+    observed_at = datetime(2026, 5, 31, 12, 0, tzinfo=UTC)
+    created_at = datetime(2026, 5, 31, 12, 0, 1, tzinfo=UTC)
+
+    first_order_rows = [
+        EvidenceRecord(
+            id="evidence-b",
+            learner_id="learner-first",
+            knowledge_node_id="node-1",
+            evidence_kind="observed",
+            observed_at=observed_at,
+            timestamp=observed_at,
+            created_at=created_at,
+            normalized_score=1.0,
+        ),
+        EvidenceRecord(
+            id="evidence-a",
+            learner_id="learner-first",
+            knowledge_node_id="node-1",
+            evidence_kind="observed",
+            observed_at=observed_at,
+            timestamp=observed_at,
+            created_at=created_at,
+            normalized_score=0.0,
+        ),
+    ]
+    reverse_order_rows = [
+        EvidenceRecord(
+            id="evidence-b-copy",
+            learner_id="learner-reverse",
+            knowledge_node_id="node-1",
+            evidence_kind="observed",
+            observed_at=observed_at,
+            timestamp=observed_at,
+            created_at=created_at,
+            normalized_score=1.0,
+        ),
+        EvidenceRecord(
+            id="evidence-a-copy",
+            learner_id="learner-reverse",
+            knowledge_node_id="node-1",
+            evidence_kind="observed",
+            observed_at=observed_at,
+            timestamp=observed_at,
+            created_at=created_at,
+            normalized_score=0.0,
+        ),
+    ]
+    db_session.add_all(first_order_rows)
+    db_session.add_all(reversed(reverse_order_rows))
+    db_session.commit()
+
+    first_estimates, first_evidence = mastery_estimates_with_evidence_for_learner(
+        db_session, "learner-first"
+    )
+    reverse_estimates, reverse_evidence = mastery_estimates_with_evidence_for_learner(
+        db_session, "learner-reverse"
+    )
+
+    assert [record.normalized_score for record in first_evidence["node-1"]] == [0.0, 1.0]
+    assert [record.normalized_score for record in reverse_evidence["node-1"]] == [0.0, 1.0]
+    assert first_estimates[0]["current_estimate"] == reverse_estimates[0]["current_estimate"]
+    assert first_estimates[0]["last_evidence_id"] == "evidence-b"
+    assert reverse_estimates[0]["last_evidence_id"] == "evidence-b-copy"

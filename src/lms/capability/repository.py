@@ -772,10 +772,15 @@ def _as_float(value: object) -> float:
 
 
 def _as_int(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
     if isinstance(value, int):
         return value
     if isinstance(value, float | str):
-        return int(value)
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
     return 0
 
 

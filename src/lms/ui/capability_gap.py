@@ -814,7 +814,7 @@ def _as_int(value: object) -> int:
         return int(value)
     if isinstance(value, str):
         try:
-            return int(value)
+            return int(float(value))
         except ValueError:
             return 0
     return 0
