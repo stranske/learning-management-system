@@ -779,7 +779,8 @@ def _as_int(value: object) -> int:
     if isinstance(value, float | str):
         try:
             return int(float(value))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError guards non-finite strings ("inf"/"-inf"); NaN raises ValueError.
             return 0
     return 0
 
