@@ -24,7 +24,9 @@ def upgrade() -> None:
         sa.Column("knowledge_node_id", sa.String(length=36), nullable=True),
         sa.Column("prompt", sa.Text(), nullable=False),
         sa.Column("response", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.ForeignKeyConstraint(["knowledge_node_id"], ["knowledge_nodes.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["learner_id"], ["learners.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),

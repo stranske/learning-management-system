@@ -174,9 +174,7 @@ def test_create_user_and_learner_endpoints() -> None:
             assert reflection_payload["prompt"] == "What made this review difficult?"
             assert reflection_payload["knowledge_node_id"] == second_node_payload["id"]
 
-            list_reflections_response = client.get(
-                f"/learners/{learner_payload['id']}/reflections"
-            )
+            list_reflections_response = client.get(f"/learners/{learner_payload['id']}/reflections")
             assert list_reflections_response.status_code == 200
             assert [item["id"] for item in list_reflections_response.json()] == [
                 reflection_payload["id"]

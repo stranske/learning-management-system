@@ -257,6 +257,7 @@ def list_reflections_for_learner(
     session: Session,
     *,
     learner_id: str,
+    limit: int | None = None,
 ) -> list[LearnerReflection]:
     """Return a learner's reflections, newest first (the learner-facing surface)."""
     statement = (
@@ -264,6 +265,8 @@ def list_reflections_for_learner(
         .where(LearnerReflection.learner_id == learner_id)
         .order_by(LearnerReflection.created_at.desc(), LearnerReflection.id)
     )
+    if limit is not None:
+        statement = statement.limit(limit)
     return list(session.scalars(statement))
 
 
@@ -295,9 +298,7 @@ def goal_progress_for_learner(
 
     covered = sum(1 for node_id in target_node_ids if node_id in estimate_by_node)
     mastered = sum(
-        1
-        for node_id in target_node_ids
-        if estimate_by_node.get(node_id, 0.0) >= mastery_threshold
+        1 for node_id in target_node_ids if estimate_by_node.get(node_id, 0.0) >= mastery_threshold
     )
     progress = mastered / target_count if target_count else 0.0
 
