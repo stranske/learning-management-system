@@ -208,6 +208,25 @@ def test_non_utf8_markdown_file_is_skipped_with_warning(
     assert "skipping non-UTF-8 markdown file" in caplog.text
 
 
+def test_unmappable_heading_is_skipped_with_warning(
+    tmp_path: Path, caplog: Any, monkeypatch: Any
+) -> None:
+    note = tmp_path / "unmappable.md"
+    note.write_text("# Heading\nBody\n", encoding="utf-8")
+
+    def _always_fail(**_: Any) -> tuple[int, int]:
+        raise ValueError("no heading line mapping")
+
+    monkeypatch.setattr("lms.importers.markdown._find_heading_line", _always_fail)
+    with caplog.at_level(logging.WARNING, logger="lms.importers.markdown"):
+        summary = import_markdown_notes(None, note, dry_run=True)
+
+    assert summary.dry_run is True
+    assert summary.files_scanned == 0
+    assert summary.planned_nodes == 0
+    assert "skipping heading that could not be mapped to source line" in caplog.text
+
+
 def test_import_records_audit_events_for_sources_nodes_and_edges(
     db_session: Session, tmp_path: Path
 ) -> None:

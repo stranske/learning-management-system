@@ -244,12 +244,20 @@ def _extract_h1_h2_headings(*, text: str, lines: list[str]) -> list[tuple[int, i
         title = _extract_heading_text(token).strip()
         if not title:
             continue
-        start_line, next_scan_index = _find_heading_line(
-            lines=lines,
-            level=level,
-            title=title,
-            start_index=next_scan_index,
-        )
+        try:
+            start_line, next_scan_index = _find_heading_line(
+                lines=lines,
+                level=level,
+                title=title,
+                start_index=next_scan_index,
+            )
+        except ValueError:
+            LOGGER.warning(
+                "skipping heading that could not be mapped to source line: %r (h%d)",
+                title,
+                level,
+            )
+            continue
         raw.append((level, start_line, title))
     return raw
 
