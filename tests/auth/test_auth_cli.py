@@ -206,3 +206,32 @@ def test_password_omitted_is_required(
             "Ada Lovelace",
         )
     assert "password is required" in str(excinfo.value.code)
+
+
+def test_create_user_interactive_prompt_success(
+    patched_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """create-user with a matching interactive prompt creates the user (covers _resolve_password
+    return-first branch)."""
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": "prompted-pass")
+
+    _run(
+        monkeypatch,
+        "auth",
+        "create-user",
+        "--username",
+        "ada",
+        "--display-name",
+        "Ada Lovelace",
+        "--password",  # nargs="?" -> const "__PROMPT__"
+    )
+
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("created user: id=")
+    assert "username=ada" in out
+    user = get_user_by_username(patched_session, "ada")
+    assert user is not None
+    assert user.password_hash is not None
+    assert "prompted-pass" not in user.password_hash
