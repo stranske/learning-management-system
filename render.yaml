@@ -11,7 +11,14 @@ services:
   - type: web
     name: learning-management-system
     runtime: python
-    plan: free
+    # Starter (~$7/mo at the time of this writing): the web service stays
+    # awake — no 15-minute sleep, no ~30-second cold start. The right
+    # baseline for a learning loop the project owner expects to log into
+    # daily. Web-service plan is fully reversible via the dashboard
+    # (Settings → Instance Type) — flip back to ``free`` to pause billing
+    # during long idle stretches; data on the Postgres instance is
+    # unaffected by the web-service plan choice.
+    plan: starter
     # Build: install the project + locked deps into Render's managed venv.
     buildCommand: >-
       python -m pip install --upgrade pip &&
@@ -52,7 +59,16 @@ services:
 
 databases:
   - name: lms-db
-    plan: free
+    # Starter (~$7/mo at the time of this writing): persistent Postgres with
+    # no 90-day retention clock. Required for the LMS — the whole point of
+    # the system is durable evidence + scheduling state, so the data must
+    # survive longer than 3 months.
+    #
+    # NOTE: Postgres plan changes are NOT symmetric. You can upgrade
+    # ``starter`` → ``standard`` etc. in the dashboard, but Render does not
+    # offer a built-in ``starter`` → ``free`` downgrade (free is effectively
+    # a separate product with the 90-day clock). If you ever need to
+    # downgrade, the path is: ``pg_dump`` from this DB, create a new free
+    # DB, ``pg_restore``, swap ``DATABASE_URL``, decommission the original.
+    plan: starter
     databaseName: lms
-    # Render's free Postgres has a 90-day retention policy at the time of
-    # this writing. See docs/development/deployment.md for the upgrade path.

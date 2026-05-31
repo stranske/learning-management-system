@@ -78,14 +78,42 @@ If a deploy contains a destructive migration you want to undo, write a new
 `alembic revision --autogenerate -m "revert ..."` that re-runs the previous
 state, commit, and let the next deploy carry it.
 
-### Free-tier behavior
+### Plan tiers
 
-- **Web service**: sleeps after 15 minutes of inactivity; cold-start is
-  ~30 seconds on wake. Upgrade to the Starter plan (currently ~$7/mo) for
-  no-sleep behavior.
-- **Postgres**: free DBs currently have a 90-day retention policy. Before
-  that window closes, either upgrade to a paid plan or export the data via
-  `pg_dump` against the connection string from the **Connect** tab.
+`render.yaml` ships at **Starter** for both the web service and the
+Postgres database (~$7/mo each, ~$14/mo total at the time of writing).
+This is the recommended baseline for a learning loop the project owner
+expects to use daily:
+
+- **Web Starter**: stays awake, no 15-minute sleep, no ~30s cold start.
+- **Postgres Starter**: persistent, no 90-day retention clock.
+
+Verify current pricing at <https://render.com/pricing> before relying on
+specific dollar amounts; the structure is stable but Render has adjusted
+numbers historically.
+
+**Flexing the web tier** is fully reversible via the dashboard
+(Service → Settings → Instance Type). Billing prorates by the minute, so
+a 10-day burst at Starter from a normally-Free service is only a few
+dollars. The web-service plan does **not** affect data — only "is the
+container always running."
+
+**Flexing the Postgres tier** is asymmetric. You can upgrade
+Starter → Standard / Pro in the dashboard, but Render does not offer a
+built-in Starter → Free downgrade (free Postgres is effectively a
+separate product with the 90-day clock). If you ever need to downgrade,
+the path is manual: `pg_dump` against the Starter connection string,
+provision a fresh free DB, `pg_restore`, swap the service's
+`DATABASE_URL`, decommission the old DB.
+
+If you want to **pause billing for a long idle stretch** (e.g., a month
+where the project is dormant), the cheapest reversible move is:
+
+1. Service → Settings → Instance Type → Free. Stops web billing.
+2. Postgres can stay on Starter ($7/mo) so the data survives, or you can
+   `pg_dump` it down to a local backup and delete the Render DB to stop
+   that bill too — restore via `pg_restore` against a fresh Starter
+   instance when you come back.
 
 ### Custom domain (optional)
 
