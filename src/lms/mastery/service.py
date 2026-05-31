@@ -40,7 +40,12 @@ def mastery_estimates_with_evidence_for_learner(
         session.scalars(
             select(EvidenceRecord)
             .where(EvidenceRecord.learner_id == learner_id)
-            .order_by(EvidenceRecord.knowledge_node_id, EvidenceRecord.observed_at)
+            .order_by(
+                EvidenceRecord.knowledge_node_id,
+                EvidenceRecord.observed_at,
+                EvidenceRecord.created_at,
+                EvidenceRecord.id,
+            )
         )
     )
     by_node: dict[str, list[EvidenceRecord]] = defaultdict(list)

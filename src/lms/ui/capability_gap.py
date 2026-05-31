@@ -810,12 +810,11 @@ def _as_int(value: object) -> int:
         return 0
     if isinstance(value, int):
         return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
+    if isinstance(value, float | str):
         try:
-            return int(value)
-        except ValueError:
+            return int(float(value))
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError guards non-finite strings ("inf"/"-inf"); NaN raises ValueError.
             return 0
     return 0
 
