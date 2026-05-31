@@ -50,11 +50,18 @@ scenarios:
     response_time_seconds: 60
     prior_successes: 0
 
-  # Correct WITH support (a hint) -> treated as low-confidence even at high
-  # self-confidence: shortened interval, priority 0.7, FSRS "hard" (2).
+  # Correct WITH support (a hint) at a confidently-at-mastery score. The hint
+  # makes the *internal* signal low-confidence (shortened 1-day interval,
+  # priority 0.7, signal severity 1) -- this is the dimension the directional
+  # check keys on. The FSRS rating itself stays "good" (3): the adapter's
+  # `partial-at-mastery` rule (normalized_score >= 0.85) fires before its
+  # `supported-or-low-confidence-correct` rule, so a high-scoring supported
+  # answer still rates FSRS good. The score is held well clear of the 0.85
+  # mastery boundary (0.97, a +0.12 margin) so the integer rating bucket is
+  # unambiguous and identical on every platform.
   - id: supported_success
     correctness: true
-    normalized_score: 0.92
+    normalized_score: 0.97
     confidence_rating: 5
     support_level: hint
     response_time_seconds: 60
