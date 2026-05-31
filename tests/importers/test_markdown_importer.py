@@ -180,11 +180,27 @@ def test_setext_headings_with_inline_markup_map_to_source_lines(
 def test_non_utf8_markdown_file_is_skipped_with_warning(
     db_session: Session, tmp_path: Path, caplog: Any
 ) -> None:
-    caplog.set_level(logging.WARNING, logger="lms.importers.markdown")
     note = tmp_path / "latin1.md"
     note.write_bytes("Café Notes\n==========\n".encode("latin-1"))
 
-    summary = import_markdown_notes(db_session, note, dry_run=True)
+    # Other tests / imported libraries in the full suite can leave global logging
+    # state polluted on this xdist worker — e.g. a stray ``logging.disable()`` or a
+    # ``dictConfig`` with ``disable_existing_loggers=True`` that flips ``.disabled``
+    # on the already-created ``lms.importers.markdown`` logger. A disabled logger
+    # silently emits nothing, and ``caplog.set_level`` undoes neither, so the warning
+    # never reaches caplog. Neutralise both for the duration of this test (and restore
+    # afterwards so we don't change behaviour for sibling tests on the same worker).
+    importer_logger = logging.getLogger("lms.importers.markdown")
+    previous_disabled = importer_logger.disabled
+    previous_global_disable = logging.root.manager.disable
+    importer_logger.disabled = False
+    logging.disable(logging.NOTSET)
+    try:
+        with caplog.at_level(logging.WARNING, logger="lms.importers.markdown"):
+            summary = import_markdown_notes(db_session, note, dry_run=True)
+    finally:
+        importer_logger.disabled = previous_disabled
+        logging.disable(previous_global_disable)
 
     assert summary.dry_run is True
     assert summary.files_scanned == 0
