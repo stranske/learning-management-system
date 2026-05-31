@@ -41,6 +41,22 @@ def test_cited_claim_is_not_flagged() -> None:
     assert flags == ()
 
 
+def test_substring_only_citation_is_rejected() -> None:
+    """A citation that appears only as a substring of a longer identifier does
+    not satisfy the constraint (boundary-aware matching, issue #196)."""
+    # 'src1' occurs only inside 'src12' — not a real, distinct citation.
+    flags = flag_uncited_claims("Refer to src12 for the derivation.", ("src1",))
+
+    assert "unverified" in flags
+
+
+def test_bounded_citation_among_other_text_is_accepted() -> None:
+    """An exact citation flanked by non-identifier characters is accepted."""
+    flags = flag_uncited_claims("As shown in src1, the result holds.", ("src1",))
+
+    assert flags == ()
+
+
 @contextmanager
 def _client() -> Generator[TestClient, None, None]:
     engine = create_engine(

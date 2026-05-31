@@ -19,5 +19,16 @@ class SourceConstraintViolation(LLMError):  # noqa: N818 - paired with BudgetExc
     """Raised when a mode requires source citations and the response omits them."""
 
 
+class ProviderCallError(LLMError):
+    """Raised when an underlying provider API call fails.
+
+    Wraps provider-SDK errors (rate limits, timeouts, transient 5xx,
+    connection failures) — after any bounded retries are exhausted — so call
+    sites can catch a single :class:`LLMError` type instead of importing and
+    handling SDK-specific exception classes. The original SDK error is chained
+    via ``__cause__``.
+    """
+
+
 class StructuredOutputValidationError(LLMError):
     """Raised when the model response cannot be validated against the schema."""

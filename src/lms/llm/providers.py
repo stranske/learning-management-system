@@ -9,9 +9,63 @@ and network-free.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Protocol
+
+from lms.llm.exceptions import ProviderCallError
+
+
+@lru_cache(maxsize=1)
+def _anthropic_error_types() -> (
+    tuple[tuple[type[BaseException], ...], tuple[type[BaseException], ...]]
+):
+    """Resolve ``(wrappable, retryable)`` anthropic SDK error classes.
+
+    Imported lazily and cached so the module still loads when ``anthropic`` is
+    not installed (the SDK is a declared runtime dependency, but unit tests run
+    against stub clients). ``wrappable`` is the SDK's base ``APIError`` — any
+    provider error is re-raised as :class:`ProviderCallError`. ``retryable`` is
+    the subset worth a bounded retry (rate limits, timeouts, connection drops,
+    5xx). Empty tuples (SDK absent) make ``except ()`` a no-op so raw errors
+    propagate rather than being silently swallowed.
+    """
+    try:
+        import anthropic
+    except Exception:  # pragma: no cover - SDK is a declared dependency
+        return (), ()
+
+    base = getattr(anthropic, "APIError", None)
+    wrappable = (base,) if isinstance(base, type) else ()
+    retryable = tuple(
+        cls
+        for cls in (
+            getattr(anthropic, "RateLimitError", None),
+            getattr(anthropic, "APITimeoutError", None),
+            getattr(anthropic, "APIConnectionError", None),
+            getattr(anthropic, "InternalServerError", None),
+        )
+        if isinstance(cls, type)
+    )
+    return wrappable, retryable
+
+
+def _is_retryable_provider_error(
+    exc: BaseException,
+    retryable_types: tuple[type[BaseException], ...],
+) -> bool:
+    """Decide whether a provider error is transient enough to retry.
+
+    Retries the known transient SDK error classes, plus anything carrying a
+    429 or 5xx ``status_code`` (covers SDK versions whose status subclasses are
+    not enumerated above).
+    """
+    if retryable_types and isinstance(exc, retryable_types):
+        return True
+    status = getattr(exc, "status_code", None)
+    return isinstance(status, int) and (status == 429 or 500 <= status < 600)
 
 
 @dataclass
@@ -145,6 +199,14 @@ class AnthropicProvider:
     # max_tokens default for calls that don't specify one; Anthropic requires
     # the field on every Messages request.
     default_max_tokens: int = 1024
+    # Bounded retry for transient provider failures (rate limits, timeouts,
+    # 5xx). ``max_retries`` is the number of *additional* attempts after the
+    # first, so the default issues up to 3 calls. Backoff is exponential from
+    # ``retry_backoff_seconds``. ``sleep_func`` is injectable so tests run
+    # without real delays.
+    max_retries: int = 2
+    retry_backoff_seconds: float = 0.5
+    sleep_func: Callable[[float], None] = time.sleep
     _client: Any = field(default=None, init=False, repr=False)
 
     def _build_client(self) -> Any:
@@ -160,6 +222,33 @@ class AnthropicProvider:
         if self._client is None:
             self._client = self._build_client()
         return self._client
+
+    def _create_with_retry(self, client: Any, call_kwargs: dict[str, Any]) -> Any:
+        """Call ``client.messages.create`` with bounded retry and error wrapping.
+
+        Transient SDK errors (rate limits, timeouts, connection drops, 5xx) are
+        retried with exponential backoff up to ``max_retries`` times; any SDK
+        error that remains is re-raised as :class:`ProviderCallError` so callers
+        never see a raw ``anthropic.APIError``. Non-SDK exceptions (e.g. a bug
+        in our own code) are left to propagate unwrapped.
+        """
+        wrappable_types, retryable_types = _anthropic_error_types()
+        attempts = self.max_retries + 1
+        for attempt in range(attempts):
+            try:
+                return client.messages.create(**call_kwargs)
+            except wrappable_types as exc:
+                is_last = attempt + 1 >= attempts
+                if not is_last and _is_retryable_provider_error(exc, retryable_types):
+                    self.sleep_func(self.retry_backoff_seconds * (2**attempt))
+                    continue
+                raise ProviderCallError(
+                    f"anthropic completion failed after {attempt + 1} attempt(s): "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+        # Unreachable: the loop either returns on success or raises on the final
+        # attempt, but keep an explicit guard so the method never returns None.
+        raise ProviderCallError("anthropic completion exhausted retries")  # pragma: no cover
 
     def complete(
         self,
@@ -179,7 +268,7 @@ class AnthropicProvider:
         }
         if timeout_seconds is not None:
             call_kwargs["timeout"] = timeout_seconds
-        message = client.messages.create(**call_kwargs)
+        message = self._create_with_retry(client, call_kwargs)
 
         # The SDK returns a list of content blocks; the common case is one
         # ``TextBlock`` whose ``.text`` is the model output. We concatenate

@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from lms.llm.exceptions import LLMError, ProviderCallError
 from lms.llm.providers import (
     AnthropicProvider,
     FakeProvider,
@@ -220,6 +221,132 @@ def test_anthropic_provider_concatenates_multiple_text_blocks() -> None:
         timeout_seconds=None,
     )
     assert response.text == "First block. Second block."
+
+
+# --- provider error wrapping + retry (issue #196) ---------------------------
+
+
+def _make_rate_limit_error() -> Exception:
+    """Construct a real ``anthropic.RateLimitError`` (429) for wrapping tests."""
+    import httpx
+    from anthropic import RateLimitError
+
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx.Response(429, request=request)
+    return RateLimitError("rate limited", response=response, body=None)
+
+
+def _make_bad_request_error() -> Exception:
+    """Construct a non-retryable ``anthropic.BadRequestError`` (400)."""
+    import httpx
+    from anthropic import BadRequestError
+
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx.Response(400, request=request)
+    return BadRequestError("bad request", response=response, body=None)
+
+
+class _ScriptedMessages:
+    """Records calls and raises/returns per a scripted sequence."""
+
+    def __init__(self, outcomes: list[Any]) -> None:
+        self._outcomes = outcomes
+        self.calls: list[dict[str, Any]] = []
+
+    def create(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        outcome = self._outcomes[min(len(self.calls) - 1, len(self._outcomes) - 1)]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+class _ScriptedClient:
+    def __init__(self, outcomes: list[Any]) -> None:
+        self.messages = _ScriptedMessages(outcomes)
+
+
+def test_rate_limit_wrapped() -> None:
+    """A ``RateLimitError`` from the SDK surfaces as ``ProviderCallError``.
+
+    The wrapper retries the transient error, then (after the bounded retries
+    are exhausted) re-raises a single ``LLMError`` subclass rather than letting
+    the raw ``anthropic.RateLimitError`` escape to the call site.
+    """
+    from anthropic import RateLimitError
+
+    client = _ScriptedClient([_make_rate_limit_error()])
+    provider = AnthropicProvider(
+        api_key="test-key",
+        client_factory=lambda _k: client,
+        max_retries=2,
+        sleep_func=lambda _s: None,  # no real backoff in tests
+    )
+
+    with pytest.raises(ProviderCallError) as excinfo:
+        provider.complete(
+            model="claude-haiku-4-5",
+            prompt="trigger a rate limit",
+            max_tokens=64,
+            timeout_seconds=None,
+        )
+
+    assert isinstance(excinfo.value, LLMError)
+    # The original SDK error is chained, not swallowed.
+    assert isinstance(excinfo.value.__cause__, RateLimitError)
+    # 1 initial attempt + 2 retries = 3 total calls.
+    assert len(client.messages.calls) == 3
+
+
+def test_retry_succeeds_after_transient_rate_limit() -> None:
+    """A transient rate limit that clears on retry yields a normal response."""
+    success = _StubMessage(
+        content=[_StubTextBlock(text="recovered")],
+        usage=_StubUsage(input_tokens=4, output_tokens=2),
+    )
+    client = _ScriptedClient([_make_rate_limit_error(), success])
+    sleeps: list[float] = []
+    provider = AnthropicProvider(
+        api_key="test-key",
+        client_factory=lambda _k: client,
+        max_retries=2,
+        retry_backoff_seconds=0.25,
+        sleep_func=sleeps.append,
+    )
+
+    response = provider.complete(
+        model="claude-haiku-4-5",
+        prompt="retry then succeed",
+        max_tokens=8,
+        timeout_seconds=None,
+    )
+
+    assert response.text == "recovered"
+    assert len(client.messages.calls) == 2
+    # Backed off exactly once, on the first (attempt 0) failure.
+    assert sleeps == [0.25]
+
+
+def test_non_retryable_error_is_wrapped_without_retry() -> None:
+    """A 400-class error is wrapped immediately — retrying it is pointless."""
+    client = _ScriptedClient([_make_bad_request_error()])
+    provider = AnthropicProvider(
+        api_key="test-key",
+        client_factory=lambda _k: client,
+        max_retries=2,
+        sleep_func=lambda _s: None,
+    )
+
+    with pytest.raises(ProviderCallError):
+        provider.complete(
+            model="claude-haiku-4-5",
+            prompt="bad request",
+            max_tokens=8,
+            timeout_seconds=None,
+        )
+
+    # No retry for a non-transient error: exactly one attempt.
+    assert len(client.messages.calls) == 1
 
 
 # --- build_default_providers ------------------------------------------------

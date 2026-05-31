@@ -1,5 +1,26 @@
 # Workloop State
 
+## 2026-05-31T~12:10Z - keepalive verified deliberate-break gate for PR #216 (#196)
+
+- Automation: keepalive lane (Claude Code), PR [#216](https://github.com/stranske/learning-management-system/pull/216).
+- All implementation tasks already committed in `8df45a4` (opener lane). This session confirms the remaining AC item: deliberate-break gate.
+- Break run: removed the `try/except wrappable_types` block from `_create_with_retry` in `providers.py`. `pytest tests/llm/test_anthropic_provider.py::test_rate_limit_wrapped` → **FAILED** with raw `anthropic.RateLimitError: rate limited` propagating from `providers.py:236`. Gate caught the regression correctly.
+- Restore run: reverted to the original try/except. `test_rate_limit_wrapped` → **PASSED**. `pytest tests/llm/ -q --no-cov` → 108 passed.
+- Evidence posted: PR [#216 comment](https://github.com/stranske/learning-management-system/pull/216#issuecomment-4586639235) captures both FAIL and PASS runs verbatim.
+- All acceptance criteria satisfied: `test_rate_limit_wrapped` wraps to `ProviderCallError`; `_estimate_cost(max_tokens=None)` projects 1024-token output (not 64); fallback rates on 3/15 micro-USD scale; substring-only citation rejected; `pytest tests/llm/ -q` → 108 passed.
+- Next action: closer/verifier owns merge disposition for PR #216.
+
+## 2026-05-31T~11:55Z - claude_code opener opened PR for #196 (LLM client hardening)
+
+- Automation: `pd-workloop-resume` (claude_code opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`; source issue [#196](https://github.com/stranske/learning-management-system/issues/196) (priority:normal, audit-2026-05-30).
+- Branch `claude/issue-196-llm-client-hardening` off origin/main `f486513`; worktree under `~/.codex/automations/pd-workloop-resume/worktrees/lms-196-llm-client-hardening`.
+- Selection: high tier fully disposed (Pension-Data#484/Trend#5343/#5344/IMI#470 scoped; IMI#469 already merged via PR #480 awaiting verifier). #196 was the oldest unlinked priority:normal candidate (#193→PR#213, #194→merged#214, #195→PR#215 all linked).
+- Implementation (`src/lms/llm/`): (1) `providers.py` `AnthropicProvider` now wraps `messages.create` in bounded exponential-backoff retry (`max_retries`/`retry_backoff_seconds`/injectable `sleep_func`) and re-raises SDK errors as new `ProviderCallError(LLMError)`; retry only for rate-limit/timeout/connection/5xx. (2) `budgets.py` `DailyBudgetTracker` made thread-safe with a `threading.Lock` and an atomic `reserve`/`commit`/`release` API (`BudgetReservation`); `preflight`/`record`/`spent_micro_usd` also locked. (3) `client.py` `complete` now reserves→calls→commits (releases on failure); `_estimate_cost` projects output from provider `default_max_tokens` (1024) when `max_tokens is None` and uses fallback rates (3,15) micro-USD instead of (1000,4000). (4) boundary-aware citation matching via new `interaction_policy.citation_present`, used by both `client.complete` source-constraint check and `flag_uncited_claims`.
+- Tests: extended `test_anthropic_provider.py` (named `test_rate_limit_wrapped` + retry-success + non-retryable-no-retry), `test_client_budget.py` (estimate-cost default_max_tokens + fallback scale, reserve/commit/release, concurrent-reservation race, failed-call refund), `test_source_constraints.py` (substring-only citation rejected), new `test_citation_enforcement.py` (client-level).
+- Validation: `pytest tests/llm/ -q --no-cov` -> 108 passed; ruff `check src/ tests/` clean; mypy `src/lms/llm/` clean (14 files). Deliberate-break gate: removed the `_create_with_retry` try/except -> `test_rate_limit_wrapped` FAILED with raw `anthropic.RateLimitError`; restored -> passes.
+- Next action: push branch, open ready-for-review PR closing #196 with labels agent:claude/agents:keepalive/autofix/priority:normal; hand to keepalive.
+
 ## 2026-05-31T11:10Z - codex opener opened PR #215 for #195 (importer robustness)
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
