@@ -810,12 +810,10 @@ def _as_int(value: object) -> int:
         return 0
     if isinstance(value, int):
         return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
+    if isinstance(value, float | str):
         try:
             return int(float(value))
-        except ValueError:
+        except (TypeError, ValueError):
             return 0
     return 0
 
