@@ -26,7 +26,12 @@ services:
       uv pip sync --system requirements.lock &&
       python -m pip install --no-deps -e .
     # Pre-deploy migration: runs once before the new instance accepts traffic.
-    preDeployCommand: alembic upgrade head
+    # We invoke alembic via ``python -m`` because Render's preDeploy shell does
+    # not have the project's ``$VIRTUAL_ENV/bin`` on ``PATH``, so a bare
+    # ``alembic`` invocation fails with ``alembic: command not found`` (exit
+    # 127). Going through the system Python keeps it portable across Render's
+    # build modes (uv-managed system Python vs. dedicated venv).
+    preDeployCommand: python -m alembic upgrade head
     startCommand: uvicorn lms.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeploy: true
