@@ -87,7 +87,9 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     auth = [Depends(require_authenticated_user)]
 
     if enable_local_identity_routes:
-        app.include_router(auth_router, dependencies=auth)
+        # Local identity bootstrap endpoints must stay reachable without the
+        # auth gate they are intended to initialize.
+        app.include_router(auth_router)
         app.include_router(learners_router, dependencies=auth)
 
     app.include_router(health_router)

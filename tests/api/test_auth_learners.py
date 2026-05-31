@@ -9,6 +9,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from lms.auth.login import require_authenticated_user
+from lms.auth.models import User
 from lms.db.base import Base
 from lms.db.session import get_session
 from lms.main import create_app
@@ -34,8 +36,12 @@ def test_create_user_and_learner_endpoints() -> None:
 
     app = create_app(enable_local_identity_routes=True)
     app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[require_authenticated_user] = lambda: User(
+        username="test-gate-user",
+        display_name="Test Gate User",
+        is_local=True,
+    )
     client = TestClient(app)
-
     try:
         user_response = client.post(
             "/auth/users",
@@ -152,6 +158,7 @@ def test_create_user_and_learner_endpoints() -> None:
         )
         assert draft_patch_response.status_code == 422
     finally:
+        client.close()
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
         engine.dispose()
