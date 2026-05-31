@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from lms import APP_NAME, __version__
 from lms.audit.models import AuditLog
 from lms.auth.models import User
+from lms.auth.repository import LOCAL_DEV_USERNAME
 from lms.capability.models import CapabilityEstimate, MaintenancePlan
 from lms.db.base import Base
 from lms.db.session import get_session
@@ -243,8 +244,15 @@ def _users_section(session: Session, local_identity: bool) -> str:
             )
             + "</section>"
         )
+    # Exclude the synthetic ``local-dev`` shortcut account. It is auto-provisioned
+    # by require_authenticated_user whenever auth is disabled (local dev / tests),
+    # never exists on a deployed instance, and is not a manageable identity — so
+    # surfacing it in the admin Users list would be misleading noise.
     users = session.scalars(
-        select(User).order_by(User.created_at.desc(), User.username).limit(100)
+        select(User)
+        .where(User.username != LOCAL_DEV_USERNAME)
+        .order_by(User.created_at.desc(), User.username)
+        .limit(100)
     ).all()
     return (
         '<section aria-labelledby="users-heading">'

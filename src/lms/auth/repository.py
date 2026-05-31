@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,6 +12,17 @@ from lms.auth.models import User
 from lms.auth.passwords import hash_password, needs_rehash, verify_password
 
 LOCAL_DEV_USERNAME = "local-dev"
+
+
+@lru_cache(maxsize=1)
+def _timing_equalizer_hash() -> str:
+    """Return a throwaway Argon2 hash used to equalize ``authenticate`` timing.
+
+    Verifying against this hash in the user-not-found branch makes that path
+    cost roughly the same as a real password check, so an attacker cannot use
+    response latency to tell which usernames exist. Computed once and cached.
+    """
+    return hash_password("timing-equalizer-not-a-real-credential")
 
 
 def create_local_user(
@@ -47,6 +60,12 @@ def authenticate(session: Session, *, username: str, password: str) -> User | No
     """
     user = get_user_by_username(session, username)
     if user is None:
+        # Defeat username enumeration: spend the same Argon2 verify cost as the
+        # found-user path before returning, so response latency does not leak
+        # whether the username exists. (verify_password short-circuits on an
+        # empty password, which the real-user path does too, so timing stays
+        # symmetric in that case as well.)
+        verify_password(_timing_equalizer_hash(), password)
         return None
     if not verify_password(user.password_hash, password):
         return None
