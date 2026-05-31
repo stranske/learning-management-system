@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from lms.cases.models import CaseStep
 from lms.cases.repository import (
@@ -266,6 +266,66 @@ def test_rescore_terminal_product_rejected(db_session: Session) -> None:
         )
 
     # The guard runs before any write, so no second EvidenceRecord/RubricScore appears.
+    evidence_records = list_evidence_records(
+        db_session, learner_id="learner-1", knowledge_node_id=node_id
+    )
+    assert len(evidence_records) == 1
+    scores = list(
+        db_session.scalars(select(RubricScore).where(RubricScore.learner_id == "learner-1"))
+    )
+    assert len(scores) == 1
+
+
+def test_rescore_stale_loaded_product_rejected(db_session: Session) -> None:
+    """The scoreability guard refreshes persisted state before scoring."""
+    node_id, rubric_id, case_id = _seed_case_with_rubric(db_session)
+    work_product = create_work_product(
+        db_session,
+        case_id=case_id,
+        learner_id="learner-1",
+        submission_type="memo",
+        rubric_id=rubric_id,
+        body="Recommend granting the exception.",
+    )
+    db_session.commit()
+
+    stale_session_factory = sessionmaker(
+        bind=db_session.get_bind(),
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
+    stale_session = stale_session_factory()
+    try:
+        stale_product = stale_session.get(type(work_product), work_product.id)
+        assert stale_product is not None
+        assert stale_product.status == "submitted"
+
+        score_work_product(
+            db_session,
+            work_product,
+            scorer_type="rubric-local",
+            criterion_scores=[{"criterion": "analysis", "points": 8, "max_points": 10}],
+            raw_score=8.0,
+            max_score=10.0,
+            transfer_distance="far",
+        )
+        db_session.commit()
+
+        assert stale_product.status == "submitted"
+        with pytest.raises(ValueError, match="not in a scoreable state"):
+            score_work_product(
+                stale_session,
+                stale_product,
+                scorer_type="rubric-local",
+                criterion_scores=[{"criterion": "analysis", "points": 9, "max_points": 10}],
+                raw_score=9.0,
+                max_score=10.0,
+                transfer_distance="far",
+            )
+    finally:
+        stale_session.close()
+
     evidence_records = list_evidence_records(
         db_session, learner_id="learner-1", knowledge_node_id=node_id
     )

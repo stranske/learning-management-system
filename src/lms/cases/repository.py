@@ -356,6 +356,15 @@ def score_work_product(
     only re-score path is an explicit ``revision-requested`` product, which
     supersedes its prior score and transfer evidence rather than orphaning them.
     """
+    persisted_work_product = session.scalar(
+        select(WorkProduct)
+        .where(WorkProduct.id == work_product.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if persisted_work_product is None:
+        raise ValueError("work product was not found")
+    work_product = persisted_work_product
     is_rescore = work_product.status == "revision-requested"
     if work_product.status not in SCOREABLE_WORK_PRODUCT_STATUSES and not is_rescore:
         raise ValueError("work product is not in a scoreable state")
