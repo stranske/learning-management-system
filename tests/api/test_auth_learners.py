@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
