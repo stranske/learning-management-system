@@ -79,6 +79,27 @@ def test_get_session_yields_request_scoped_session(monkeypatch: Any) -> None:
         engine.dispose()
 
 
+def test_get_session_rolls_back_uncommitted_work(monkeypatch: Any) -> None:
+    engine = make_engine("sqlite+pysqlite:///:memory:")
+    monkeypatch.setattr(db_session_module, "get_engine", lambda: engine)
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE scratch (id INTEGER PRIMARY KEY)"))
+
+        session_generator = get_session()
+        session = next(session_generator)
+        session.execute(text("INSERT INTO scratch (id) VALUES (1)"))
+        with suppress(StopIteration):
+            next(session_generator)
+
+        with engine.connect() as conn:
+            remaining = conn.execute(text("SELECT COUNT(*) FROM scratch")).scalar_one()
+            assert remaining == 0
+    finally:
+        engine.dispose()
+
+
 def test_db_session_fixture_is_usable(db_session: Session) -> None:
     result = db_session.execute(text("select 1")).scalar_one()
 

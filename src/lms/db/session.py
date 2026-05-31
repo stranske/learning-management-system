@@ -56,4 +56,9 @@ def get_session() -> Generator[Session, None, None]:
         session.rollback()
         raise
     finally:
+        # Explicitly rollback any still-open transaction so request handlers
+        # remain responsible for calling ``commit()`` when persistence is
+        # intended.
+        if session.in_transaction():
+            session.rollback()
         session.close()
