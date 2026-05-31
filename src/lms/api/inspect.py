@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from lms.analytics.calibration import calibration_for_learner
 from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
+from lms.graphs.models import KnowledgeNode
 from lms.mastery.service import mastery_estimates_for_learner
 from lms.scheduling.models import ReviewQueueItem, SchedulerDecision
 from lms.sources.models import SourceReference
@@ -31,10 +32,26 @@ def _scheduler_panel(
     learner_id: str,
     ownership_scope: str,
 ) -> dict[str, Any]:
+    scoped_node_exists = (
+        select(KnowledgeNode.id)
+        .where(
+            KnowledgeNode.id == ReviewQueueItem.knowledge_node_id,
+            KnowledgeNode.ownership_scope == ownership_scope,
+        )
+        .exists()
+    )
+    node_exists = (
+        select(KnowledgeNode.id)
+        .where(KnowledgeNode.id == ReviewQueueItem.knowledge_node_id)
+        .exists()
+    )
     queue_items = list(
         session.scalars(
             select(ReviewQueueItem)
-            .where(ReviewQueueItem.learner_id == learner_id)
+            .where(
+                ReviewQueueItem.learner_id == learner_id,
+                scoped_node_exists | ~node_exists,
+            )
             .order_by(
                 ReviewQueueItem.due_at.asc(),
                 ReviewQueueItem.priority.desc(),

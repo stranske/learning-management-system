@@ -18,6 +18,7 @@ import lms.scheduling.models  # noqa: F401
 import lms.sources.models  # noqa: F401
 from lms.db.base import Base
 from lms.db.session import get_session
+from lms.graphs.models import KnowledgeNode
 from lms.main import create_app
 from lms.scheduling.models import ReviewQueueItem, SchedulerDecision
 
@@ -131,3 +132,61 @@ def test_scheduler_panel_honors_ownership_scope_for_decisions() -> None:
     assert {decision["knowledge_node_id"] for decision in institutional_decisions} == {
         "node-institutional"
     }
+
+
+def test_scheduler_panel_honors_ownership_scope_for_events() -> None:
+    due_at = datetime(2026, 5, 31, 15, 0, tzinfo=UTC)
+    with _client() as (client, session):
+        session.add_all(
+            [
+                KnowledgeNode(
+                    id="node-personal",
+                    title="Personal Node",
+                    knowledge_type="factual",
+                    ownership_scope="personal",
+                ),
+                KnowledgeNode(
+                    id="node-institutional",
+                    title="Institutional Node",
+                    knowledge_type="procedural",
+                    ownership_scope="institutional",
+                ),
+                ReviewQueueItem(
+                    learner_id="learner-events-scope",
+                    knowledge_node_id="node-personal",
+                    reason_code="due-review",
+                    reason_explanation="Personal review due.",
+                    due_at=due_at,
+                    priority=0.9,
+                    status="pending",
+                    decision_log={"scope": "personal"},
+                ),
+                ReviewQueueItem(
+                    learner_id="learner-events-scope",
+                    knowledge_node_id="node-institutional",
+                    reason_code="remediation",
+                    reason_explanation="Institutional remediation due.",
+                    due_at=due_at,
+                    priority=0.8,
+                    status="pending",
+                    decision_log={"scope": "institutional"},
+                ),
+            ]
+        )
+        session.commit()
+
+        personal_response = client.get(
+            "/inspect/learners/learner-events-scope/overview",
+            params={"ownership_scope": "personal"},
+        )
+        institutional_response = client.get(
+            "/inspect/learners/learner-events-scope/overview",
+            params={"ownership_scope": "institutional"},
+        )
+
+    assert personal_response.status_code == 200
+    assert institutional_response.status_code == 200
+    personal_events = personal_response.json()["scheduler"]["events"]
+    institutional_events = institutional_response.json()["scheduler"]["events"]
+    assert {event["knowledge_node_id"] for event in personal_events} == {"node-personal"}
+    assert {event["knowledge_node_id"] for event in institutional_events} == {"node-institutional"}
