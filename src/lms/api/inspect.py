@@ -21,7 +21,7 @@ try:  # Prompt support is present after the prompt-provenance opener branch land
     from lms.prompts.models import Prompt, prompt_source_references
 except ImportError:  # pragma: no cover
     Prompt = None  # type: ignore[assignment,misc]
-    prompt_source_references = None  # type: ignore[assignment,misc]
+    prompt_source_references = None  # type: ignore[assignment]
 
 router = APIRouter(prefix="/inspect", tags=["inspect"])
 SessionDep = Annotated[Session, Depends(get_session)]
