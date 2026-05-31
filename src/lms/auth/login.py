@@ -146,6 +146,7 @@ def login_submit(
             ),
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
+    session.commit()
     request.session[SESSION_USER_ID_KEY] = user.id
     return RedirectResponse(url=next_path, status_code=status.HTTP_303_SEE_OTHER)
 

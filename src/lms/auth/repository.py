@@ -102,12 +102,14 @@ def get_or_create_local_dev_user(session: Session) -> User:
     if existing is not None:
         return existing
     try:
-        return create_local_user(
+        user = create_local_user(
             session,
             username=LOCAL_DEV_USERNAME,
             display_name="Local Development User",
             email="local-dev@example.invalid",
         )
+        session.commit()
+        return user
     except IntegrityError:
         session.rollback()
         existing = get_user_by_username(session, LOCAL_DEV_USERNAME)
