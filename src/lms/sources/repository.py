@@ -365,7 +365,9 @@ def _select_passage(text: str, passage_range: str | None) -> str:
         return text
     match = _LINE_RANGE_PATTERN.match(passage_range.strip())
     if match is None:
-        return text
+        raise ValueError(
+            "unparseable passage_range for markdown-file source; expected line range like 'L2-L5'"
+        )
     start = max(int(match.group("start")), 1)
     end = int(match.group("end") or start)
     if end < start:
