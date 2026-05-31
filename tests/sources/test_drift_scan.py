@@ -70,6 +70,32 @@ def test_missing_markdown_file_marks_reference_missing(
     assert reference.drift_status == "missing"
 
 
+def test_freetext_passage_range_not_false_stale(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Free-text markdown ranges use the same hash basis at create and scan time."""
+    note = tmp_path / "research.md"
+    note.write_text("# Heading\npassage body\nappendix\n", encoding="utf-8")
+    reference = create_source_reference(
+        db_session,
+        source_type="markdown-file",
+        stable_locator=str(note),
+        passage_range="Section 1",
+        content="passage body",
+        actor_id="user:alice",
+    )
+    db_session.commit()
+
+    summary = scan_source_references(db_session, actor_id="system:test")
+    db_session.commit()
+
+    assert summary.scanned == 1
+    assert summary.current == 1
+    assert summary.stale == 0
+    assert reference.drift_status == "current"
+
+
 def test_changed_internal_note_marks_reference_stale(db_session: Session) -> None:
     """A changed internal-note (re-derived via resolver) flips to stale + audits."""
     reference = create_source_reference(

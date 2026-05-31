@@ -208,15 +208,17 @@ def compute_source_hash_for_reference(
     base_path: str | Path | None = None,
 ) -> str:
     """Compute the hash for a reference from content or its locator."""
-    if content is not None:
-        return compute_source_hash(content, hash_algorithm=hash_algorithm)
     if source_type == "markdown-file":
+        if content is not None and _is_parseable_line_range(passage_range):
+            return compute_source_hash(content, hash_algorithm=hash_algorithm)
         return compute_source_hash(
             markdown_path=stable_locator,
             passage_range=passage_range,
             hash_algorithm=hash_algorithm,
             base_path=base_path,
         )
+    if content is not None:
+        return compute_source_hash(content, hash_algorithm=hash_algorithm)
     if source_type in ("internal-note", "url"):
         raise ValueError(f"{source_type!r} references require resolved content to compute a hash")
     raise ValueError("content or content_hash is required for non-file source references")
@@ -370,6 +372,10 @@ def _select_passage(text: str, passage_range: str | None) -> str:
         start, end = end, start
     lines = text.splitlines(keepends=True)
     return "".join(lines[start - 1 : end])
+
+
+def _is_parseable_line_range(passage_range: str | None) -> bool:
+    return bool(passage_range and _LINE_RANGE_PATTERN.match(passage_range.strip()))
 
 
 def _reference_summary(reference: SourceReference) -> Mapping[str, Any]:

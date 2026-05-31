@@ -1,5 +1,17 @@
 # Workloop State
 
+## 2026-05-31T12:12Z - codex opener materialized issue #197 free-text passage drift
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue: [#197](https://github.com/stranske/learning-management-system/issues/197) `Drift scan hashes the whole file for free-text passage ranges, producing false 'stale'`.
+- Branch: `codex/issue-197-freetext-passage-drift`.
+- Worktree: `/Users/teacher/.codex/automations/pd-workloop-resume/worktrees/lms-197-freetext-passage-drift`.
+- Selection context: raw opener cap was 4/5 after repairing LMS #215/#216 drain evidence; PAEM #1847 and Trend #5353 remained scoped terminal blockers. High-priority Inv-Man-Intake #469 already had merged PR #480 and was freshly scoped to its verifier/product decision blocker. LMS #197 was the next unlinked normal-priority implementation candidate.
+- Implementation: made `compute_source_hash_for_reference` treat free-text/unparseable `markdown-file` `passage_range` values consistently at create and scan time by hashing from the markdown locator, while preserving content-first hashing for parseable numeric line ranges. Added `tests/sources/test_drift_scan.py::test_freetext_passage_range_not_false_stale`.
+- Validation: named test passed with `--no-cov`; `pytest tests/sources/ -q --no-cov` -> 16 passed; `ruff check src/lms/sources/repository.py tests/sources/test_drift_scan.py` -> passed; `mypy src/lms/sources/repository.py` -> passed. Deliberate-break gate: temporarily restored content-first hashing and the named test failed with `stale=1`; fix restored and passing. Default coverage-enforced focused pytest runs passed tests but exited non-zero because the repo-wide 80% coverage threshold is not meaningful for the focused sources slice.
+- Next action: commit, push, open ready-for-review PR with `agent:codex`, `agents:keepalive`, and `autofix`; keepalive owns CI/check follow-up after PR creation.
+
 ## 2026-05-31T11:10Z - codex opener opened PR #215 for #195 (importer robustness)
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
