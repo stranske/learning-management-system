@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from lms.auth.models import utc_now
 from lms.feedback.models import MisconceptionPattern
 from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeNode
 from lms.scheduling.models import (
@@ -87,6 +88,43 @@ def count_review_queue_for_learner(
     if status is not None:
         statement = statement.where(ReviewQueueItem.status == status)
     return int(session.scalar(statement) or 0)
+
+
+def complete_review_queue_item(
+    session: Session,
+    *,
+    review_queue_item_id: str,
+    actor_id: str | None = None,
+) -> ReviewQueueItem | None:
+    """Mark a queue item and its durable schedule completed."""
+    item = session.get(ReviewQueueItem, review_queue_item_id)
+    if item is None:
+        return None
+
+    completed_at = utc_now()
+    log = dict(item.decision_log or {})
+    events = list(log.get("events", []))
+    events.append(
+        {
+            "rule": "review-queue-complete",
+            "at": completed_at.isoformat(),
+            "actor_id": actor_id,
+            "previous_status": item.status,
+        }
+    )
+    log["events"] = events
+    item.status = "completed"
+    item.updated_at = completed_at
+    item.decision_log = log
+
+    schedules = session.scalars(
+        select(ReviewSchedule).where(ReviewSchedule.review_queue_item_id == item.id)
+    )
+    for schedule in schedules:
+        schedule.schedule_state = "completed"
+        schedule.updated_at = completed_at
+    session.flush()
+    return item
 
 
 def get_or_create_review_policy(

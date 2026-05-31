@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
 from lms.scheduling.repository import (
+    complete_review_queue_item,
     count_review_queue_for_learner,
     create_remediation_trigger,
     list_remediation_triggers,
@@ -96,6 +97,30 @@ def list_review_queue_route(
         ),
         items=items,
     )
+
+
+@router.post(
+    "/review-queue/{review_queue_item_id}/complete",
+    response_model=ReviewQueueItemRead,
+)
+def complete_review_queue_item_route(
+    review_queue_item_id: str,
+    session: SessionDep,
+) -> ReviewQueueItemRead:
+    """Mark a due review satisfied so future scheduling can advance the ramp."""
+    item = complete_review_queue_item(
+        session,
+        review_queue_item_id=review_queue_item_id,
+        actor_id="api:review-queue-complete",
+    )
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Review queue item not found.",
+        )
+    session.commit()
+    session.refresh(item)
+    return ReviewQueueItemRead.model_validate(item)
 
 
 @router.post(

@@ -16,6 +16,7 @@ from lms.feedback.repository import (
     get_rubric,
 )
 from lms.prompts.models import Prompt
+from lms.scheduling.service import schedule_from_attempt
 
 
 class RubricScoringError(ValueError):
@@ -93,6 +94,7 @@ def score_attempt_with_rubric(
         },
         attempt_context=attempt.response_metadata,
     )
+    schedule_from_attempt(session, attempt=attempt, evidence_record=evidence)
 
     feedback_record_id: str | None = None
     if normalized_score < feedback_threshold:
