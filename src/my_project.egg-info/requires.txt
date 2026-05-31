@@ -1,7 +1,0 @@
-
-[dev]
-pytest==9.0.3
-pytest-cov==7.1.0
-ruff>=0.15.13
-mypy>=2.1.0
-black==26.3.1

@@ -172,7 +172,7 @@ Useful endpoints once the server is running:
 - `GET /docs` — interactive Swagger UI for the current router tree.
 - `GET /openapi.json` — OpenAPI schema (also covered by `tests/api/test_health.py`).
 
-Run the test suite with `uv run pytest`. The skeleton modules under `src/lms/` (`api`, `auth`, `curriculum`, `evidence`, `feedback`, `graphs`, `llm`, `mastery`, `scheduling`, `analytics`) are intentionally empty placeholders so later milestones can attach domain models, routers, and services without reshaping the package layout.
+Run the test suite with `uv run pytest`. The `src/lms/` package now contains real learning-system surfaces rather than bootstrap placeholders: mounted FastAPI routers live in packages such as `auth`, `evidence`, `feedback`, `graphs`, `llm`, `mastery`, and `scheduling`; persistence-backed domains include SQLAlchemy models, repositories, schemas, services, and migrations under `alembic/`; and support packages such as `analytics` provide tested domain logic without being mounted as standalone routers. The `llm` study-coach layer defaults to a deterministic built-in `FakeProvider`; supplying an Anthropic API key registers and selects the `AnthropicProvider` adapter (`src/lms/llm/providers.py`).
 
 ## Deployment
 
