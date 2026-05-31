@@ -186,3 +186,36 @@ def test_calibration_endpoint_surfaces_overconfidence() -> None:
     assert payload["learner_id"] == "learner-api"
     assert payload["overconfident"] is True
     assert any(bucket["confidence_rating"] == 5 for bucket in payload["buckets"])
+
+
+def test_calibration_endpoint_filters_by_knowledge_node() -> None:
+    """The Inspect calibration endpoint forwards knowledge_node_id filtering."""
+    with _client() as (client, session):
+        for index in range(5):
+            create_evidence_record(
+                session,
+                learner_id="learner-api-filter",
+                knowledge_node_id="node-A",
+                confidence_rating=5,
+                correctness=index == 0,
+            )
+        for _ in range(5):
+            create_evidence_record(
+                session,
+                learner_id="learner-api-filter",
+                knowledge_node_id="node-B",
+                confidence_rating=5,
+                correctness=True,
+            )
+        session.commit()
+
+        response = client.get(
+            "/inspect/learners/learner-api-filter/calibration",
+            params={"knowledge_node_id": "node-A"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["knowledge_node_id"] == "node-A"
+    assert payload["sample_size"] == 5
+    assert payload["overconfident"] is True

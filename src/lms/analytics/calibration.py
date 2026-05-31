@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from statistics import median
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from lms.evidence.models import EvidenceRecord
@@ -100,10 +100,17 @@ def calibration_for_learner(
     Records without a ``confidence_rating`` or without any accuracy signal are
     ignored; they cannot inform calibration.
     """
-    query = select(EvidenceRecord).where(EvidenceRecord.learner_id == learner_id)
+    query = select(EvidenceRecord).where(
+        EvidenceRecord.learner_id == learner_id,
+        EvidenceRecord.confidence_rating.is_not(None),
+        or_(
+            EvidenceRecord.correctness.is_not(None),
+            EvidenceRecord.normalized_score.is_not(None),
+        ),
+    )
     if knowledge_node_id is not None:
         query = query.where(EvidenceRecord.knowledge_node_id == knowledge_node_id)
-    records = list(session.scalars(query.order_by(EvidenceRecord.observed_at)))
+    records = list(session.scalars(query))
 
     accuracies: dict[int, list[float]] = defaultdict(list)
     response_times: dict[int, list[int]] = defaultdict(list)
