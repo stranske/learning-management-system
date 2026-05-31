@@ -28,12 +28,9 @@ def citation_present(text: str, citation: str) -> bool:
     """
     if not citation:
         return False
-    pattern = (
-        rf"(?<![{_CITATION_ID_CHARS}])"
-        + re.escape(citation)
-        + rf"(?![{_CITATION_ID_CHARS}])"
-    )
+    pattern = rf"(?<![{_CITATION_ID_CHARS}])" + re.escape(citation) + rf"(?![{_CITATION_ID_CHARS}])"
     return re.search(pattern, text) is not None
+
 
 ANSWER_SEEKING_TERMS = (
     "answer",

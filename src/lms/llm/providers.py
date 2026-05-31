@@ -19,7 +19,9 @@ from lms.llm.exceptions import ProviderCallError
 
 
 @lru_cache(maxsize=1)
-def _anthropic_error_types() -> tuple[tuple[type[BaseException], ...], tuple[type[BaseException], ...]]:
+def _anthropic_error_types() -> (
+    tuple[tuple[type[BaseException], ...], tuple[type[BaseException], ...]]
+):
     """Resolve ``(wrappable, retryable)`` anthropic SDK error classes.
 
     Imported lazily and cached so the module still loads when ``anthropic`` is
