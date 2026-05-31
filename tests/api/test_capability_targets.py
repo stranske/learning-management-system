@@ -1,25 +1,25 @@
-"""Tests for capability target API routes."""
+"""Tests for capability target API route handlers."""
 
 from __future__ import annotations
 
 from typing import Any, cast
 
-from fastapi.testclient import TestClient
+import pytest
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from lms.auth.models import User
+from lms.capability.api import (
+    archive_capability_target_route,
+    create_capability_target_route,
+    list_capability_targets_route,
+    update_capability_target_route,
+)
 from lms.capability.repository import create_capability_target
+from lms.capability.schemas import CapabilityTargetCreate, CapabilityTargetUpdate
 from lms.competencies.repository import create_competency
-from lms.db.session import get_session
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.repository import create_learner_for_user, create_learning_goal
-from lms.main import create_app
-
-
-def _client(db_session: Session) -> TestClient:
-    app = create_app(enable_local_identity_routes=True)
-    app.dependency_overrides[get_session] = lambda: db_session
-    return TestClient(app)
 
 
 def _fixtures(db_session: Session) -> dict[str, str]:
@@ -70,60 +70,44 @@ def _fixtures(db_session: Session) -> dict[str, str]:
 def test_create_personal_capability_target_with_nodes_and_competencies(
     db_session: Session,
 ) -> None:
-    """The API creates and lists personal capability targets."""
-    client = _client(db_session)
+    """The route helper creates and lists personal capability targets."""
     ids = _fixtures(db_session)
 
-    response = client.post(
-        "/capability/targets",
-        json={
-            "learner_id": ids["learner_id"],
-            "title": "Reach evidence-backed judgment",
-            "learning_goal_id": ids["goal_id"],
-            "target_node_ids": [ids["node_id"]],
-            "target_competency_ids": [ids["competency_id"]],
-            "required_evidence_types": ["rubric-score"],
-            "confidence_threshold": 0.82,
-        },
+    payload = CapabilityTargetCreate(
+        learner_id=ids["learner_id"],
+        title="Reach evidence-backed judgment",
+        learning_goal_id=ids["goal_id"],
+        target_node_ids=[ids["node_id"]],
+        target_competency_ids=[ids["competency_id"]],
+        required_evidence_types=["rubric-score"],
+        confidence_threshold=0.82,
     )
+    created = cast(dict[str, Any], create_capability_target_route(payload=payload, session=db_session))
 
-    assert response.status_code == 201, response.text
-    payload = cast(dict[str, Any], response.json())
-    assert payload["ownership_scope"] == "personal"
-    assert payload["learner_id"] == ids["learner_id"]
-    assert payload["target_node_ids"] == [ids["node_id"]]
-    assert payload["target_competency_ids"] == [ids["competency_id"]]
+    assert created["ownership_scope"] == "personal"
+    assert created["learner_id"] == ids["learner_id"]
+    assert created["target_node_ids"] == [ids["node_id"]]
+    assert created["target_competency_ids"] == [ids["competency_id"]]
 
-    list_response = client.get(
-        "/capability/targets",
-        params={"learner_id": ids["learner_id"]},
-    )
-    assert list_response.status_code == 200
-    assert [item["id"] for item in list_response.json()] == [payload["id"]]
+    listed = list_capability_targets_route(session=db_session, learner_id=ids["learner_id"])
+    assert [item["id"] for item in listed] == [created["id"]]
 
 
 def test_capability_target_rejects_institutional_scope_request(db_session: Session) -> None:
-    """Institutional target creation is rejected by the API contract."""
-    client = _client(db_session)
+    """Institutional target creation is rejected by schema validation."""
     ids = _fixtures(db_session)
 
-    response = client.post(
-        "/capability/targets",
-        json={
-            "learner_id": ids["learner_id"],
-            "title": "Institutional target",
-            "ownership_scope": "institutional",
-            "target_node_ids": [ids["node_id"]],
-        },
-    )
-
-    assert response.status_code == 422
-    assert "personal" in response.text
+    with pytest.raises(ValidationError):
+        CapabilityTargetCreate(
+            learner_id=ids["learner_id"],
+            title="Institutional target",
+            ownership_scope="institutional",
+            target_node_ids=[ids["node_id"]],
+        )
 
 
 def test_patch_and_archive_capability_target(db_session: Session) -> None:
-    """The API updates and archives target records."""
-    client = _client(db_session)
+    """The route helpers update and archive target records."""
     ids = _fixtures(db_session)
     target = create_capability_target(
         db_session,
@@ -133,13 +117,15 @@ def test_patch_and_archive_capability_target(db_session: Session) -> None:
     )
     db_session.commit()
 
-    patch_response = client.patch(
-        f"/capability/targets/{target.id}",
-        json={"title": "Revised target", "required_evidence_types": ["attempt"]},
+    patch_response = update_capability_target_route(
+        target_id=target.id,
+        payload=CapabilityTargetUpdate(
+            title="Revised target",
+            required_evidence_types=["attempt"],
+        ),
+        session=db_session,
     )
-    assert patch_response.status_code == 200, patch_response.text
-    assert patch_response.json()["title"] == "Revised target"
+    assert patch_response["title"] == "Revised target"
 
-    archive_response = client.post(f"/capability/targets/{target.id}/archive")
-    assert archive_response.status_code == 200
-    assert archive_response.json()["status"] == "archived"
+    archive_response = archive_capability_target_route(target_id=target.id, session=db_session)
+    assert archive_response["status"] == "archived"
