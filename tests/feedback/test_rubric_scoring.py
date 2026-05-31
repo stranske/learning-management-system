@@ -149,7 +149,7 @@ def test_rubric_score_requires_every_active_criterion(db_session: Session) -> No
 
 
 def test_points_out_of_range_rejected(db_session: Session) -> None:
-    """Points above a criterion's max_points raise (guards scoring.py:181)."""
+    """Points above a criterion's max_points raise (guards the max_points range check)."""
     attempt_id = _attempt(db_session)
     rubric_id, criterion_ids = _rubric(db_session)
 
@@ -168,7 +168,7 @@ def test_points_out_of_range_rejected(db_session: Session) -> None:
 
 
 def test_negative_points_rejected(db_session: Session) -> None:
-    """Negative points raise rather than being recorded (guards scoring.py:181)."""
+    """Negative points raise rather than being recorded (guards the non-negative points check)."""
     attempt_id = _attempt(db_session)
     rubric_id, criterion_ids = _rubric(db_session)
 

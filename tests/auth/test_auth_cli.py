@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 import lms.__main__ as lms_main
-from lms.auth.models import User  # noqa: F401  # register Base.metadata for db_session
+import lms.auth.models  # noqa: F401  # register Base.metadata for db_session
 from lms.auth.repository import create_local_user, get_user_by_username
 
 
