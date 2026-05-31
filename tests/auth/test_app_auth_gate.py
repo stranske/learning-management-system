@@ -18,9 +18,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import lms.audit.models  # noqa: F401  # register Base.metadata
+from lms.db.base import Base
 from lms.db.session import get_session
 from lms.main import create_app
 from lms.settings import Settings, get_settings
+
+pytestmark = pytest.mark.slow
 
 
 @pytest.fixture
@@ -36,6 +40,7 @@ def auth_required_app_client() -> Generator[TestClient, None, None]:
         poolclass=StaticPool,
         future=True,
     )
+    Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
     def override_get_session() -> Generator[Session, None, None]:
@@ -51,12 +56,12 @@ def auth_required_app_client() -> Generator[TestClient, None, None]:
     )
     app.dependency_overrides[get_session] = override_get_session
 
-    client = TestClient(app)
     try:
-        yield client
+        with TestClient(app) as client:
+            yield client
     finally:
-        client.close()
         app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
         engine.dispose()
 
 
