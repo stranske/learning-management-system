@@ -22,11 +22,18 @@ Design notes:
 from __future__ import annotations
 
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import Argon2Error, InvalidHashError, VerifyMismatchError
 
 # A single shared hasher instance. argon2-cffi documents this as thread-safe;
 # reusing it avoids constructing a new instance on every login attempt.
 _HASHER = PasswordHasher()
+MIN_PASSWORD_LENGTH = 12
+
+
+def validate_password_strength(plaintext: str) -> None:
+    """Raise when ``plaintext`` is not strong enough for local auth."""
+    if len(plaintext) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"password must be at least {MIN_PASSWORD_LENGTH} characters long")
 
 
 def hash_password(plaintext: str) -> str:
@@ -40,6 +47,7 @@ def hash_password(plaintext: str) -> str:
         raise TypeError("hash_password expects a str password")
     if not plaintext:
         raise ValueError("hash_password expects a non-empty password")
+    validate_password_strength(plaintext)
     return _HASHER.hash(plaintext)
 
 
@@ -49,16 +57,13 @@ def verify_password(stored_hash: str | None, plaintext: str) -> bool:
     Returns False when:
       - ``stored_hash`` is None (e.g. local-dev user without a password set)
       - ``plaintext`` is empty
-      - argon2-cffi raises :class:`VerifyMismatchError`
-
-    Any other argon2 exception (invalid hash format, etc.) is allowed to
-    propagate — those represent programming errors, not failed logins.
+      - argon2-cffi raises for a mismatch or malformed stored hash
     """
     if stored_hash is None or not plaintext:
         return False
     try:
         return _HASHER.verify(stored_hash, plaintext)
-    except VerifyMismatchError:
+    except (VerifyMismatchError, InvalidHashError, Argon2Error):
         return False
 
 

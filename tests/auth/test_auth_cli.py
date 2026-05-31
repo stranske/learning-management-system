@@ -52,7 +52,7 @@ def test_create_user_happy_path_prints_id(
         "--display-name",
         "Ada Lovelace",
         "--password",
-        "correct horse",
+        "correct horse staple",
     )
 
     out = capsys.readouterr().out.strip()
@@ -76,7 +76,7 @@ def test_create_user_duplicate_exits_nonzero(
         patched_session,
         username="ada",
         display_name="Ada Lovelace",
-        password="first-pass",
+        password="first-passphrase",
     )
     patched_session.flush()
 
@@ -90,7 +90,7 @@ def test_create_user_duplicate_exits_nonzero(
             "--display-name",
             "Ada Again",
             "--password",
-            "second-pass",
+            "second-passphrase",
         )
     # A string SystemExit code is non-zero (printed to stderr, exit status 1).
     assert excinfo.value.code == "user already exists: ada"
@@ -109,7 +109,7 @@ def test_set_password_for_missing_user_errors(
             "--username",
             "ghost",
             "--password",
-            "whatever",
+            "whatever-passphrase",
         )
     assert excinfo.value.code == "user not found: ghost"
 
@@ -124,7 +124,7 @@ def test_set_password_updates_existing_user(
         patched_session,
         username="ada",
         display_name="Ada Lovelace",
-        password="old-pass",
+        password="old-passphrase",
     )
     patched_session.flush()
     original_hash = user.password_hash
@@ -136,7 +136,7 @@ def test_set_password_updates_existing_user(
         "--username",
         "ada",
         "--password",
-        "brand-new-pass",
+        "brand-new-passphrase",
     )
 
     out = capsys.readouterr().out.strip()
@@ -208,6 +208,25 @@ def test_password_omitted_is_required(
     assert "password is required" in str(excinfo.value.code)
 
 
+def test_create_user_short_password_exits_nonzero(
+    patched_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            monkeypatch,
+            "auth",
+            "create-user",
+            "--username",
+            "ada",
+            "--display-name",
+            "Ada Lovelace",
+            "--password",
+            "a",
+        )
+    assert "at least 12 characters" in str(excinfo.value.code)
+
+
 def test_create_user_interactive_prompt_success(
     patched_session: Session,
     monkeypatch: pytest.MonkeyPatch,
@@ -215,7 +234,7 @@ def test_create_user_interactive_prompt_success(
 ) -> None:
     """create-user with a matching interactive prompt creates the user (covers _resolve_password
     return-first branch)."""
-    monkeypatch.setattr("getpass.getpass", lambda prompt="": "prompted-pass")
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": "prompted-passphrase")
 
     _run(
         monkeypatch,
@@ -234,4 +253,4 @@ def test_create_user_interactive_prompt_success(
     user = get_user_by_username(patched_session, "ada")
     assert user is not None
     assert user.password_hash is not None
-    assert "prompted-pass" not in user.password_hash
+    assert "prompted-passphrase" not in user.password_hash

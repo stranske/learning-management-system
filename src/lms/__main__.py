@@ -591,13 +591,16 @@ def _dispatch_auth(args: argparse.Namespace, *, parser: argparse.ArgumentParser)
         with session_scope() as session:
             if get_user_by_username(session, args.username) is not None:
                 raise SystemExit(f"user already exists: {args.username}")
-            user = create_local_user(
-                session,
-                username=args.username,
-                display_name=args.display_name,
-                email=args.email,
-                password=password,
-            )
+            try:
+                user = create_local_user(
+                    session,
+                    username=args.username,
+                    display_name=args.display_name,
+                    email=args.email,
+                    password=password,
+                )
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
             print(f"created user: id={user.id} username={user.username}")
         return
     if args.auth_command == "set-password":
@@ -606,7 +609,10 @@ def _dispatch_auth(args: argparse.Namespace, *, parser: argparse.ArgumentParser)
             found_user = get_user_by_username(session, args.username)
             if found_user is None:
                 raise SystemExit(f"user not found: {args.username}")
-            set_password(session, found_user, password=password)
+            try:
+                set_password(session, found_user, password=password)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
             print(f"password updated: username={found_user.username}")
         return
     parser.error("auth requires a subcommand")

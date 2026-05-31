@@ -94,7 +94,7 @@ def _render_login_page(*, next_path: str, error: str | None = None) -> str:
           </label>
           <label for="password">Password
             <input type="password" id="password" name="password"
-                   required autocomplete="current-password">
+                   required maxlength="256" autocomplete="current-password">
           </label>
           <button type="submit">Sign in</button>
         </form>
@@ -126,7 +126,7 @@ def login_submit(
     request: Request,
     session: SessionDep,
     username: Annotated[str, Form(...)],
-    password: Annotated[str, Form(...)],
+    password: Annotated[str, Form(max_length=256)],
     next: Annotated[str | None, Form()] = None,
 ) -> Response:
     """Validate credentials and start a session.
