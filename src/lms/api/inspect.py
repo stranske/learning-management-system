@@ -54,9 +54,10 @@ def _scheduler_panel(
                 scoped_node_exists | ~node_exists,
             )
             .order_by(
+                ReviewQueueItem.created_at.desc(),
                 ReviewQueueItem.due_at.asc(),
                 ReviewQueueItem.priority.desc(),
-                ReviewQueueItem.created_at.desc(),
+                ReviewQueueItem.id.desc(),
             )
             .limit(10)
         )

@@ -82,6 +82,56 @@ def test_scheduler_panel_returns_real_data() -> None:
     assert scheduler["events"][0]["decision_log"]["rule_id"] == "spacing.due"
 
 
+def test_scheduler_panel_surfaces_recent_items_over_stale_history() -> None:
+    """A learner with >10 older completed items must still see a recent pending review.
+
+    The panel is a recent-activity debugging view (limit 10). Ordering by recency
+    (``created_at`` desc) keeps current pending reviews from being crowded out by
+    a backlog of older completed/skipped items with earlier ``due_at`` values.
+    """
+    old_created = datetime(2026, 5, 1, 9, 0, tzinfo=UTC)
+    old_due = datetime(2026, 5, 1, 9, 0, tzinfo=UTC)
+    recent_created = datetime(2026, 5, 31, 15, 0, tzinfo=UTC)
+    recent_due = datetime(2026, 6, 15, 9, 0, tzinfo=UTC)
+    with _client() as (client, session):
+        for index in range(12):
+            session.add(
+                ReviewQueueItem(
+                    learner_id="learner-backlog",
+                    knowledge_node_id=f"node-old-{index}",
+                    reason_code="due-review",
+                    reason_explanation="Completed earlier.",
+                    due_at=old_due,
+                    priority=0.5,
+                    status="completed",
+                    created_at=old_created,
+                    decision_log={"rule_id": "spacing.due"},
+                )
+            )
+        session.add(
+            ReviewQueueItem(
+                learner_id="learner-backlog",
+                knowledge_node_id="node-fresh",
+                reason_code="due-review",
+                reason_explanation="Newly scheduled review.",
+                due_at=recent_due,
+                priority=0.9,
+                status="pending",
+                created_at=recent_created,
+                decision_log={"rule_id": "spacing.due"},
+            )
+        )
+        session.commit()
+
+        response = client.get("/inspect/learners/learner-backlog/overview")
+
+    assert response.status_code == 200
+    events = response.json()["scheduler"]["events"]
+    assert len(events) == 10
+    node_ids = {event["knowledge_node_id"] for event in events}
+    assert "node-fresh" in node_ids
+
+
 def test_scheduler_panel_honors_ownership_scope_for_decisions() -> None:
     with _client() as (client, session):
         session.add_all(
