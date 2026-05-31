@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Generator
 from typing import Any, cast
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from lms.auth.login import require_authenticated_user
