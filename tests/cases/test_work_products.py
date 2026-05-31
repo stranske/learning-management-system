@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from lms.cases.models import CaseStep
 from lms.cases.repository import (
@@ -14,6 +14,7 @@ from lms.cases.repository import (
     score_work_product,
 )
 from lms.evidence.repository import list_evidence_records
+from lms.feedback.models import RubricScore
 from lms.feedback.repository import (
     create_feedback_action,
     create_revision_request,
@@ -226,3 +227,170 @@ def test_revision_request_create_syncs_work_product_link(db_session: Session) ->
     assert request.prompt_id == case_id
     assert work_product.revision_request_id == request.id
     assert work_product.status == "revision-requested"
+
+
+def test_rescore_terminal_product_rejected(db_session: Session) -> None:
+    """A second score on a terminal (``scored``) product is rejected with no new evidence."""
+    node_id, rubric_id, case_id = _seed_case_with_rubric(db_session)
+    work_product = create_work_product(
+        db_session,
+        case_id=case_id,
+        learner_id="learner-1",
+        submission_type="memo",
+        rubric_id=rubric_id,
+        body="Recommend granting the exception.",
+    )
+    db_session.commit()
+
+    score_work_product(
+        db_session,
+        work_product,
+        scorer_type="rubric-local",
+        criterion_scores=[{"criterion": "analysis", "points": 8, "max_points": 10}],
+        raw_score=8.0,
+        max_score=10.0,
+        transfer_distance="far",
+    )
+    db_session.commit()
+    assert work_product.status == "scored"
+
+    with pytest.raises(ValueError, match="not in a scoreable state"):
+        score_work_product(
+            db_session,
+            work_product,
+            scorer_type="rubric-local",
+            criterion_scores=[{"criterion": "analysis", "points": 9, "max_points": 10}],
+            raw_score=9.0,
+            max_score=10.0,
+            transfer_distance="far",
+        )
+
+    # The guard runs before any write, so no second EvidenceRecord/RubricScore appears.
+    evidence_records = list_evidence_records(
+        db_session, learner_id="learner-1", knowledge_node_id=node_id
+    )
+    assert len(evidence_records) == 1
+    scores = list(
+        db_session.scalars(select(RubricScore).where(RubricScore.learner_id == "learner-1"))
+    )
+    assert len(scores) == 1
+
+
+def test_rescore_stale_loaded_product_rejected(db_session: Session) -> None:
+    """The scoreability guard refreshes persisted state before scoring."""
+    node_id, rubric_id, case_id = _seed_case_with_rubric(db_session)
+    work_product = create_work_product(
+        db_session,
+        case_id=case_id,
+        learner_id="learner-1",
+        submission_type="memo",
+        rubric_id=rubric_id,
+        body="Recommend granting the exception.",
+    )
+    db_session.commit()
+
+    stale_session_factory = sessionmaker(
+        bind=db_session.get_bind(),
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
+    stale_session = stale_session_factory()
+    try:
+        stale_product = stale_session.get(type(work_product), work_product.id)
+        assert stale_product is not None
+        assert stale_product.status == "submitted"
+
+        score_work_product(
+            db_session,
+            work_product,
+            scorer_type="rubric-local",
+            criterion_scores=[{"criterion": "analysis", "points": 8, "max_points": 10}],
+            raw_score=8.0,
+            max_score=10.0,
+            transfer_distance="far",
+        )
+        db_session.commit()
+
+        assert stale_product.status == "submitted"
+        with pytest.raises(ValueError, match="not in a scoreable state"):
+            score_work_product(
+                stale_session,
+                stale_product,
+                scorer_type="rubric-local",
+                criterion_scores=[{"criterion": "analysis", "points": 9, "max_points": 10}],
+                raw_score=9.0,
+                max_score=10.0,
+                transfer_distance="far",
+            )
+    finally:
+        stale_session.close()
+
+    evidence_records = list_evidence_records(
+        db_session, learner_id="learner-1", knowledge_node_id=node_id
+    )
+    assert len(evidence_records) == 1
+    scores = list(
+        db_session.scalars(select(RubricScore).where(RubricScore.learner_id == "learner-1"))
+    )
+    assert len(scores) == 1
+
+
+def test_revision_rescore_supersedes_prior_score(db_session: Session) -> None:
+    """An allowed revision re-score leaves exactly one RubricScore + transfer evidence."""
+    node_id, rubric_id, case_id = _seed_case_with_rubric(db_session)
+    work_product = create_work_product(
+        db_session,
+        case_id=case_id,
+        learner_id="learner-1",
+        submission_type="memo",
+        rubric_id=rubric_id,
+        body="Initial recommendation that needs revision.",
+    )
+    db_session.commit()
+
+    first = score_work_product(
+        db_session,
+        work_product,
+        scorer_type="rubric-local",
+        criterion_scores=[{"criterion": "analysis", "points": 6, "max_points": 10}],
+        raw_score=6.0,
+        max_score=10.0,
+        transfer_distance="far",
+    )
+    db_session.commit()
+    first_id = first.id
+    first_evidence_id = first.evidence_record_id
+    assert work_product.status == "scored"
+
+    request_work_product_revision(db_session, work_product)
+    db_session.commit()
+    assert work_product.status == "revision-requested"
+
+    second = score_work_product(
+        db_session,
+        work_product,
+        scorer_type="rubric-local",
+        criterion_scores=[{"criterion": "analysis", "points": 9, "max_points": 10}],
+        raw_score=9.0,
+        max_score=10.0,
+        transfer_distance="far",
+    )
+    db_session.commit()
+
+    assert work_product.status == "scored"
+    assert work_product.rubric_score_id == second.id
+    assert second.id != first_id
+
+    evidence_records = list_evidence_records(
+        db_session, learner_id="learner-1", knowledge_node_id=node_id
+    )
+    assert len(evidence_records) == 1
+    assert evidence_records[0].id == second.evidence_record_id
+    assert evidence_records[0].id != first_evidence_id
+
+    scores = list(
+        db_session.scalars(select(RubricScore).where(RubricScore.learner_id == "learner-1"))
+    )
+    assert len(scores) == 1
+    assert scores[0].id == second.id
