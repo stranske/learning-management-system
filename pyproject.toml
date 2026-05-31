@@ -93,6 +93,9 @@ where = ["src"]
 testpaths = ["tests"]
 addopts = "-v --cov=lms --cov=my_project --cov-report=term-missing --cov-report=xml"
 pythonpath = ["src"]
+markers = [
+    "slow: integration-style tests excluded from default keepalive verification lanes",
+]
 
 [tool.coverage.run]
 source = ["lms", "my_project"]
