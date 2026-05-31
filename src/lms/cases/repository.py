@@ -23,6 +23,13 @@ from lms.feedback.models import RevisionRequest, Rubric, RubricScore
 from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeNode
 from lms.sources.models import SourceReference
 
+# A work product may only be scored from a not-yet-terminal state. A
+# ``revision-requested`` product is the one legitimate re-score path; scoring it
+# supersedes (deletes) the prior rubric score + transfer evidence so duplicate
+# signals never reach the mastery ledger, which reads all evidence per node
+# without dedup (``mastery/service.py``). See issue #193.
+SCOREABLE_WORK_PRODUCT_STATUSES: tuple[str, ...] = ("draft", "submitted")
+
 
 def create_case(
     session: Session,
@@ -344,7 +351,14 @@ def score_work_product(
     Reuses the attempt/feedback/rubric-score/evidence stack: the submission is
     recorded as an attempt so a ``RubricScore`` can anchor to it, and a transfer
     ``EvidenceRecord`` carries the ``transfer_distance`` and case-scoped validity.
+
+    A terminal product (``scored``/``accepted``/``withdrawn``) is rejected; the
+    only re-score path is an explicit ``revision-requested`` product, which
+    supersedes its prior score and transfer evidence rather than orphaning them.
     """
+    is_rescore = work_product.status == "revision-requested"
+    if work_product.status not in SCOREABLE_WORK_PRODUCT_STATUSES and not is_rescore:
+        raise ValueError("work product is not in a scoreable state")
     rubric_id = work_product.rubric_id
     if rubric_id is None:
         raise ValueError("work product requires a linked rubric to score")
@@ -371,8 +385,25 @@ def score_work_product(
         raise ValueError("normalized_score must be within the unit interval")
 
     # Local imports mirror the lazy cross-module repository pattern and avoid cycles.
+    from lms.evidence.models import EvidenceRecord
     from lms.evidence.repository import create_attempt, create_evidence_record
     from lms.feedback.repository import create_rubric_score
+
+    # On an allowed revision-requested re-score, supersede the prior score by
+    # deleting it and its transfer evidence before writing the new ones. Leaving
+    # them would orphan the old RubricScore (rubric_score_id repoints below) and
+    # double-count the evidence in mastery/capability estimation. See issue #193.
+    if is_rescore and work_product.rubric_score_id is not None:
+        prior_score = session.get(RubricScore, work_product.rubric_score_id)
+        if prior_score is not None:
+            prior_evidence_id = prior_score.evidence_record_id
+            work_product.rubric_score_id = None
+            session.delete(prior_score)
+            if prior_evidence_id is not None:
+                prior_evidence = session.get(EvidenceRecord, prior_evidence_id)
+                if prior_evidence is not None:
+                    session.delete(prior_evidence)
+            session.flush()
 
     prompt_context = work_product.prompt_id or work_product.case_step_id or work_product.case_id
     response_text = work_product.body or f"[artifact] {work_product.artifact_ref}"
