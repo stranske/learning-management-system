@@ -1,5 +1,17 @@
 # Workloop State
 
+## 2026-05-31T21:01Z - codex opener opening PR for #201 (Inspect scheduler panel)
+
+- Automation: `pd-workloop-resume` opener lane from the neutral Code workspace. ACTION A zero exit; full discovery ran. Initial cap-health raw cap was 2/5: Trend #5367 `draining` with active Gate evidence and Trend #5353 `runner-failed`/scoped terminal owner-product blocker. Repair helper made 0 repairs.
+- Liveness: `opener-liveness-guard.py` reported 13 supported non-generated candidates and plain no-op invalid. High/normal candidates were scoped, linked, merged-awaiting-verifier, or cross-surface blocked. Trend #5344 is linked to open PR #5367. The highest unlinked implementation candidate was **#201**.
+- Source issue: [#201](https://github.com/stranske/learning-management-system/issues/201) "Inspect surface: wire scheduler panel to real data; honor or remove ownership_scope".
+- Branch/worktree: `codex/issue-201-inspect-scheduler-panel` from fresh `origin/main` (`9d0cc86`) in `/Users/teacher/.codex/automations/pd-workloop-resume/worktrees/lms-201-inspect-scheduler`; canonical Code checkout left untouched.
+- Implementation: replaced the Inspect overview scheduler placeholder with a learner-specific scheduler panel from `ReviewQueueItem` rows plus `SchedulerDecision` rows filtered by requested `ownership_scope`. The response now returns `scheduler.status`, `events`, and scoped `decisions`; `ownership_scope` is retained because scheduler decisions have that column, while source/prompt catalogs do not.
+- Tests/validation: added `tests/inspect/test_inspect_overview.py`. `pytest tests/inspect/test_inspect_overview.py::test_scheduler_panel_returns_real_data -q --no-cov` -> 1 passed; `pytest tests/inspect/ -q --no-cov` -> 8 passed; `ruff check src/lms/api/inspect.py tests/inspect/test_inspect_overview.py` -> passed; `git diff --check` -> passed. Deliberate-break gate: temporarily restored `{"status": "placeholder", "events": []}`; named test failed with `AssertionError: assert 'placeholder' == 'ready'`; restored and reran green.
+- PR: [#225](https://github.com/stranske/learning-management-system/pull/225) — ready-for-review, non-draft, `Closes #201`, branch `codex/issue-201-inspect-scheduler-panel`, labels `agent:codex`, `agents:keepalive`, `autofix`, `agent:retry`, `priority:low`, `audit-2026-05-30`. Fired `pr_opened active.source_repo=stranske/learning-management-system active.source_issue=201 active.source_pr=225 active.next_action=wait_for_keepalive`.
+- Post-open repair/cap: `opener-repair-infra-stalls.py` dispatched Gate Followups for #225 after initial `needs-dispatch-evidence`. Fresh cap-health at 21:03Z reports raw cap below 5, #225 `draining` (`keepalive summary reports an agent currently running`), #5367 `draining`, and only #5353 remaining non-drainable (`runner-failed` scoped owner/product blocker). Direct PR evidence includes keepalive summary/work-log comments and runner-dispatch comment for codex at head `e05dc10`.
+- Next action: keepalive owns #225 CI/review follow-up; opener can continue to next candidate on the next lane tick.
+
 ## 2026-05-31T20:08Z - codex opener opening PR for #199 (auth hardening)
 
 - Automation: `pd-workloop-resume` opener lane from the neutral Code workspace. ACTION A zero exit; full discovery ran despite `active.*` pointing at the prior LMS #198 PR.

@@ -7,21 +7,106 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from lms.analytics.calibration import calibration_for_learner
 from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
+from lms.graphs.models import KnowledgeNode
 from lms.mastery.service import mastery_estimates_for_learner
+from lms.scheduling.models import ReviewQueueItem, SchedulerDecision
 from lms.sources.models import SourceReference
 
 try:  # Prompt support is present after the prompt-provenance opener branch lands.
-    from lms.prompts.models import Prompt
+    from lms.prompts.models import Prompt, prompt_source_references
 except ImportError:  # pragma: no cover
     Prompt = None  # type: ignore[assignment,misc]
+    prompt_source_references = None  # type: ignore[assignment]
 
 router = APIRouter(prefix="/inspect", tags=["inspect"])
 SessionDep = Annotated[Session, Depends(get_session)]
+
+
+def _scheduler_panel(
+    session: Session,
+    *,
+    learner_id: str,
+    ownership_scope: str,
+) -> dict[str, Any]:
+    scoped_node_exists = (
+        select(KnowledgeNode.id)
+        .where(
+            KnowledgeNode.id == ReviewQueueItem.knowledge_node_id,
+            KnowledgeNode.ownership_scope == ownership_scope,
+        )
+        .exists()
+    )
+    node_exists = (
+        select(KnowledgeNode.id)
+        .where(KnowledgeNode.id == ReviewQueueItem.knowledge_node_id)
+        .exists()
+    )
+    queue_items = list(
+        session.scalars(
+            select(ReviewQueueItem)
+            .where(
+                ReviewQueueItem.learner_id == learner_id,
+                scoped_node_exists | ~node_exists,
+            )
+            .order_by(
+                ReviewQueueItem.created_at.desc(),
+                ReviewQueueItem.due_at.asc(),
+                ReviewQueueItem.priority.desc(),
+                ReviewQueueItem.id.desc(),
+            )
+            .limit(10)
+        )
+    )
+    decisions = list(
+        session.scalars(
+            select(SchedulerDecision)
+            .where(
+                SchedulerDecision.learner_id == learner_id,
+                SchedulerDecision.ownership_scope == ownership_scope,
+            )
+            .order_by(SchedulerDecision.created_at.desc(), SchedulerDecision.id)
+            .limit(10)
+        )
+    )
+
+    events = [
+        {
+            "id": item.id,
+            "knowledge_node_id": item.knowledge_node_id,
+            "reason_code": item.reason_code,
+            "reason_explanation": item.reason_explanation,
+            "due_at": item.due_at,
+            "priority": item.priority,
+            "status": item.status,
+            "decision_log": item.decision_log,
+        }
+        for item in queue_items
+    ]
+    decision_rows = [
+        {
+            "id": decision.id,
+            "knowledge_node_id": decision.knowledge_node_id,
+            "reason_code": decision.reason_code,
+            "decision_rationale": decision.decision_rationale,
+            "policy_version": decision.policy_version,
+            "ownership_scope": decision.ownership_scope,
+            "support_level": decision.support_level,
+            "decision_log": decision.decision_log,
+            "created_at": decision.created_at,
+        }
+        for decision in decisions
+    ]
+    return {
+        "status": "ready" if events or decision_rows else "empty",
+        "ownership_scope": ownership_scope,
+        "events": events,
+        "decisions": decision_rows,
+    }
 
 
 @router.get("/learners/{learner_id}/overview")
@@ -39,15 +124,44 @@ def learner_overview_route(
             .limit(25)
         )
     )
-    source_rows = list(
-        session.scalars(
-            select(SourceReference).order_by(SourceReference.captured_at.desc()).limit(25)
-        )
-    )
+    source_rows: list[SourceReference] = []
     prompt_rows: list[Any] = []
     if Prompt is not None:
         prompt_rows = list(
-            session.scalars(select(Prompt).order_by(Prompt.updated_at.desc()).limit(25))
+            session.scalars(
+                select(Prompt)
+                .options(selectinload(Prompt.versions))
+                .join(KnowledgeNode, KnowledgeNode.id == Prompt.target_node_id)
+                .where(KnowledgeNode.ownership_scope == ownership_scope)
+                .order_by(Prompt.updated_at.desc())
+                .limit(25)
+            )
+        )
+        scoped_source_ids = (
+            select(prompt_source_references.c.source_reference_id)
+            .select_from(prompt_source_references)
+            .join(Prompt, Prompt.id == prompt_source_references.c.prompt_id)
+            .join(KnowledgeNode, KnowledgeNode.id == Prompt.target_node_id)
+            .where(KnowledgeNode.ownership_scope == ownership_scope)
+        )
+        source_has_prompt = (
+            select(prompt_source_references.c.source_reference_id)
+            .where(prompt_source_references.c.source_reference_id == SourceReference.id)
+            .exists()
+        )
+        source_rows = list(
+            session.scalars(
+                select(SourceReference)
+                .where(SourceReference.id.in_(scoped_source_ids) | ~source_has_prompt)
+                .order_by(SourceReference.captured_at.desc())
+                .limit(25)
+            )
+        )
+    else:
+        source_rows = list(
+            session.scalars(
+                select(SourceReference).order_by(SourceReference.captured_at.desc()).limit(25)
+            )
         )
 
     return {
@@ -68,7 +182,7 @@ def learner_overview_route(
             {
                 "id": prompt.id,
                 "status": prompt.status,
-                "version": prompt.version,
+                "version": (prompt.versions[-1].version_number if prompt.versions else None),
                 "authoring_method": prompt.authoring_method,
                 "reviewing_actor": prompt.reviewing_actor,
             }
@@ -84,7 +198,11 @@ def learner_overview_route(
             for source in source_rows
         ],
         "calibration": calibration_for_learner(session, learner_id).as_dict(),
-        "scheduler": {"status": "placeholder", "events": []},
+        "scheduler": _scheduler_panel(
+            session,
+            learner_id=learner_id,
+            ownership_scope=ownership_scope,
+        ),
     }
 
 
