@@ -183,13 +183,10 @@ function parseGithubContext() {
 }
 
 function runGit(args) {
-  const timeoutMs = Number(process.env.PATH_CLASSIFIER_GIT_TIMEOUT_MS || '20000');
   return execFileSync('git', args, {
     cwd: process.env.GITHUB_WORKSPACE || process.cwd(),
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 20000,
-    maxBuffer: 1024 * 1024 * 8,
   }).trim();
 }
 
