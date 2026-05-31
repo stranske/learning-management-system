@@ -20,10 +20,27 @@ services:
     # unaffected by the web-service plan choice.
     plan: starter
     # Build: install the project + locked deps into Render's managed venv.
+    #
+    # Render activates a Python venv at ``/opt/render/project/src/.venv/``
+    # and points ``python`` at that venv's interpreter throughout the
+    # build, preDeploy, and runtime phases. We use plain ``pip install``
+    # (NOT ``uv pip sync --system``) so packages land in the active venv
+    # where the runtime can import them.
+    #
+    # We tried ``uv pip sync --system requirements.lock`` first and Render's
+    # runtime venv could not import ``alembic`` (or anything else) at
+    # preDeploy time::
+    #
+    #     /opt/render/project/src/.venv/bin/python:
+    #     No module named alembic.config
+    #
+    # That error reproduced even after switching the invocation form, so
+    # the install location — not the invocation — was the actual bug.
+    # ``pip install`` resolves to the active venv unambiguously and avoids
+    # the issue.
     buildCommand: >-
       python -m pip install --upgrade pip &&
-      python -m pip install uv &&
-      uv pip sync --system requirements.lock &&
+      python -m pip install -r requirements.lock &&
       python -m pip install --no-deps -e .
     # Pre-deploy migration: runs once before the new instance accepts traffic.
     # We invoke through ``python -m alembic.config`` (not bare ``alembic`` and
