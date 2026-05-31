@@ -8,7 +8,9 @@ import pytest
 from sqlalchemy.orm import Session
 
 from lms.audit.models import AuditLog
+from lms.sources.models import SourceReference
 from lms.sources.repository import (
+    compute_source_hash,
     compute_source_hash_for_reference,
     create_source_reference,
     scan_source_references,
@@ -87,6 +89,27 @@ def test_freetext_passage_range_not_false_stale(
             content="passage scoped text",
             actor_id="user:alice",
         )
+
+
+def test_scan_rejects_legacy_freetext_passage_range(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Scan rejects legacy free-text ranges instead of silently hashing whole-file content."""
+    note = tmp_path / "research.md"
+    note.write_text("# Heading\npassage scoped text\ntrailing context\n", encoding="utf-8")
+    reference = SourceReference(
+        source_type="markdown-file",
+        stable_locator=str(note),
+        passage_range="Section 1",
+        content_hash=compute_source_hash("passage scoped text"),
+        hash_algorithm="sha256",
+    )
+    db_session.add(reference)
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="unsupported markdown passage_range"):
+        scan_source_references(db_session, actor_id="system:test")
 
 
 def test_changed_internal_note_marks_reference_stale(db_session: Session) -> None:
