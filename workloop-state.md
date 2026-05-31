@@ -1,5 +1,19 @@
 # Workloop State
 
+## 2026-05-31T11:10Z - codex opener opened PR #215 for #195 (importer robustness)
+
+- Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
+- Source repo: `stranske/learning-management-system`.
+- Source issue/PR: [#195](https://github.com/stranske/learning-management-system/issues/195) / [#215](https://github.com/stranske/learning-management-system/pull/215), branch `codex/issue-195-importer-robustness`, commit `73a152f`.
+- Selection context: mandatory cap/liveness discovery ran. Raw opener cap was 4/5 before selection; PAEM #1847 and Trend #5353 remained scoped terminal blockers, while LMS #213 and #214 had active/fresh keepalive/Gate evidence. High-priority candidates were scoped or linked to the scoped Trend PR; normal-tier #193 and #194 were already linked to LMS #213/#214. #195 was the next unlinked normal-priority implementation issue.
+- Implementation: CSV graph import now validates `knowledge_type`, `ownership_scope`, and `status` against graph model constants while loading rows, rejects self-prerequisites before dry-run or real writes, and translates `UnicodeDecodeError` into `CsvGraphImportError`. Markdown import now skips non-UTF-8 files with a warning and maps CommonMark setext H1/H2 headings back to source lines instead of raising a raw `ValueError`.
+- Tests: added CSV importer tests for invalid enum dry-run failure, self-prerequisite rejection, and latin-1 decode handling; added Markdown importer tests for setext headings and non-UTF-8 skip-with-warning.
+- Validation: `python -m pytest tests/importers/ -q --no-cov` -> 15 passed; `python -m pytest tests/importers/test_csv_graph_importer.py::test_invalid_enum_rejected_in_dry_run -q --no-cov` -> 1 passed after restore. Deliberate-break gate: temporarily removed enum validation; the named test failed with `DID NOT RAISE`; restored and it passed. `python -m ruff check src/lms/importers/csv_graph.py src/lms/importers/markdown.py tests/importers/test_csv_graph_importer.py tests/importers/test_markdown_importer.py` -> passed. `python -m mypy src/lms/importers/csv_graph.py src/lms/importers/markdown.py` -> passed. Plain `python -m pytest tests/importers/ -q` collected and passed all 15 importer tests, then exited non-zero because repo-level addopts enforce whole-repo coverage on focused subsets (42 < 80).
+- PR routing: #215 is open, ready-for-review, non-draft, closes #195, registry branch, labels `agent:codex`, `agents:keepalive`, `autofix`, `priority:normal`; repair helper added `agent:retry` and dispatched Gate Followups after cap-health initially reported `needs-dispatch-evidence`.
+- Post-open cap-health: raw opener cap reached 5/5. #215 is `draining` with fresh Gate/Autofix activity; #213/#214 had stale `needs-human`/`agent:needs-attention` labels removed by the repair helper and are drainable/keepalive-evidence backed. Remaining non-drainable blockers are the pre-existing scoped PAEM #1847 (non-registry branch/no concrete routing label) and Trend #5353 (owner CI/delivery decision).
+- Workspace hygiene: worktree lives under `/Users/teacher/.codex/automations/pd-workloop-resume/worktrees/lms-195-importer-robustness`, not the Code root. Code-root audit required before end because this run created a checkout/worktree.
+- Next action: keepalive owns PR #215 CI/review; closer should drain ready/merged PRs and continue watching the scoped cap blockers.
+
 ## 2026-05-27T13:32Z - codex closer addressed PR #173 review threads
 
 - Automation: `imi-merge-verify-closer` (codex closer lane) from the neutral Code workspace.

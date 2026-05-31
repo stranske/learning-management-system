@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -15,6 +16,9 @@ from lms.graphs.repository import create_knowledge_edge, create_knowledge_node
 from lms.sources.repository import create_source_reference
 
 _ATX_HEADING_RE = re.compile(r"^(?P<marks>#{1,6})[ \t]+(?P<title>.+?)[ \t]*#*[ \t]*$")
+_SETEXT_UNDERLINE_RE = re.compile(r"^[ \t]*(?P<mark>=+|-+)[ \t]*$")
+_INLINE_MARKDOWN = mistune.create_markdown(renderer="ast")
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -184,7 +188,11 @@ def _markdown_files(path: Path) -> list[Path]:
 
 
 def _parse_heading_sections(file_path: Path) -> list[MarkdownHeading]:
-    text = file_path.read_text(encoding="utf-8")
+    try:
+        text = file_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        LOGGER.warning("skipping non-UTF-8 markdown file %s: %s", file_path, exc)
+        return []
     lines = text.splitlines(keepends=True)
     raw = _extract_h1_h2_headings(text=text, lines=lines)
 
@@ -253,17 +261,26 @@ def _extract_heading_text(token: dict[str, object]) -> str:
     children = token.get("children")
     if not isinstance(children, list):
         return ""
+    return _clean_heading_title(_extract_inline_text(children))
+
+
+def _extract_inline_text(tokens: list[object]) -> str:
     parts: list[str] = []
-    for child in children:
-        if isinstance(child, dict):
-            raw = child.get("raw")
-            if isinstance(raw, str):
-                parts.append(raw)
-                continue
-            text = child.get("text")
-            if isinstance(text, str):
-                parts.append(text)
-    return _clean_heading_title("".join(parts))
+    for token in tokens:
+        if not isinstance(token, dict):
+            continue
+        raw = token.get("raw")
+        if isinstance(raw, str):
+            parts.append(raw)
+            continue
+        text = token.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+            continue
+        children = token.get("children")
+        if isinstance(children, list):
+            parts.append(_extract_inline_text(children))
+    return "".join(parts)
 
 
 def _find_heading_line(
@@ -275,18 +292,58 @@ def _find_heading_line(
 ) -> tuple[int, int]:
     for line_index in range(start_index, len(lines)):
         match = _ATX_HEADING_RE.match(lines[line_index])
-        if match is None:
-            continue
-        if len(match.group("marks")) != level:
-            continue
-        if _clean_heading_title(match.group("title")) != title:
-            continue
-        return line_index + 1, line_index + 1
+        if match is not None:
+            if len(match.group("marks")) != level:
+                continue
+            if _normalize_source_heading_title(match.group("title")) != title:
+                continue
+            return line_index + 1, line_index + 1
+        setext_line = _find_setext_heading_line(
+            lines=lines,
+            line_index=line_index,
+            level=level,
+            title=title,
+        )
+        if setext_line is not None:
+            return setext_line, line_index + 2
     raise ValueError(f"could not map parsed heading to source line: {title!r}")
+
+
+def _find_setext_heading_line(
+    *,
+    lines: list[str],
+    line_index: int,
+    level: int,
+    title: str,
+) -> int | None:
+    if line_index + 1 >= len(lines):
+        return None
+    underline = _SETEXT_UNDERLINE_RE.match(lines[line_index + 1])
+    if underline is None:
+        return None
+    mark = underline.group("mark")[0]
+    underline_level = 1 if mark == "=" else 2
+    if underline_level != level:
+        return None
+    if _normalize_source_heading_title(lines[line_index]) != title:
+        return None
+    return line_index + 1
 
 
 def _clean_heading_title(title: str) -> str:
     return title.strip().rstrip("#").strip()
+
+
+def _normalize_source_heading_title(title: str) -> str:
+    cleaned = _clean_heading_title(title)
+    tokens = cast(list[dict[str, Any]], _INLINE_MARKDOWN(cleaned))
+    for token in tokens:
+        if token.get("type") != "paragraph":
+            continue
+        children = token.get("children")
+        if isinstance(children, list):
+            return _clean_heading_title(_extract_inline_text(children))
+    return cleaned
 
 
 def _section_description(content: str) -> str | None:

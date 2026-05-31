@@ -10,6 +10,7 @@ from typing import TextIO
 
 from sqlalchemy.orm import Session
 
+from lms.graphs.models import KNOWLEDGE_TYPES, NODE_STATUSES, OWNERSHIP_SCOPES
 from lms.graphs.repository import create_knowledge_edge, create_knowledge_node
 from lms.sources.repository import create_source_reference
 
@@ -64,8 +65,13 @@ def import_csv_graph(
 ) -> CsvGraphImportSummary:
     """Import KnowledgeNode rows and prerequisite edges from a CSV file."""
     path = Path(csv_path)
-    with path.open(newline="", encoding="utf-8") as csv_file:
-        rows = _load_rows(csv_file)
+    try:
+        with path.open(newline="", encoding="utf-8") as csv_file:
+            rows = _load_rows(csv_file)
+    except UnicodeDecodeError as exc:
+        raise CsvGraphImportError(
+            f"CSV graph import could not decode {path}: expected UTF-8 text"
+        ) from exc
     edge_count = sum(len(row.prerequisites) for row in rows)
     if dry_run:
         return CsvGraphImportSummary(
@@ -143,16 +149,41 @@ def _load_rows(csv_file: TextIO) -> list[CsvGraphRow]:
         row = CsvGraphRow(
             row_number=row_number,
             title=_require_cell(normalized, "title", row_number),
-            knowledge_type=_require_cell(normalized, "knowledge_type", row_number),
+            knowledge_type=_require_choice(
+                normalized,
+                "knowledge_type",
+                row_number,
+                KNOWLEDGE_TYPES,
+                "knowledge type",
+            ),
             prerequisites=_split_prerequisites(normalized.get("prerequisites", "")),
-            ownership_scope=_require_cell(normalized, "ownership_scope", row_number),
-            status=_require_cell(normalized, "status", row_number),
+            ownership_scope=_require_choice(
+                normalized,
+                "ownership_scope",
+                row_number,
+                OWNERSHIP_SCOPES,
+                "ownership scope",
+            ),
+            status=_require_choice(
+                normalized,
+                "status",
+                row_number,
+                NODE_STATUSES,
+                "status",
+            ),
             source_locator=_require_cell(normalized, "source_locator", row_number),
             source_range=normalized.get("source_range") or None,
             description=normalized.get("description") or None,
             raw=normalized,
         )
         key = _node_key(row.ownership_scope, row.title)
+        if any(
+            _node_key(row.ownership_scope, prerequisite) == key
+            for prerequisite in row.prerequisites
+        ):
+            raise CsvGraphImportError(
+                f"row {row_number}: {row.title!r} cannot list itself as a prerequisite"
+            )
         if key in seen_keys:
             raise CsvGraphImportError(
                 f"row {row_number}: duplicate title {row.title!r} in "
@@ -182,6 +213,21 @@ def _require_cell(row: dict[str, str], column: str, row_number: int) -> str:
     value = row.get(column, "")
     if not value:
         raise CsvGraphImportError(f"row {row_number}: required column {column!r} is blank")
+    return value
+
+
+def _require_choice(
+    row: dict[str, str],
+    column: str,
+    row_number: int,
+    allowed: tuple[str, ...],
+    label: str,
+) -> str:
+    value = _require_cell(row, column, row_number)
+    if value not in allowed:
+        raise CsvGraphImportError(
+            f"row {row_number}: unknown {label} {value!r}; expected one of {allowed}"
+        )
     return value
 
 
