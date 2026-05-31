@@ -80,17 +80,28 @@ state, commit, and let the next deploy carry it.
 
 ### Plan tiers
 
-`render.yaml` ships at **Starter** for both the web service and the
-Postgres database (~$7/mo each, ~$14/mo total at the time of writing).
-This is the recommended baseline for a learning loop the project owner
-expects to use daily:
+`render.yaml` ships at paid tiers for both resources (~\$13.30/mo total
+at the time of writing). This is the recommended baseline for a learning
+loop the project owner expects to use daily:
 
-- **Web Starter**: stays awake, no 15-minute sleep, no ~30s cold start.
-- **Postgres Starter**: persistent, no 90-day retention clock.
+| Resource | Plan key in `render.yaml` | Approximate cost | What it buys |
+|---|---|---|---|
+| Web service | `plan: starter` | \$7/mo | Stays awake — no 15-minute sleep, no ~30s cold start |
+| Postgres | `plan: basic-256mb` | \$6/mo instance + \$0.30/GB storage (≈ \$6.30/mo for 1 GB) | Persistent, no 90-day retention clock |
 
 Verify current pricing at <https://render.com/pricing> before relying on
-specific dollar amounts; the structure is stable but Render has adjusted
-numbers historically.
+specific dollar amounts. Render renamed the Postgres tiers in 2025 — the
+legacy `plan: starter` value is no longer accepted for new Postgres
+databases. Current valid Postgres plan keys:
+
+- `free` — \$0/mo, 256 MB RAM, 1 GB storage, 90-day expiry
+- `basic-256mb` — \$6/mo + storage (shipped default for this repo)
+- `basic-1gb` — \$19/mo + storage
+- `basic-4gb` — \$75/mo + storage
+- `pro-*` / `accelerated-*` for production workloads
+
+Web service plan keys (`free`, `starter`, `standard`, etc.) were
+unaffected by the rename.
 
 **Flexing the web tier** is fully reversible via the dashboard
 (Service → Settings → Instance Type). Billing prorates by the minute, so
@@ -99,10 +110,10 @@ dollars. The web-service plan does **not** affect data — only "is the
 container always running."
 
 **Flexing the Postgres tier** is asymmetric. You can upgrade
-Starter → Standard / Pro in the dashboard, but Render does not offer a
-built-in Starter → Free downgrade (free Postgres is effectively a
+`basic-256mb` → larger paid tiers in the dashboard, but Render does not
+offer a built-in paid → free downgrade (free Postgres is effectively a
 separate product with the 90-day clock). If you ever need to downgrade,
-the path is manual: `pg_dump` against the Starter connection string,
+the path is manual: `pg_dump` against the paid connection string,
 provision a fresh free DB, `pg_restore`, swap the service's
 `DATABASE_URL`, decommission the old DB.
 
@@ -110,10 +121,10 @@ If you want to **pause billing for a long idle stretch** (e.g., a month
 where the project is dormant), the cheapest reversible move is:
 
 1. Service → Settings → Instance Type → Free. Stops web billing.
-2. Postgres can stay on Starter ($7/mo) so the data survives, or you can
-   `pg_dump` it down to a local backup and delete the Render DB to stop
-   that bill too — restore via `pg_restore` against a fresh Starter
-   instance when you come back.
+2. Postgres can stay on `basic-256mb` (\$6.30/mo) so the data survives, or
+   you can `pg_dump` it down to a local backup and delete the Render DB to
+   stop that bill too — restore via `pg_restore` against a fresh
+   `basic-256mb` instance when you come back.
 
 ### Custom domain (optional)
 

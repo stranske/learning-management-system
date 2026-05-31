@@ -59,16 +59,26 @@ services:
 
 databases:
   - name: lms-db
-    # Starter (~$7/mo at the time of this writing): persistent Postgres with
-    # no 90-day retention clock. Required for the LMS — the whole point of
-    # the system is durable evidence + scheduling state, so the data must
-    # survive longer than 3 months.
+    # ``basic-256mb`` (~$6/mo + $0.30/GB storage = ~$6.30/mo for 1 GB at the
+    # time of this writing): persistent Postgres with no 90-day retention
+    # clock. Required for the LMS — the whole point of the system is durable
+    # evidence + scheduling state, so the data must survive longer than 3
+    # months. Render renamed the Postgres tiers in 2025; the legacy
+    # ``starter`` name is rejected for new databases.
+    #
+    # Available Postgres plan values (Render's current naming):
+    #   - ``free``         — $0/mo, 256 MB RAM, 0.1 CPU, 1 GB storage,
+    #                        90-day expiry
+    #   - ``basic-256mb``  — $6/mo + storage, 256 MB RAM, 0.1 CPU
+    #   - ``basic-1gb``    — $19/mo + storage, 1 GB RAM, 0.5 CPU
+    #   - ``basic-4gb``    — $75/mo + storage, 4 GB RAM, 2 CPU
+    #   - ``pro-*`` and ``accelerated-*`` for production workloads
     #
     # NOTE: Postgres plan changes are NOT symmetric. You can upgrade
-    # ``starter`` → ``standard`` etc. in the dashboard, but Render does not
-    # offer a built-in ``starter`` → ``free`` downgrade (free is effectively
-    # a separate product with the 90-day clock). If you ever need to
-    # downgrade, the path is: ``pg_dump`` from this DB, create a new free
-    # DB, ``pg_restore``, swap ``DATABASE_URL``, decommission the original.
-    plan: starter
+    # ``basic-256mb`` → larger paid tiers in the dashboard, but Render does
+    # not offer a built-in paid → ``free`` downgrade (free is effectively a
+    # separate product with the 90-day clock). If you ever need to downgrade,
+    # the path is: ``pg_dump`` from this DB, create a new free DB,
+    # ``pg_restore``, swap ``DATABASE_URL``, decommission the original.
+    plan: basic-256mb
     databaseName: lms
