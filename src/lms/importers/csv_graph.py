@@ -101,6 +101,9 @@ def import_csv_graph(
         )
         nodes_by_key[_node_key(row.ownership_scope, row.title)] = node.id
 
+    # Canonical prerequisite direction is source -> target meaning "source has
+    # prerequisite target" (see KnowledgeEdge): the row's node is the source and
+    # each listed prerequisite is the target the learner must cover first.
     for row in rows:
         source_node_id = nodes_by_key[_node_key(row.ownership_scope, row.title)]
         for prerequisite_title in row.prerequisites:

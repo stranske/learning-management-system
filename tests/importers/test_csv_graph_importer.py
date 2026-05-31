@@ -50,6 +50,20 @@ def test_import_nodes_and_prerequisite_edges(tmp_path: Path, db_session: Session
     assert {edge.edge_type for edge in edges} == {"prerequisite"}
     assert {edge.source_scope for edge in edges} == {"personal"}
 
+    # Canonical direction (see ``KnowledgeEdge``): source -> target means
+    # "source has prerequisite target". Bayes Rule lists Probability Basics as a
+    # prerequisite, so the edge runs Bayes Rule -> Probability Basics. The
+    # Markdown importer must produce edges in this same orientation.
+    title_by_id = {node.id: node.title for node in nodes}
+    directed = {
+        (title_by_id[edge.source_node_id], title_by_id[edge.target_node_id]) for edge in edges
+    }
+    assert directed == {
+        ("Bayes Rule", "Probability Basics"),
+        ("Posterior Checks", "Probability Basics"),
+        ("Posterior Checks", "Bayes Rule"),
+    }
+
     assert db_session.query(SourceReference).count() == 3
     audit_events = db_session.query(AuditLog).all()
     assert {event.entity_type for event in audit_events} == {

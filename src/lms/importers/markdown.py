@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -72,9 +72,17 @@ def plan_markdown_notes(path: str | Path, *, limit: int | None = None) -> Sequen
     files = _markdown_files(Path(path))
     headings: list[MarkdownHeading] = []
     for file_path in files:
-        headings.extend(_parse_heading_sections(file_path))
-        if limit is not None and len(headings) >= limit:
-            return headings[:limit]
+        # parent_index from _parse_heading_sections is an index into THAT file's
+        # heading list. Rebase it onto the accumulating global list so an H2's
+        # prerequisite edge points at the H1 in its own file, not whichever node
+        # happens to occupy that index from a previously-imported file.
+        base = len(headings)
+        for heading in _parse_heading_sections(file_path):
+            if heading.parent_index is not None:
+                heading = replace(heading, parent_index=heading.parent_index + base)
+            headings.append(heading)
+            if limit is not None and len(headings) >= limit:
+                return headings[:limit]
     return headings
 
 
@@ -131,16 +139,26 @@ def import_markdown_notes(
         )
         node_ids.append(node.id)
         if heading.parent_index is not None and heading.parent_index < len(node_ids):
+            # Canonical prerequisite direction is source -> target meaning
+            # "source has prerequisite target" (see KnowledgeEdge). A nested
+            # subsection depends on its parent section, so the child node is the
+            # source and the parent section is the prerequisite target -- the
+            # same orientation the CSV importer uses (source=node,
+            # target=prerequisite).
             create_knowledge_edge(
                 session,
-                source_node_id=node_ids[heading.parent_index],
-                target_node_id=node.id,
+                source_node_id=node.id,
+                target_node_id=node_ids[heading.parent_index],
                 edge_type="prerequisite",
                 scope=scope,
                 actor_id=actor_id,
                 confidence=0.5,
                 status="draft",
-                notes="Candidate prerequisite inferred from nested Markdown headings.",
+                notes=(
+                    "Candidate prerequisite inferred from nested Markdown "
+                    "headings: the parent section is a prerequisite of its "
+                    "nested subsection."
+                ),
                 source_subsystem="markdown-importer",
             )
             created_edges += 1

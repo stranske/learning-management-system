@@ -73,6 +73,39 @@ def test_h1_h2_create_draft_nodes_with_source_references(
     assert {"SourceReference", "KnowledgeNode", "KnowledgeEdge"} <= audited_types
 
 
+def test_nested_subsection_points_to_parent_as_prerequisite(
+    db_session: Session, tmp_path: Path
+) -> None:
+    """A nested H2 subsection has its H1 section as a prerequisite, not vice versa.
+
+    Canonical direction (see ``KnowledgeEdge``) is source -> target meaning
+    "source has prerequisite target". A subsection depends on the section that
+    contains it, so the subsection is the edge source and the parent section is
+    the target the learner must cover first. This is the same orientation the
+    CSV importer uses (source=node, target=its listed prerequisite).
+    """
+    note = _write_note(tmp_path)
+
+    import_markdown_notes(db_session, note, actor_id="user:alice")
+    db_session.commit()
+
+    title_by_id = {node.id: node.title for node in db_session.query(KnowledgeNode).all()}
+    edges = db_session.query(KnowledgeEdge).all()
+    assert len(edges) == 2
+
+    directed = {
+        (title_by_id[edge.source_node_id], title_by_id[edge.target_node_id]) for edge in edges
+    }
+    # source (dependent subsection) -> target (prerequisite parent section).
+    assert directed == {
+        ("Delayed Recall", "Retrieval Practice"),
+        ("Transfer", "Retrieval Practice"),
+    }
+    # The parent section is always the prerequisite (target), never the source.
+    assert all(title_by_id[edge.target_node_id] == "Retrieval Practice" for edge in edges)
+    assert all(title_by_id[edge.source_node_id] != "Retrieval Practice" for edge in edges)
+
+
 def test_dry_run_does_not_write_records(db_session: Session, tmp_path: Path) -> None:
     note = _write_note(tmp_path)
 
@@ -132,3 +165,40 @@ def test_cli_dry_run_reports_planned_nodes(monkeypatch: Any, tmp_path: Path, cap
     assert "nodes=3" in out
     assert "sources=3" in out
     assert "planned creates:" in out
+
+
+def test_multi_file_import_links_subsections_within_their_own_file(
+    db_session: Session, tmp_path: Path
+) -> None:
+    """Regression: each H2's prerequisite edge points at the H1 in its OWN file.
+
+    Before the per-file ``parent_index`` rebasing fix, the index was file-local
+    but applied to a node list accumulated globally across files, so the second
+    file's subsections linked to a node in the first file. With two files we get
+    a cross-file mislink (Beta Two -> Alpha One) unless the index is rebased.
+    """
+    (tmp_path / "a.md").write_text(
+        "# Alpha One\nAlpha intro.\n\n## Alpha Two\nAlpha subsection.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "b.md").write_text(
+        "# Beta One\nBeta intro.\n\n## Beta Two\nBeta subsection.\n",
+        encoding="utf-8",
+    )
+
+    summary = import_markdown_notes(db_session, tmp_path, actor_id="user:alice")
+    db_session.commit()
+
+    assert summary.created_nodes == 4
+    assert summary.created_edges == 2
+
+    title_by_id = {node.id: node.title for node in db_session.query(KnowledgeNode).all()}
+    directed = {
+        (title_by_id[edge.source_node_id], title_by_id[edge.target_node_id])
+        for edge in db_session.query(KnowledgeEdge).all()
+    }
+    # Each subsection links to the H1 in its own file — never across files.
+    assert directed == {
+        ("Alpha Two", "Alpha One"),
+        ("Beta Two", "Beta One"),
+    }

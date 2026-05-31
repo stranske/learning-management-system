@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib.resources import files
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -12,6 +12,7 @@ from lms.api.audit import router as audit_router
 from lms.api.health import router as health_router
 from lms.api.inspect import router as inspect_router
 from lms.auth.api import router as auth_router
+from lms.auth.login import require_authenticated_user
 from lms.auth.login import router as login_router
 from lms.capability.api import router as capability_router
 from lms.cases.api import router as cases_router
@@ -76,31 +77,40 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     # actually gates downstream routes when AUTH_REQUIRED is true.
     app.include_router(login_router)
 
+    # Every router below the login/health/static allowlist is gated by
+    # require_authenticated_user. That dependency is a no-op in local-dev/test
+    # mode (auth_required=False returns the local-dev user, preserving existing
+    # behavior) and enforces a 401 (JSON) / 302-to-login (HTML) when
+    # AUTH_REQUIRED=true on the deployed instance. Attaching it here is what
+    # actually closes the gate — defining the dependency alone left every
+    # endpoint reachable without credentials.
+    auth = [Depends(require_authenticated_user)]
+
     if enable_local_identity_routes:
-        app.include_router(auth_router)
-        app.include_router(learners_router)
+        app.include_router(auth_router, dependencies=auth)
+        app.include_router(learners_router, dependencies=auth)
 
     app.include_router(health_router)
-    app.include_router(inspect_router)
-    app.include_router(audit_router)
-    app.include_router(sources_router)
-    app.include_router(graphs_router)
-    app.include_router(prompts_router)
-    app.include_router(attempts_router)
-    app.include_router(feedback_router)
-    app.include_router(cases_router)
-    app.include_router(competencies_router)
-    app.include_router(capability_router)
-    app.include_router(mastery_router)
-    app.include_router(review_queue_router)
-    app.include_router(llm_router)
-    app.include_router(learner_ui_router)
-    app.include_router(attempt_flow_router)
-    app.include_router(capability_ui_router)
-    app.include_router(learner_feedback_ui_router)
-    app.include_router(graph_design_ui_router)
-    app.include_router(llm_study_ui_router)
-    app.include_router(support_admin_ui_router)
+    app.include_router(inspect_router, dependencies=auth)
+    app.include_router(audit_router, dependencies=auth)
+    app.include_router(sources_router, dependencies=auth)
+    app.include_router(graphs_router, dependencies=auth)
+    app.include_router(prompts_router, dependencies=auth)
+    app.include_router(attempts_router, dependencies=auth)
+    app.include_router(feedback_router, dependencies=auth)
+    app.include_router(cases_router, dependencies=auth)
+    app.include_router(competencies_router, dependencies=auth)
+    app.include_router(capability_router, dependencies=auth)
+    app.include_router(mastery_router, dependencies=auth)
+    app.include_router(review_queue_router, dependencies=auth)
+    app.include_router(llm_router, dependencies=auth)
+    app.include_router(learner_ui_router, dependencies=auth)
+    app.include_router(attempt_flow_router, dependencies=auth)
+    app.include_router(capability_ui_router, dependencies=auth)
+    app.include_router(learner_feedback_ui_router, dependencies=auth)
+    app.include_router(graph_design_ui_router, dependencies=auth)
+    app.include_router(llm_study_ui_router, dependencies=auth)
+    app.include_router(support_admin_ui_router, dependencies=auth)
     static_path = files("lms.ui.static")
     app.mount("/static/ui", StaticFiles(directory=str(static_path)), name="ui-static")
     return app
