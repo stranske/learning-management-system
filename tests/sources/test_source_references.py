@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
@@ -47,6 +48,21 @@ def test_compute_source_hash_uses_markdown_line_range(tmp_path) -> None:  # type
     digest = compute_source_hash(markdown_path=note, passage_range="L2-L2")
 
     assert digest == hashlib.sha256(b"first passage\n").hexdigest()
+
+
+def test_create_markdown_reference_rejects_unparseable_passage_range_with_content(
+    db_session: Session,
+) -> None:
+    """Create-time rejects free-text passage ranges before content hashing."""
+    with pytest.raises(ValueError, match="unsupported markdown passage_range"):
+        create_source_reference(
+            db_session,
+            source_type="markdown-file",
+            stable_locator="notes/research.md",
+            passage_range="Section 1",
+            content="passage scoped text",
+            actor_id="user:alice",
+        )
 
 
 def test_source_references_table_is_created_by_base_metadata(db_session: Session) -> None:
