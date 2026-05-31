@@ -49,5 +49,11 @@ def session_scope() -> Generator[Session, None, None]:
 
 def get_session() -> Generator[Session, None, None]:
     """FastAPI dependency that yields a request-scoped database session."""
-    with session_scope() as session:
+    session = SessionLocal(bind=get_engine())
+    try:
         yield session
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
