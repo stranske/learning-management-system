@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from lms.analytics.calibration import calibration_for_learner
 from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
 from lms.mastery.service import mastery_estimates_for_learner
@@ -82,8 +83,26 @@ def learner_overview_route(
             }
             for source in source_rows
         ],
+        "calibration": calibration_for_learner(session, learner_id).as_dict(),
         "scheduler": {"status": "placeholder", "events": []},
     }
+
+
+@router.get("/learners/{learner_id}/calibration")
+def learner_calibration_route(
+    learner_id: str,
+    session: SessionDep,
+    knowledge_node_id: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    """Return confidence-vs-accuracy calibration for one learner.
+
+    Surfaces the metacognitive-calibration analytics: per confidence bucket,
+    the observed accuracy and median response time, plus an ``overconfident``
+    flag when high confidence is paired with low accuracy.
+    """
+    return calibration_for_learner(
+        session, learner_id, knowledge_node_id=knowledge_node_id
+    ).as_dict()
 
 
 @router.get("", response_class=HTMLResponse)
