@@ -10,6 +10,7 @@ from lms.auth import repository
 from lms.auth.dependencies import get_current_user
 from lms.auth.models import User
 from lms.auth.repository import create_local_user, get_or_create_local_dev_user
+from lms.auth.schemas import UserCreate
 
 
 def test_create_local_user(db_session: Session) -> None:
@@ -39,6 +40,11 @@ def test_development_auth_dependency_returns_local_user(db_session: Session) -> 
     assert user.id == reused.id
     assert user.username == "local-dev"
     assert user.is_local is True
+
+
+def test_user_create_rejects_malformed_email() -> None:
+    with pytest.raises(ValueError):
+        UserCreate(username="ada", display_name="Ada Lovelace", email="not-an-email")
 
 
 def test_local_dev_user_race_requeries_existing_user(

@@ -267,3 +267,42 @@ def test_session_only_stores_user_id_not_pii(
     assert isinstance(payload, dict)
     # Only the user id is stored. No username, display_name, or email.
     assert set(payload.keys()) == {SESSION_USER_ID_KEY}
+
+
+def test_deleted_user_session_clears_cookie_and_reauthenticates(
+    auth_required_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = auth_required_client
+    with session_factory() as s:
+        user = create_local_user(
+            s,
+            username="erin",
+            display_name="Erin Deleted",
+            password="erin-passphrase-1234",
+        )
+        user_id = user.id
+        s.commit()
+
+    login = client.post(
+        "/login",
+        data={"username": "erin", "password": "erin-passphrase-1234"},
+        follow_redirects=False,
+    )
+    assert login.status_code == 303
+    assert "lms_session" in client.cookies
+
+    with session_factory() as s:
+        user = s.get(User, user_id)
+        assert user is not None
+        s.delete(user)
+        s.commit()
+
+    response = client.get(
+        "/protected-api",
+        headers={"Accept": "application/json"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authentication required."}
+    assert "lms_session" not in client.cookies

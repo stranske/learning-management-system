@@ -21,19 +21,28 @@ def test_hash_password_rejects_empty_string() -> None:
         hash_password("")
 
 
+def test_short_password_rejected() -> None:
+    with pytest.raises(ValueError, match="at least 12 characters"):
+        hash_password("a")
+
+
 def test_hash_password_rejects_non_string() -> None:
     with pytest.raises(TypeError):
         hash_password(12345)  # type: ignore[arg-type]
 
 
 def test_verify_password_accepts_correct_password() -> None:
-    h = hash_password("sw0rdfish")
-    assert verify_password(h, "sw0rdfish") is True
+    h = hash_password("sw0rdfish-long")
+    assert verify_password(h, "sw0rdfish-long") is True
 
 
 def test_verify_password_rejects_wrong_password() -> None:
-    h = hash_password("sw0rdfish")
+    h = hash_password("sw0rdfish-long")
     assert verify_password(h, "letmein") is False
+
+
+def test_verify_password_handles_malformed_hash() -> None:
+    assert verify_password("not-an-argon2-hash", "real-password") is False
 
 
 def test_verify_password_handles_none_hash() -> None:
@@ -48,12 +57,12 @@ def test_verify_password_handles_empty_plaintext() -> None:
 
 def test_two_hashes_of_same_password_differ_in_salt() -> None:
     """Argon2 uses a random salt per hash; the encoded form must therefore differ."""
-    h1 = hash_password("same-password")
-    h2 = hash_password("same-password")
+    h1 = hash_password("same-password-long")
+    h2 = hash_password("same-password-long")
     assert h1 != h2
     # But both must still verify against the original plaintext.
-    assert verify_password(h1, "same-password") is True
-    assert verify_password(h2, "same-password") is True
+    assert verify_password(h1, "same-password-long") is True
+    assert verify_password(h2, "same-password-long") is True
 
 
 def test_needs_rehash_returns_false_for_freshly_hashed_password() -> None:

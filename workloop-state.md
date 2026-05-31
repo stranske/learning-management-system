@@ -1,5 +1,19 @@
 # Workloop State
 
+## 2026-05-31T20:08Z - codex opener opening PR for #199 (auth hardening)
+
+- Automation: `pd-workloop-resume` opener lane from the neutral Code workspace. ACTION A zero exit; full discovery ran despite `active.*` pointing at the prior LMS #198 PR.
+- Cap/drain preflight: `opener-cap-health.py` reported 4 opener-owned PRs, raw cap below 5, no non-drainable cap blocker. Inv-Man#493 and LMS#222 had fresh draining evidence; PAEM#1853 and Trend#5353 remained runner-failed/non-mechanical. `opener-repair-infra-stalls.py` made 0 repairs. LMS#222 carried `needs-human` from cancelled transient Gate/autofix churn, but fresher direct evidence showed a new Gate run on the same head with Python jobs in progress, so it was classified active-moving for this opener tick.
+- Liveness: `opener-liveness-guard.py` reported 21 supported non-generated candidates and plain no-op invalid. High/normal issues were scoped, linked, merged-awaiting-verifier, or app-baseline-linked. The next unlinked implementation candidate after LMS#198 was **#199**.
+- Source issue: [#199](https://github.com/stranske/learning-management-system/issues/199) "Auth hardening: password strength, malformed-hash 500, email validation, open-redirect/stale-session tests".
+- Branch: `codex/issue-199-auth-hardening` from fresh `/tmp/lms-i199` clone because the canonical Code checkout had a `.git/FETCH_HEAD` permission error and pre-existing local generated artifacts.
+- Implementation: added `validate_password_strength` with a 12-character minimum and called it from `hash_password`; malformed Argon2 hashes now return `False`; `UserCreate.email` rejects obvious non-address strings; `/login` password input has `maxlength=256` and FastAPI form validation; CLI `auth create-user`/`set-password` convert password validation failures into non-zero `SystemExit`.
+- Tests: added safe-next redirect tests, short-password and malformed-hash tests, CLI short-password coverage, stale deleted-user session cookie clearing coverage, and malformed email schema coverage. Existing short password fixtures were updated to meet the new minimum.
+- Validation: `pytest tests/auth/test_passwords.py::test_short_password_rejected -q --no-cov` -> 1 passed; `pytest tests/auth/ -q --no-cov` -> 36 passed; `ruff check` on changed files -> passed; `git diff --check` -> passed. Deliberate-break gate: temporarily removed the `validate_password_strength(plaintext)` call from `hash_password`; the named test failed with `DID NOT RAISE`; restored and reran green. Plain `pytest tests/auth/ -q` initially hit the repo-wide coverage fail-under on a partial suite, so the focused validation used `--no-cov`.
+- PR: [#223](https://github.com/stranske/learning-management-system/pull/223) — ready-for-review, non-draft, `Closes #199`, labels `agent:codex`, `agents:keepalive`, `autofix`, `agent:retry`, `priority:low`, `audit-2026-05-30`.
+- Post-open repair: `opener-repair-infra-stalls.py` removed stale `needs-human` from #222, added `agent:retry`, and dispatched Gate Followups; it also added `agent:retry` to #223 and dispatched Gate Followups. Fresh cap-health classifies #222 and #223 as `draining` with active workflow evidence; Trend#5353 remains non-mechanical `runner-failed`. Raw cap is below 5.
+- Relay: `pr_opened active.source_repo=stranske/learning-management-system active.source_issue=199 active.source_pr=223 active.next_action=wait_for_keepalive`. Keepalive owns CI/review after `pr_opened`.
+
 ## 2026-05-31T12:07Z - codex opener opened PR #217 for #197 (free-text drift range guard)
 
 - Automation: `pd-workloop-resume` (codex opener lane) from the neutral Code workspace.
