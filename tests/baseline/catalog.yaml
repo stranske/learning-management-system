@@ -1,0 +1,243 @@
+# LMS scheduler scenario catalog -- spaced-repetition review decisions.
+#
+# Surface: lms.scheduling.service.schedule_from_attempt
+#   (attempt + scored evidence) -> a ReviewQueueItem the adapter reduces to a
+#   flat dict of scalars: next_interval_days, repetition_count,
+#   fsrs_rating_value, signal_severity, priority, is_reset, is_remediation,
+#   is_due_review, fsrs_scheduling_included.
+#
+# Same shape as the TMP / trip-planner / Counter_Risk kits, but here a
+# "scenario" is a bundle of the evidence SIGNAL fields the scheduler keys on,
+# plus an optional `prior_successes` count of completed prior reviews to seed
+# first (each one steps the success interval ramp 1 -> 3 -> 7 -> 14 -> 28 days).
+#
+# Directional checks compare a variant scenario to the control on a flat scalar
+# metric name (e.g. raising confidence raises next_interval_days). The metric is
+# a TOP-LEVEL key from adapter.METRIC_NAMES (the run reduces to one item, not a
+# per-group table, so keys are not namespaced).
+
+# ---------------------------------------------------------------------------
+# Base / control: a confident, unsupported, correct first retrieval. This is the
+# canonical "success-ramp-step-0" decision: due in 1 day, priority 0.4, FSRS
+# good (3). Every directional variant perturbs ONE dimension away from this.
+# ---------------------------------------------------------------------------
+scenarios:
+  - id: base
+    correctness: true
+    normalized_score: 0.95
+    confidence_rating: 5
+    support_level: none
+    response_time_seconds: 60
+    prior_successes: 0
+
+  # Failed retrieval -> immediate remediation (reset). Interval collapses to 0,
+  # priority jumps to 0.9, FSRS "again" (1), signal severity "fail" (0).
+  - id: failed_retrieval
+    correctness: false
+    normalized_score: 0.10
+    confidence_rating: 2
+    support_level: none
+    response_time_seconds: 60
+    prior_successes: 0
+
+  # Low-confidence success -> shortened (1-day) follow-up, priority 0.7, FSRS
+  # "hard" (2). Correct but self-rated confidence is low.
+  - id: low_confidence_success
+    correctness: true
+    normalized_score: 0.90
+    confidence_rating: 2
+    support_level: none
+    response_time_seconds: 60
+    prior_successes: 0
+
+  # Correct WITH support (a hint) -> treated as low-confidence even at high
+  # self-confidence: shortened interval, priority 0.7, FSRS "hard" (2).
+  - id: supported_success
+    correctness: true
+    normalized_score: 0.92
+    confidence_rating: 5
+    support_level: hint
+    response_time_seconds: 60
+    prior_successes: 0
+
+  # Partial-credit success below the 0.85 mastery threshold -> low-confidence
+  # (the score itself drags the signal down), 1-day follow-up, FSRS "hard" (2).
+  - id: partial_success
+    correctness: true
+    normalized_score: 0.70
+    confidence_rating: 4
+    support_level: none
+    response_time_seconds: 60
+    prior_successes: 0
+
+  # Same base success but with two prior completed reviews -> ramp step 2:
+  # interval grows to 7 days. repetition_count = 2.
+  - id: two_prior_successes
+    correctness: true
+    normalized_score: 0.95
+    confidence_rating: 5
+    support_level: none
+    response_time_seconds: 60
+    prior_successes: 2
+
+  # Beyond the ramp length (6 prior) -> interval clamps at the last step
+  # (28 days). Guards the cap behaviour.
+  - id: ramp_capped
+    correctness: true
+    normalized_score: 0.95
+    confidence_rating: 5
+    support_level: none
+    response_time_seconds: 60
+    prior_successes: 6
+
+  # Fast, high-confidence, unsupported, scoreless first attempt -> FSRS "easy"
+  # (4). (With no normalized_score the score rules don't pre-empt the
+  # fast-first-attempt rule.) Still success-ramp-step-0 on the interval side,
+  # so this isolates the FSRS rating dimension.
+  - id: fast_first_easy
+    correctness: true
+    normalized_score: null
+    confidence_rating: 5
+    support_level: none
+    response_time_seconds: 10
+    prior_successes: 0
+
+  # Transfer evidence -> FSRS excluded from interval calc (value 0,
+  # scheduling_included 0). The internal classifier still schedules it; this
+  # exercises the excluded branch.
+  - id: transfer_excluded
+    correctness: true
+    normalized_score: 0.95
+    confidence_rating: 5
+    support_level: none
+    response_time_seconds: 60
+    transfer_distance: near
+    prior_successes: 0
+
+# ---------------------------------------------------------------------------
+# Directional checks: variant vs control on a flat scalar metric.
+# direction is from baseline_kit.DIRECTIONS (left=variant, right=control).
+# Each is grounded in the scheduling policy, not boilerplate.
+# ---------------------------------------------------------------------------
+directionals:
+  # A failed retrieval shortens the interval to 0 vs the base 1-day success.
+  - id: failure_shortens_interval
+    scenario: failed_retrieval
+    control: base
+    metric: next_interval_days
+    direction: decrease
+    enforce: true
+  # ...and flags a reset (immediate remediation) the base does not.
+  - id: failure_sets_reset
+    scenario: failed_retrieval
+    control: base
+    metric: is_reset
+    direction: increase
+    enforce: true
+  # ...and raises priority (remediation 0.9 > success 0.4).
+  - id: failure_raises_priority
+    scenario: failed_retrieval
+    control: base
+    metric: priority
+    direction: increase
+    enforce: true
+  # ...and drops the FSRS rating value (again=1 < good=3).
+  - id: failure_lowers_fsrs_rating
+    scenario: failed_retrieval
+    control: base
+    metric: fsrs_rating_value
+    direction: decrease
+    enforce: true
+  # ...and lowers the ordinal signal severity (fail=0 < success=2).
+  - id: failure_lowers_signal_severity
+    scenario: failed_retrieval
+    control: base
+    metric: signal_severity
+    direction: decrease
+    enforce: true
+  # Low confidence shortens the interval (1 day) -- but base step-0 is ALSO 1
+  # day, so the interval is unchanged; the confidence penalty shows in priority
+  # (0.7 > 0.4) and the FSRS rating (hard=2 < good=3) instead.
+  - id: low_confidence_raises_priority
+    scenario: low_confidence_success
+    control: base
+    metric: priority
+    direction: increase
+    enforce: true
+  # NOTE: low confidence does NOT move the FSRS rating here. The FSRS adapter's
+  # `partial-at-mastery` rule (normalized_score >= 0.85) fires before its
+  # `supported-or-low-confidence-correct` rule, so a high-scoring but
+  # low-confidence answer still rates FSRS "good" (3) -- same as base. The
+  # confidence penalty surfaces in `priority`/`signal_severity` instead (above
+  # and below), via the conservative blend with the internal classifier. The
+  # FSRS-rating-decrease direction is covered by `partial_lowers_fsrs_rating`
+  # (a below-mastery score), which the adapter genuinely downgrades to "hard".
+  - id: low_confidence_lowers_signal_severity
+    scenario: low_confidence_success
+    control: base
+    metric: signal_severity
+    direction: decrease
+    enforce: true
+  # Using support behaves like a low-confidence signal -> higher priority.
+  - id: support_raises_priority
+    scenario: supported_success
+    control: base
+    metric: priority
+    direction: increase
+    enforce: true
+  # A partial (below-mastery) score also penalises the FSRS rating.
+  - id: partial_lowers_fsrs_rating
+    scenario: partial_success
+    control: base
+    metric: fsrs_rating_value
+    direction: decrease
+    enforce: true
+  # Repeated success grows the interval (step 2 -> 7 days > base step 0 -> 1).
+  - id: prior_success_grows_interval
+    scenario: two_prior_successes
+    control: base
+    metric: next_interval_days
+    direction: increase
+    enforce: true
+  # ...and the repetition_count the scheduler reads rises.
+  - id: prior_success_raises_repetition
+    scenario: two_prior_successes
+    control: base
+    metric: repetition_count
+    direction: increase
+    enforce: true
+  # Many priors push the interval to the capped maximum (still > base).
+  - id: capped_ramp_grows_interval
+    scenario: ramp_capped
+    control: base
+    metric: next_interval_days
+    direction: increase
+    enforce: true
+  # A fast high-confidence first attempt earns a HIGHER FSRS rating (easy=4 >
+  # good=3) than the base good retrieval.
+  - id: fast_first_raises_fsrs_rating
+    scenario: fast_first_easy
+    control: base
+    metric: fsrs_rating_value
+    direction: increase
+    enforce: true
+  # Transfer evidence is excluded from the FSRS interval calc (flag drops 1->0).
+  - id: transfer_excluded_drops_inclusion
+    scenario: transfer_excluded
+    control: base
+    metric: fsrs_scheduling_included
+    direction: decrease
+    enforce: true
+
+# ---------------------------------------------------------------------------
+# Coverage manifest: every scalar the surface produces should be exercised by a
+# directional check (or explained as a gap). Keys are flat metric names.
+# ---------------------------------------------------------------------------
+priority_metrics:
+  - next_interval_days
+  - repetition_count
+  - fsrs_rating_value
+  - signal_severity
+  - priority
+  - is_reset
+  - fsrs_scheduling_included
