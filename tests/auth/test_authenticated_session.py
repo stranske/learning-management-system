@@ -210,6 +210,29 @@ def test_login_failure_re_renders_form_with_401(
     assert "Invalid username or password" in response.text
 
 
+def test_login_rejects_oversized_password_input(
+    auth_required_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """Oversized form input is rejected by request validation before auth checks."""
+    client, session_factory = auth_required_client
+    with session_factory() as s:
+        create_local_user(
+            s,
+            username="bounded",
+            display_name="Bounded Input",
+            password="correct-passphrase-123",
+        )
+        s.commit()
+
+    response = client.post(
+        "/login",
+        data={"username": "bounded", "password": "x" * 257},
+        follow_redirects=False,
+    )
+    assert response.status_code == 422
+    assert "lms_session" not in client.cookies
+
+
 def test_logout_clears_session(
     auth_required_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
