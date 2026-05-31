@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from lms.auth import repository
 from lms.auth.dependencies import get_current_user
 from lms.auth.models import User
-from lms.auth.repository import create_local_user, get_or_create_local_dev_user
+from lms.auth.repository import authenticate, create_local_user, get_or_create_local_dev_user
 from lms.auth.schemas import UserCreate
 
 
@@ -77,3 +77,51 @@ def test_local_dev_user_race_requeries_existing_user(
     user = get_or_create_local_dev_user(db_session)
 
     assert user.id == existing.id
+
+
+def test_authenticate_missing_user_uses_timing_equalizer(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unknown usernames still run a password verify to equalize latency."""
+    sentinel_hash = "equalizer-hash"
+    seen: list[tuple[str | None, str]] = []
+
+    monkeypatch.setattr(repository, "_timing_equalizer_hash", lambda: sentinel_hash)
+
+    def fake_verify(stored_hash: str | None, plaintext: str) -> bool:
+        seen.append((stored_hash, plaintext))
+        return False
+
+    monkeypatch.setattr(repository, "verify_password", fake_verify)
+
+    user = authenticate(db_session, username="missing-user", password="pw-1234567890ab")
+
+    assert user is None
+    assert seen == [(sentinel_hash, "pw-1234567890ab")]
+
+
+def test_authenticate_existing_user_checks_user_hash(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Known usernames verify against the user's stored hash, not equalizer hash."""
+    user = create_local_user(
+        db_session,
+        username="ada-auth",
+        display_name="Ada Auth",
+        password="long-password-1234",
+    )
+    db_session.flush()
+
+    seen: list[tuple[str | None, str]] = []
+
+    def fake_verify(stored_hash: str | None, plaintext: str) -> bool:
+        seen.append((stored_hash, plaintext))
+        return False
+
+    monkeypatch.setattr(repository, "verify_password", fake_verify)
+
+    authed = authenticate(db_session, username="ada-auth", password="wrong-password-1234")
+
+    assert authed is None
+    assert len(seen) == 1
+    assert seen[0] == (user.password_hash, "wrong-password-1234")

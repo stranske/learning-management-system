@@ -119,3 +119,98 @@ def test_case_route_rejects_cross_scope_rubric(db_session: Session) -> None:
 
     assert response.status_code == 422
     assert "rubric must exist and match" in response.json()["detail"]
+
+
+def _create_minimal_case(client: TestClient) -> dict[str, Any]:
+    response = client.post(
+        "/cases",
+        json={
+            "title": "Standalone route case",
+            "description": "Created so sub-resource routes can be tested directly.",
+            "ownership_scope": "personal",
+        },
+    )
+    assert response.status_code == 201, response.text
+    return cast(dict[str, Any], response.json())
+
+
+def test_standalone_case_step_route_creates_step_and_rejects_duplicate_order(
+    db_session: Session,
+) -> None:
+    """Standalone case-step creation returns shape data and preserves duplicate-order 422s."""
+    client = _client(db_session)
+    case = _create_minimal_case(client)
+
+    response = client.post(
+        f"/cases/{case['id']}/steps",
+        json={
+            "step_order": 1,
+            "title": "Find the controlling fact",
+            "prompt": "Identify the fact that controls the recommendation.",
+            "expected_work_product": "Controlling fact memo",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["case_id"] == case["id"]
+    assert body["step_order"] == 1
+    assert body["expected_work_product"] == "Controlling fact memo"
+
+    duplicate_response = client.post(
+        f"/cases/{case['id']}/steps",
+        json={
+            "step_order": 1,
+            "title": "Duplicate order",
+            "prompt": "This should be rejected.",
+        },
+    )
+    assert duplicate_response.status_code == 422
+    assert duplicate_response.json()["detail"] == "case step order must be unique"
+
+
+def test_standalone_evidence_packet_route_creates_packet_and_rejects_missing_case(
+    db_session: Session,
+) -> None:
+    """Standalone evidence-packet creation serializes metadata and keeps missing-case 422s."""
+    client = _client(db_session)
+    case = _create_minimal_case(client)
+
+    response = client.post(
+        f"/cases/{case['id']}/evidence-packets",
+        json={
+            "title": "Policy packet",
+            "summary": "Facts and policy constraints.",
+            "packet_metadata": {"source": "unit-test"},
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["case_id"] == case["id"]
+    assert body["packet_metadata"] == {"source": "unit-test"}
+
+    missing_response = client.post(
+        "/cases/missing-case/evidence-packets",
+        json={"title": "No parent"},
+    )
+    assert missing_response.status_code == 422
+    assert missing_response.json()["detail"] == "case was not found"
+
+
+def test_get_missing_case_returns_404(db_session: Session) -> None:
+    """Missing case reads preserve the documented 404 detail."""
+    client = _client(db_session)
+
+    response = client.get("/cases/missing-case")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Case not found."
+
+
+def test_list_work_products_for_missing_case_returns_404(db_session: Session) -> None:
+    """Work-product listing fails before querying when the parent case is absent."""
+    client = _client(db_session)
+
+    response = client.get("/cases/missing-case/work-products")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Case not found."
