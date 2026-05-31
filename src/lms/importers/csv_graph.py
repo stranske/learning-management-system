@@ -177,7 +177,10 @@ def _load_rows(csv_file: TextIO) -> list[CsvGraphRow]:
             raw=normalized,
         )
         key = _node_key(row.ownership_scope, row.title)
-        if any(_node_key(row.ownership_scope, prerequisite) == key for prerequisite in row.prerequisites):
+        if any(
+            _node_key(row.ownership_scope, prerequisite) == key
+            for prerequisite in row.prerequisites
+        ):
             raise CsvGraphImportError(
                 f"row {row_number}: {row.title!r} cannot list itself as a prerequisite"
             )

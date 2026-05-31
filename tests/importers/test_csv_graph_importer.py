@@ -114,9 +114,7 @@ def test_invalid_enum_rejected_in_dry_run(tmp_path: Path, db_session: Session) -
     assert db_session.query(SourceReference).count() == 0
 
 
-def test_self_prerequisite_rejected_before_writes(
-    tmp_path: Path, db_session: Session
-) -> None:
+def test_self_prerequisite_rejected_before_writes(tmp_path: Path, db_session: Session) -> None:
     csv_path = tmp_path / "graph.csv"
     csv_path.write_text(
         "\n".join(
