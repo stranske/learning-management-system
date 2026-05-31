@@ -7,8 +7,17 @@ from sqlalchemy.orm import Session
 
 from lms.evidence.models import EvidenceRecord
 from lms.graphs.models import KNOWLEDGE_TYPES, OWNERSHIP_SCOPES, KnowledgeNode
-from lms.learners.models import GOAL_STATUSES, Learner, LearningGoal
-from lms.mastery.service import mastery_estimates_with_evidence_for_learner
+from lms.learners.models import (
+    GOAL_STATUSES,
+    MASTERY_THRESHOLD,
+    Learner,
+    LearnerReflection,
+    LearningGoal,
+)
+from lms.mastery.service import (
+    mastery_estimates_for_learner,
+    mastery_estimates_with_evidence_for_learner,
+)
 
 
 def create_learner_for_user(
@@ -213,6 +222,95 @@ def knowledge_profile_for_learner(
         key=lambda item: (str(item["knowledge_node_title"]).lower(), item["knowledge_node_id"])
     )
     return {"learner_id": learner_id, "ownership_scope": ownership_scope, "items": items}
+
+
+def create_reflection(
+    session: Session,
+    *,
+    learner_id: str,
+    prompt: str,
+    response: str,
+    knowledge_node_id: str | None = None,
+) -> LearnerReflection:
+    """Persist a learner's metacognitive reflection after a review."""
+    if get_learner(session, learner_id=learner_id) is None:
+        raise ValueError("learner must exist before recording a reflection")
+    if not prompt.strip():
+        raise ValueError("reflection prompt must not be empty")
+    if not response.strip():
+        raise ValueError("reflection response must not be empty")
+    if knowledge_node_id is not None and session.get(KnowledgeNode, knowledge_node_id) is None:
+        raise ValueError(f"knowledge node not found: {knowledge_node_id}")
+
+    reflection = LearnerReflection(
+        learner_id=learner_id,
+        prompt=prompt,
+        response=response,
+        knowledge_node_id=knowledge_node_id,
+    )
+    session.add(reflection)
+    session.flush()
+    return reflection
+
+
+def list_reflections_for_learner(
+    session: Session,
+    *,
+    learner_id: str,
+    limit: int | None = None,
+) -> list[LearnerReflection]:
+    """Return a learner's reflections, newest first (the learner-facing surface)."""
+    statement = (
+        select(LearnerReflection)
+        .where(LearnerReflection.learner_id == learner_id)
+        .order_by(LearnerReflection.created_at.desc(), LearnerReflection.id)
+    )
+    if limit is not None:
+        statement = statement.limit(limit)
+    return list(session.scalars(statement))
+
+
+def goal_progress_for_learner(
+    session: Session,
+    *,
+    learner_id: str,
+    goal_id: str,
+    mastery_threshold: float = MASTERY_THRESHOLD,
+) -> dict[str, object]:
+    """Return goal-relative progress: target nodes covered vs. mastered.
+
+    ``covered`` counts target nodes with any mastery evidence; ``mastered``
+    counts target nodes whose current estimate reaches ``mastery_threshold``.
+    ``progress`` is the mastered/target ratio (0.0 when the goal has no targets).
+    """
+    goal = get_learning_goal(session, learner_id=learner_id, goal_id=goal_id)
+    if goal is None:
+        raise ValueError("learning goal not found for this learner")
+
+    target_node_ids = [node.id for node in goal.target_nodes]
+    target_count = len(target_node_ids)
+
+    estimates = mastery_estimates_for_learner(session, learner_id)
+    estimate_by_node = {
+        str(estimate["knowledge_node_id"]): float(estimate["current_estimate"])
+        for estimate in estimates
+    }
+
+    covered = sum(1 for node_id in target_node_ids if node_id in estimate_by_node)
+    mastered = sum(
+        1 for node_id in target_node_ids if estimate_by_node.get(node_id, 0.0) >= mastery_threshold
+    )
+    progress = mastered / target_count if target_count else 0.0
+
+    return {
+        "learner_id": learner_id,
+        "goal_id": goal_id,
+        "target_count": target_count,
+        "covered_count": covered,
+        "mastered_count": mastered,
+        "mastery_threshold": mastery_threshold,
+        "progress": round(progress, 4),
+    }
 
 
 def _load_goal_target_nodes(

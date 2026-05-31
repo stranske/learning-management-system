@@ -14,6 +14,7 @@ from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
 from lms.db.base import Base
 from lms.db.session import get_session
+from lms.evidence.repository import create_evidence_record
 from lms.main import create_app
 
 
@@ -159,6 +160,45 @@ def test_create_user_and_learner_endpoints() -> None:
                 json={"target_node_ids": [draft_node_response.json()["id"]]},
             )
             assert draft_patch_response.status_code == 422
+
+            reflection_response = client.post(
+                f"/learners/{learner_payload['id']}/reflections",
+                json={
+                    "prompt": "What made this review difficult?",
+                    "response": "I mixed up retrieval planning with concept mapping.",
+                    "knowledge_node_id": second_node_payload["id"],
+                },
+            )
+            assert reflection_response.status_code == 201
+            reflection_payload = reflection_response.json()
+            assert reflection_payload["prompt"] == "What made this review difficult?"
+            assert reflection_payload["knowledge_node_id"] == second_node_payload["id"]
+
+            list_reflections_response = client.get(f"/learners/{learner_payload['id']}/reflections")
+            assert list_reflections_response.status_code == 200
+            assert [item["id"] for item in list_reflections_response.json()] == [
+                reflection_payload["id"]
+            ]
+
+            with session_factory() as session:
+                create_evidence_record(
+                    session,
+                    learner_id=learner_payload["id"],
+                    knowledge_node_id=second_node_payload["id"],
+                    knowledge_type="procedural",
+                    normalized_score=0.95,
+                )
+                session.commit()
+
+            progress_response = client.get(
+                f"/learners/{learner_payload['id']}/learning-goals/{goal_payload['id']}/progress"
+            )
+            assert progress_response.status_code == 200
+            progress_payload = progress_response.json()
+            assert progress_payload["target_count"] == 1
+            assert progress_payload["covered_count"] == 1
+            assert progress_payload["mastered_count"] == 1
+            assert progress_payload["progress"] == 1.0
     finally:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)

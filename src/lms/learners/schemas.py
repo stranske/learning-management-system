@@ -71,6 +71,39 @@ class LearningGoalRead(BaseModel):
     updated_at: datetime
 
 
+class ReflectionCreate(BaseModel):
+    """Input for recording a learner's metacognitive reflection."""
+
+    prompt: str = Field(min_length=1)
+    response: str = Field(min_length=1)
+    knowledge_node_id: str | None = None
+
+
+class ReflectionRead(BaseModel):
+    """Serializable learner reflection."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    learner_id: str
+    knowledge_node_id: str | None
+    prompt: str
+    response: str
+    created_at: datetime
+
+
+class GoalProgressRead(BaseModel):
+    """Goal-relative progress: target nodes covered vs. mastered."""
+
+    learner_id: str
+    goal_id: str
+    target_count: int
+    covered_count: int
+    mastered_count: int
+    mastery_threshold: float
+    progress: float
+
+
 class KnowledgeProfileItem(BaseModel):
     """One learner-state summary row for a knowledge node."""
 

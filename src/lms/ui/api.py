@@ -45,8 +45,13 @@ from lms.graphs.repository import (
     list_knowledge_edges,
     list_knowledge_nodes,
 )
-from lms.learners.models import GOAL_STATUSES, LearningGoal
-from lms.learners.repository import create_learning_goal, list_learning_goals_for_learner
+from lms.learners.models import GOAL_STATUSES, LearnerReflection, LearningGoal
+from lms.learners.repository import (
+    create_learning_goal,
+    goal_progress_for_learner,
+    list_learning_goals_for_learner,
+    list_reflections_for_learner,
+)
 from lms.mastery.service import mastery_estimates_for_learner
 from lms.prompts.models import ANSWER_FORMS, COGNITIVE_ACTIONS, DEMAND_LEVELS, Prompt
 from lms.prompts.repository import create_prompt, list_prompts
@@ -750,12 +755,17 @@ async def create_author_case_route(request: Request, session: SessionDep) -> str
 def _dashboard_surface(*, session: Session, learner_id: str) -> str:
     """Return the learner home dashboard aggregating the learner's own state."""
     goals = list_learning_goals_for_learner(session, learner_id=learner_id)
+    goal_progress = {
+        goal.id: goal_progress_for_learner(session, learner_id=learner_id, goal_id=goal.id)
+        for goal in goals
+    }
     mastery = mastery_estimates_for_learner(session, learner_id)
     review = get_review_queue_overview(session, learner_id=learner_id)
     actions = list_feedback_actions(session, learner_id=learner_id, status="open")
     evidence = _recent_evidence(session, learner_id=learner_id)
     targets = list_capability_targets(session, learner_id=learner_id)
     plans = list_maintenance_plans(session, learner_id=learner_id)
+    reflections = list_reflections_for_learner(session, learner_id=learner_id, limit=5)
 
     return render_page(
         "Learner",
@@ -772,10 +782,11 @@ def _dashboard_surface(*, session: Session, learner_id: str) -> str:
             {_next_actions_panel(actions)}
             {_reviews_panel(review)}
             {_recent_evidence_panel(evidence)}
-            {_goals_panel(goals)}
+            {_goals_panel(goals, goal_progress)}
             {_mastery_panel(session, mastery)}
             {_capability_panel(targets)}
             {_maintenance_panel(plans)}
+            {_reflections_panel(reflections)}
           </div>
         </main>
         """,
@@ -898,7 +909,9 @@ def _recent_evidence_panel(evidence: list[EvidenceRecord]) -> str:
     )
 
 
-def _goals_panel(goals: Sequence[LearningGoal]) -> str:
+def _goals_panel(
+    goals: Sequence[LearningGoal], goal_progress: dict[str, dict[str, object]] | None = None
+) -> str:
     if not goals:
         return _panel(
             panel_id="goals",
@@ -912,15 +925,55 @@ def _goals_panel(goals: Sequence[LearningGoal]) -> str:
         )
     items = []
     for goal in goals:
+        progress_info = (goal_progress or {}).get(goal.id, {})
+        mastered = progress_info.get("mastered_count", "?")
+        target = progress_info.get("target_count", "?")
+        pct = progress_info.get("progress")
+        progress_label = (
+            f" · {mastered}/{target} mastered ({float(pct):.0%})"  # type: ignore[arg-type]
+            if pct is not None
+            else ""
+        )
         items.append(
             "<li class='panel-item'>"
             f"<strong>{escape(goal.title)}</strong>"
-            f"<span>{escape(goal.knowledge_type)} · {escape(goal.status)}</span>"
+            f"<span>{escape(goal.knowledge_type)} · {escape(goal.status)}"
+            f"{escape(progress_label)}</span>"
             "</li>"
         )
     return _panel(
         panel_id="goals",
         heading="Goals",
+        intro="",
+        body=f'<ul class="panel-list">{"".join(items)}</ul>',
+    )
+
+
+def _reflections_panel(reflections: Sequence[LearnerReflection]) -> str:
+    if not reflections:
+        return _panel(
+            panel_id="reflections",
+            heading="Recent reflections",
+            intro="",
+            body=empty_state(
+                "No reflections yet",
+                "Reflection prompts appear here after you complete a review. "
+                "They help you notice patterns in your learning.",
+            ),
+        )
+    items = []
+    for reflection in reflections:
+        prompt_text = escape(reflection.prompt)
+        response_text = escape(reflection.response)
+        items.append(
+            "<li class='panel-item'>"
+            f"<strong>{prompt_text}</strong>"
+            f"<small>{response_text}</small>"
+            "</li>"
+        )
+    return _panel(
+        panel_id="reflections",
+        heading="Recent reflections",
         intro="",
         body=f'<ul class="panel-list">{"".join(items)}</ul>',
     )
