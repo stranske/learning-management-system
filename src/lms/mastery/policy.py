@@ -18,9 +18,17 @@ class MasteryEstimatorPolicy:
         """Return current mastery and confidence with newer records weighted higher."""
         if not records:
             return 0.0, 0.0
+        ordered_records = sorted(
+            records,
+            key=lambda record: (
+                record.observed_at,
+                record.created_at,
+                record.id or "",
+            ),
+        )
         weighted_score = 0.0
         total_weight = 0.0
-        for index, record in enumerate(records):
+        for index, record in enumerate(ordered_records):
             weight = 1.0 + index * 0.15
             score = _record_score(record)
             weighted_score += score * weight

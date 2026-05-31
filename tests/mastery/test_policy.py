@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from lms.evidence.models import EvidenceRecord
 from lms.mastery.policy import MasteryEstimatorPolicy, _record_score
 
@@ -52,3 +54,22 @@ def test_estimate_applies_recency_weighting_and_confidence_growth() -> None:
 
     assert mastery == 0.3768
     assert confidence == 0.71
+
+
+def test_estimate_is_deterministic_for_same_timestamp_records() -> None:
+    policy = MasteryEstimatorPolicy()
+    stamp = datetime(2026, 5, 31, 12, 0, tzinfo=UTC)
+    low = _record(
+        id="a",
+        correctness=False,
+        observed_at=stamp,
+        created_at=stamp,
+    )
+    high = _record(
+        id="b",
+        correctness=True,
+        observed_at=stamp,
+        created_at=stamp,
+    )
+
+    assert policy.estimate([low, high]) == policy.estimate([high, low])
