@@ -27,6 +27,15 @@ from lms.graphs.models import (
     KnowledgeNode,
 )
 
+# Edge types that impose a learning order between nodes. A cycle among these
+# leaves a prerequisite graph with no valid topological order, so the
+# edge-creation path rejects any new edge that would close such a cycle.
+ORDERING_EDGE_TYPES: tuple[str, ...] = (
+    "prerequisite",
+    "key-prerequisite",
+    "encompassing",
+)
+
 
 def _require_scope(scope: str | None) -> str:
     """Validate that callers pass an explicit ownership scope."""
@@ -233,6 +242,42 @@ def delete_knowledge_node(
     )
 
 
+def _ordering_edge_closes_cycle(
+    session: Session,
+    *,
+    source_node_id: str,
+    target_node_id: str,
+    scope: str,
+) -> bool:
+    """Return True if an ordering edge ``source -> target`` would close a cycle.
+
+    Walks the existing ordering-class edges within ``scope`` starting from the
+    proposed target and reports whether the proposed source is reachable. If it
+    is, adding ``source -> target`` would create a directed cycle (the new edge
+    plus the existing ``target ->* source`` path). The visited set bounds the
+    traversal to one pass over the same-scope ordering edges.
+    """
+    adjacency: dict[str, list[str]] = {}
+    statement = select(KnowledgeEdge).where(
+        KnowledgeEdge.source_scope == scope,
+        KnowledgeEdge.edge_type.in_(ORDERING_EDGE_TYPES),
+    )
+    for edge in session.scalars(statement):
+        adjacency.setdefault(edge.source_node_id, []).append(edge.target_node_id)
+
+    stack = [target_node_id]
+    visited: set[str] = set()
+    while stack:
+        node_id = stack.pop()
+        if node_id == source_node_id:
+            return True
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        stack.extend(adjacency.get(node_id, ()))
+    return False
+
+
 def create_knowledge_edge(
     session: Session,
     *,
@@ -286,6 +331,29 @@ def create_knowledge_edge(
             f"target node scope {target_node.ownership_scope!r} does not match "
             f"requested target_scope {target_scope!r}"
         )
+
+    duplicate = session.scalars(
+        select(KnowledgeEdge).where(
+            KnowledgeEdge.source_node_id == source_node_id,
+            KnowledgeEdge.target_node_id == target_node_id,
+            KnowledgeEdge.edge_type == edge_type,
+            KnowledgeEdge.source_scope == scope,
+            KnowledgeEdge.target_scope == target_scope,
+        )
+    ).first()
+    if duplicate is not None:
+        raise ValueError(
+            "duplicate knowledge edge: an identical "
+            f"{edge_type!r} edge already exists in scope {scope!r}"
+        )
+
+    if edge_type in ORDERING_EDGE_TYPES and _ordering_edge_closes_cycle(
+        session,
+        source_node_id=source_node_id,
+        target_node_id=target_node_id,
+        scope=scope,
+    ):
+        raise ValueError("edge would create a prerequisite cycle")
 
     edge = KnowledgeEdge(
         source_node_id=source_node_id,
