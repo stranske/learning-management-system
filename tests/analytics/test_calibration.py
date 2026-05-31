@@ -143,6 +143,35 @@ def _client() -> Generator[tuple[TestClient, Session], None, None]:
         engine.dispose()
 
 
+def test_knowledge_node_filter_isolates_records(db_session: Session) -> None:
+    """Passing knowledge_node_id excludes records from other nodes."""
+    # Overconfident on node-A.
+    for index in range(5):
+        create_evidence_record(
+            db_session,
+            learner_id="learner-filter",
+            knowledge_node_id="node-A",
+            confidence_rating=5,
+            correctness=index == 0,
+        )
+    # Well-calibrated on node-B (would dilute if not filtered).
+    for _ in range(5):
+        create_evidence_record(
+            db_session,
+            learner_id="learner-filter",
+            knowledge_node_id="node-B",
+            confidence_rating=5,
+            correctness=True,
+        )
+    db_session.commit()
+
+    report = calibration_for_learner(db_session, "learner-filter", knowledge_node_id="node-A")
+
+    assert report.knowledge_node_id == "node-A"
+    assert report.sample_size == 5
+    assert report.overconfident is True
+
+
 def test_calibration_endpoint_surfaces_overconfidence() -> None:
     """The Inspect calibration endpoint returns the flag over a real request."""
     with _client() as (client, session):
