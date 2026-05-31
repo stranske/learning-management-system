@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from lms.cases.repository import create_case
 from lms.db.session import get_session
@@ -16,7 +16,16 @@ from lms.main import create_app
 
 def _client(db_session: Session) -> TestClient:
     app = create_app(enable_local_identity_routes=True)
-    app.dependency_overrides[get_session] = lambda: db_session
+    session_factory = sessionmaker(bind=db_session.get_bind(), expire_on_commit=False)
+
+    def _override_get_session() -> Session:
+        request_session = session_factory()
+        try:
+            yield request_session
+        finally:
+            request_session.close()
+
+    app.dependency_overrides[get_session] = _override_get_session
     return TestClient(app)
 
 

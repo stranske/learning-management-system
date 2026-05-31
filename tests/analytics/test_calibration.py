@@ -2,24 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
-from contextlib import contextmanager
-
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 import lms.audit.models  # noqa: F401
 import lms.evidence.models  # noqa: F401
 import lms.graphs.models  # noqa: F401
 import lms.sources.models  # noqa: F401
+from lms.api.inspect import learner_calibration_route
 from lms.analytics.calibration import calibration_for_learner
-from lms.db.base import Base
-from lms.db.session import get_session
 from lms.evidence.repository import create_evidence_record
-from lms.main import create_app
 
 
 def _record(session: Session, learner_id: str, *, confidence: int, correct: bool) -> None:
@@ -112,37 +104,6 @@ def test_unrated_or_unscored_records_ignored(db_session: Session) -> None:
     assert report.overconfident is False
 
 
-@contextmanager
-def _client() -> Generator[tuple[TestClient, Session], None, None]:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
-    session = session_factory()
-
-    def override_get_session() -> Generator[Session, None, None]:
-        request_session = session_factory()
-        try:
-            yield request_session
-        finally:
-            request_session.close()
-
-    app = create_app()
-    app.dependency_overrides[get_session] = override_get_session
-    try:
-        with TestClient(app) as client:
-            yield client, session
-    finally:
-        session.close()
-        app.dependency_overrides.clear()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
-
-
 def test_knowledge_node_filter_isolates_records(db_session: Session) -> None:
     """Passing knowledge_node_id excludes records from other nodes."""
     # Overconfident on node-A.
@@ -172,50 +133,43 @@ def test_knowledge_node_filter_isolates_records(db_session: Session) -> None:
     assert report.overconfident is True
 
 
-def test_calibration_endpoint_surfaces_overconfidence() -> None:
-    """The Inspect calibration endpoint returns the flag over a real request."""
-    with _client() as (client, session):
-        for index in range(5):
-            _record(session, "learner-api", confidence=5, correct=index == 0)
-        session.commit()
+def test_calibration_endpoint_surfaces_overconfidence(db_session: Session) -> None:
+    """The Inspect calibration route returns overconfidence fields."""
+    for index in range(5):
+        _record(db_session, "learner-api", confidence=5, correct=index == 0)
+    db_session.commit()
 
-        response = client.get("/inspect/learners/learner-api/calibration")
-
-    assert response.status_code == 200
-    payload = response.json()
+    payload = learner_calibration_route("learner-api", db_session)
     assert payload["learner_id"] == "learner-api"
     assert payload["overconfident"] is True
     assert any(bucket["confidence_rating"] == 5 for bucket in payload["buckets"])
 
 
-def test_calibration_endpoint_filters_by_knowledge_node() -> None:
-    """The Inspect calibration endpoint forwards knowledge_node_id filtering."""
-    with _client() as (client, session):
-        for index in range(5):
-            create_evidence_record(
-                session,
-                learner_id="learner-api-filter",
-                knowledge_node_id="node-A",
-                confidence_rating=5,
-                correctness=index == 0,
-            )
-        for _ in range(5):
-            create_evidence_record(
-                session,
-                learner_id="learner-api-filter",
-                knowledge_node_id="node-B",
-                confidence_rating=5,
-                correctness=True,
-            )
-        session.commit()
-
-        response = client.get(
-            "/inspect/learners/learner-api-filter/calibration",
-            params={"knowledge_node_id": "node-A"},
+def test_calibration_route_filters_by_knowledge_node(db_session: Session) -> None:
+    """The Inspect calibration route forwards knowledge_node_id filtering."""
+    for index in range(5):
+        create_evidence_record(
+            db_session,
+            learner_id="learner-api-filter",
+            knowledge_node_id="node-A",
+            confidence_rating=5,
+            correctness=index == 0,
         )
+    for _ in range(5):
+        create_evidence_record(
+            db_session,
+            learner_id="learner-api-filter",
+            knowledge_node_id="node-B",
+            confidence_rating=5,
+            correctness=True,
+        )
+    db_session.commit()
 
-    assert response.status_code == 200
-    payload = response.json()
+    payload = learner_calibration_route(
+        "learner-api-filter",
+        db_session,
+        knowledge_node_id="node-A",
+    )
     assert payload["knowledge_node_id"] == "node-A"
     assert payload["sample_size"] == 5
     assert payload["overconfident"] is True
