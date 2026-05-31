@@ -1,5 +1,15 @@
 # Workloop State
 
+## 2026-05-31T~12:10Z - keepalive verified deliberate-break gate for PR #216 (#196)
+
+- Automation: keepalive lane (Claude Code), PR [#216](https://github.com/stranske/learning-management-system/pull/216).
+- All implementation tasks already committed in `8df45a4` (opener lane). This session confirms the remaining AC item: deliberate-break gate.
+- Break run: removed the `try/except wrappable_types` block from `_create_with_retry` in `providers.py`. `pytest tests/llm/test_anthropic_provider.py::test_rate_limit_wrapped` → **FAILED** with raw `anthropic.RateLimitError: rate limited` propagating from `providers.py:236`. Gate caught the regression correctly.
+- Restore run: reverted to the original try/except. `test_rate_limit_wrapped` → **PASSED**. `pytest tests/llm/ -q --no-cov` → 108 passed.
+- Evidence posted: PR [#216 comment](https://github.com/stranske/learning-management-system/pull/216#issuecomment-4586639235) captures both FAIL and PASS runs verbatim.
+- All acceptance criteria satisfied: `test_rate_limit_wrapped` wraps to `ProviderCallError`; `_estimate_cost(max_tokens=None)` projects 1024-token output (not 64); fallback rates on 3/15 micro-USD scale; substring-only citation rejected; `pytest tests/llm/ -q` → 108 passed.
+- Next action: closer/verifier owns merge disposition for PR #216.
+
 ## 2026-05-31T~11:55Z - claude_code opener opened PR for #196 (LLM client hardening)
 
 - Automation: `pd-workloop-resume` (claude_code opener lane) from the neutral Code workspace.
