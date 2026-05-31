@@ -105,12 +105,22 @@ def _is_score_under_half(record: EvidenceRecord) -> bool:
 
 def _is_score_under_mastery(record: EvidenceRecord) -> bool:
     score = _score(record)
-    return record.correctness is True and score is not None and 0.5 <= score < 0.85
+    return (
+        record.correctness is True
+        and not _has_support(record)
+        and score is not None
+        and 0.5 <= score < 0.85
+    )
 
 
 def _is_score_at_mastery(record: EvidenceRecord) -> bool:
     score = _score(record)
-    return record.correctness is not False and score is not None and score >= 0.85
+    return (
+        record.correctness is not False
+        and not _has_support(record)
+        and score is not None
+        and score >= 0.85
+    )
 
 
 FSRS_RULES: tuple[FSRSRule, ...] = (

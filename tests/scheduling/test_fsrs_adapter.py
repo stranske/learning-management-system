@@ -43,6 +43,25 @@ def test_supported_correct_maps_to_hard(db_session: Session) -> None:
     assert rating.rule_id == "supported-or-low-confidence-correct"
 
 
+def test_supported_high_score_is_hard(db_session: Session) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=True,
+        support_level="hint",
+        hint_used=True,
+        normalized_score=0.95,
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.label == "hard"
+    assert rating.value == 2
+    assert rating.scheduling_included is True
+    assert rating.rule_id == "supported-or-low-confidence-correct"
+
+
 def test_reference_accessed_maps_to_hard_even_without_support_level(db_session: Session) -> None:
     record = create_evidence_record(
         db_session,
