@@ -13,6 +13,7 @@ from lms.analytics.calibration import calibration_for_learner
 from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
 from lms.mastery.service import mastery_estimates_for_learner
+from lms.scheduling.models import ReviewQueueItem, SchedulerDecision
 from lms.sources.models import SourceReference
 
 try:  # Prompt support is present after the prompt-provenance opener branch lands.
@@ -22,6 +23,71 @@ except ImportError:  # pragma: no cover
 
 router = APIRouter(prefix="/inspect", tags=["inspect"])
 SessionDep = Annotated[Session, Depends(get_session)]
+
+
+def _scheduler_panel(
+    session: Session,
+    *,
+    learner_id: str,
+    ownership_scope: str,
+) -> dict[str, Any]:
+    queue_items = list(
+        session.scalars(
+            select(ReviewQueueItem)
+            .where(ReviewQueueItem.learner_id == learner_id)
+            .order_by(
+                ReviewQueueItem.due_at.asc(),
+                ReviewQueueItem.priority.desc(),
+                ReviewQueueItem.created_at.desc(),
+            )
+            .limit(10)
+        )
+    )
+    decisions = list(
+        session.scalars(
+            select(SchedulerDecision)
+            .where(
+                SchedulerDecision.learner_id == learner_id,
+                SchedulerDecision.ownership_scope == ownership_scope,
+            )
+            .order_by(SchedulerDecision.created_at.desc(), SchedulerDecision.id)
+            .limit(10)
+        )
+    )
+
+    events = [
+        {
+            "id": item.id,
+            "knowledge_node_id": item.knowledge_node_id,
+            "reason_code": item.reason_code,
+            "reason_explanation": item.reason_explanation,
+            "due_at": item.due_at,
+            "priority": item.priority,
+            "status": item.status,
+            "decision_log": item.decision_log,
+        }
+        for item in queue_items
+    ]
+    decision_rows = [
+        {
+            "id": decision.id,
+            "knowledge_node_id": decision.knowledge_node_id,
+            "reason_code": decision.reason_code,
+            "decision_rationale": decision.decision_rationale,
+            "policy_version": decision.policy_version,
+            "ownership_scope": decision.ownership_scope,
+            "support_level": decision.support_level,
+            "decision_log": decision.decision_log,
+            "created_at": decision.created_at,
+        }
+        for decision in decisions
+    ]
+    return {
+        "status": "ready" if events or decision_rows else "empty",
+        "ownership_scope": ownership_scope,
+        "events": events,
+        "decisions": decision_rows,
+    }
 
 
 @router.get("/learners/{learner_id}/overview")
@@ -84,7 +150,11 @@ def learner_overview_route(
             for source in source_rows
         ],
         "calibration": calibration_for_learner(session, learner_id).as_dict(),
-        "scheduler": {"status": "placeholder", "events": []},
+        "scheduler": _scheduler_panel(
+            session,
+            learner_id=learner_id,
+            ownership_scope=ownership_scope,
+        ),
     }
 
 
