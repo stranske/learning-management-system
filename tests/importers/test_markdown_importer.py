@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -179,6 +180,7 @@ def test_setext_headings_with_inline_markup_map_to_source_lines(
 def test_non_utf8_markdown_file_is_skipped_with_warning(
     db_session: Session, tmp_path: Path, caplog: Any
 ) -> None:
+    caplog.set_level(logging.WARNING, logger="lms.importers.markdown")
     note = tmp_path / "latin1.md"
     note.write_bytes("Café Notes\n==========\n".encode("latin-1"))
 
