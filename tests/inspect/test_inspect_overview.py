@@ -126,9 +126,7 @@ def test_scheduler_panel_honors_ownership_scope_for_decisions() -> None:
 
     personal_decisions = personal_response.json()["scheduler"]["decisions"]
     institutional_decisions = institutional_response.json()["scheduler"]["decisions"]
-    assert {decision["knowledge_node_id"] for decision in personal_decisions} == {
-        "node-personal"
-    }
+    assert {decision["knowledge_node_id"] for decision in personal_decisions} == {"node-personal"}
     assert {decision["knowledge_node_id"] for decision in institutional_decisions} == {
         "node-institutional"
     }

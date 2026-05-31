@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from lms.analytics.calibration import calibration_for_learner
 from lms.db.session import get_session
@@ -18,9 +18,10 @@ from lms.scheduling.models import ReviewQueueItem, SchedulerDecision
 from lms.sources.models import SourceReference
 
 try:  # Prompt support is present after the prompt-provenance opener branch lands.
-    from lms.prompts.models import Prompt
+    from lms.prompts.models import Prompt, prompt_source_references
 except ImportError:  # pragma: no cover
     Prompt = None  # type: ignore[assignment,misc]
+    prompt_source_references = None  # type: ignore[assignment,misc]
 
 router = APIRouter(prefix="/inspect", tags=["inspect"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -122,15 +123,44 @@ def learner_overview_route(
             .limit(25)
         )
     )
-    source_rows = list(
-        session.scalars(
-            select(SourceReference).order_by(SourceReference.captured_at.desc()).limit(25)
-        )
-    )
+    source_rows: list[SourceReference] = []
     prompt_rows: list[Any] = []
     if Prompt is not None:
         prompt_rows = list(
-            session.scalars(select(Prompt).order_by(Prompt.updated_at.desc()).limit(25))
+            session.scalars(
+                select(Prompt)
+                .options(selectinload(Prompt.versions))
+                .join(KnowledgeNode, KnowledgeNode.id == Prompt.target_node_id)
+                .where(KnowledgeNode.ownership_scope == ownership_scope)
+                .order_by(Prompt.updated_at.desc())
+                .limit(25)
+            )
+        )
+        scoped_source_ids = (
+            select(prompt_source_references.c.source_reference_id)
+            .select_from(prompt_source_references)
+            .join(Prompt, Prompt.id == prompt_source_references.c.prompt_id)
+            .join(KnowledgeNode, KnowledgeNode.id == Prompt.target_node_id)
+            .where(KnowledgeNode.ownership_scope == ownership_scope)
+        )
+        source_has_prompt = (
+            select(prompt_source_references.c.source_reference_id)
+            .where(prompt_source_references.c.source_reference_id == SourceReference.id)
+            .exists()
+        )
+        source_rows = list(
+            session.scalars(
+                select(SourceReference)
+                .where(SourceReference.id.in_(scoped_source_ids) | ~source_has_prompt)
+                .order_by(SourceReference.captured_at.desc())
+                .limit(25)
+            )
+        )
+    else:
+        source_rows = list(
+            session.scalars(
+                select(SourceReference).order_by(SourceReference.captured_at.desc()).limit(25)
+            )
         )
 
     return {
@@ -151,7 +181,7 @@ def learner_overview_route(
             {
                 "id": prompt.id,
                 "status": prompt.status,
-                "version": prompt.version,
+                "version": (prompt.versions[-1].version_number if prompt.versions else None),
                 "authoring_method": prompt.authoring_method,
                 "reviewing_actor": prompt.reviewing_actor,
             }
