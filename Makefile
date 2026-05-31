@@ -23,7 +23,7 @@ BLACK_EXCLUDES := --exclude '(\.venv|\.workflows-lib|node_modules)'
 .PHONY: install lint format format-check typecheck test check clean
 
 install:
-	$(PYTHON) -m pip install -e ".[dev]"
+	$(PYTHON) -m pip install --no-build-isolation -e ".[dev]"
 
 lint:
 	$(RUFF) check $(RUFF_EXCLUDES) .

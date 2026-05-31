@@ -50,3 +50,12 @@ def test_check_target_runs_full_suite() -> None:
     deps = match.group(1).split()
     for required in ("lint", "format-check", "typecheck", "test"):
         assert required in deps, f"`make check` must depend on {required}"
+
+
+def test_install_target_uses_no_build_isolation() -> None:
+    """Editable install should avoid build isolation to stay offline-friendly."""
+    text = _read_makefile()
+    match = re.search(r"^install:\n\t([^\n]+)$", text, flags=re.MULTILINE)
+    assert match, "install target recipe not found"
+    recipe = match.group(1)
+    assert "--no-build-isolation" in recipe, "install target must pass --no-build-isolation"
