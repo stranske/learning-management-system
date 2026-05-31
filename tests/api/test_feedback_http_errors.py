@@ -39,9 +39,7 @@ def test_list_missing_feedback_revision_requests_returns_404(db_session: Session
     """Nested revision-request listings refuse unknown feedback ids."""
     client = _client(db_session)
 
-    response = client.get(
-        "/feedback/00000000-0000-0000-0000-000000000000/revision-requests"
-    )
+    response = client.get("/feedback/00000000-0000-0000-0000-000000000000/revision-requests")
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Feedback not found."
