@@ -76,26 +76,34 @@ def test_freetext_passage_range_not_false_stale(
     db_session: Session,
     tmp_path: Path,
 ) -> None:
-    """Free-text markdown ranges are rejected before they can hash inconsistently."""
+    """Free-text markdown ranges hash consistently and do not false-positive as stale."""
     note = tmp_path / "research.md"
     note.write_text("# Heading\npassage scoped text\ntrailing context\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="unsupported markdown passage_range"):
-        create_source_reference(
-            db_session,
-            source_type="markdown-file",
-            stable_locator=str(note),
-            passage_range="Section 1",
-            content="passage scoped text",
-            actor_id="user:alice",
-        )
+    reference = create_source_reference(
+        db_session,
+        source_type="markdown-file",
+        stable_locator=str(note),
+        passage_range="Section 1",
+        content="passage scoped text",
+        actor_id="user:alice",
+    )
+    db_session.commit()
+
+    summary = scan_source_references(db_session, actor_id="system:test")
+    db_session.commit()
+
+    assert summary.scanned == 1
+    assert summary.current == 1
+    assert summary.stale == 0
+    assert reference.drift_status == "current"
 
 
 def test_scan_rejects_legacy_freetext_passage_range(
     db_session: Session,
     tmp_path: Path,
 ) -> None:
-    """Scan rejects legacy free-text ranges instead of silently hashing whole-file content."""
+    """Legacy free-text ranges are scanned consistently against whole-file hashes."""
     note = tmp_path / "research.md"
     note.write_text("# Heading\npassage scoped text\ntrailing context\n", encoding="utf-8")
     reference = SourceReference(
@@ -108,8 +116,12 @@ def test_scan_rejects_legacy_freetext_passage_range(
     db_session.add(reference)
     db_session.commit()
 
-    with pytest.raises(ValueError, match="unsupported markdown passage_range"):
-        scan_source_references(db_session, actor_id="system:test")
+    summary = scan_source_references(db_session, actor_id="system:test")
+    db_session.commit()
+
+    assert summary.scanned == 1
+    assert summary.current == 0
+    assert summary.stale == 1
 
 
 def test_changed_internal_note_marks_reference_stale(db_session: Session) -> None:
