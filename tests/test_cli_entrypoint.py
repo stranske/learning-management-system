@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import lms.__main__ as lms_main
 from lms.importers.csv_graph import CsvGraphImportError
+from lms.sources.repository import DriftScanSummary
 
 
 def test_main_starts_uvicorn(monkeypatch: Any) -> None:
@@ -290,3 +291,52 @@ def test_import_exits_with_message_on_database_error(monkeypatch: Any, tmp_path:
 
     with pytest.raises(SystemExit, match="import failed: constraint failed"):
         lms_main.main()
+
+
+def test_source_references_scan_drift_prints_per_reason_breakdown(
+    monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """scan-drift subcommand invokes scan_source_references and prints all per-reason fields."""
+
+    class _FakeSessionContext:
+        def __enter__(self) -> object:
+            return object()
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    fake_summary = DriftScanSummary(
+        scanned=5,
+        current=3,
+        stale=1,
+        missing=1,
+        skipped=2,
+        unsupported_pdf=1,
+        unsupported_kindle=1,
+        network_skipped=3,
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_scan(session: object, *, base_path: object, actor_id: str) -> DriftScanSummary:
+        calls.append({"actor_id": actor_id, "base_path": base_path})
+        return fake_summary
+
+    monkeypatch.setattr(lms_main, "session_scope", lambda: _FakeSessionContext())
+    monkeypatch.setattr(lms_main, "scan_source_references", fake_scan)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["lms", "source-references", "scan-drift", "--actor-id", "user:bob"],
+    )
+
+    lms_main.main()
+
+    out = capsys.readouterr().out.strip()
+    assert "scanned=5" in out
+    assert "current=3" in out
+    assert "stale=1" in out
+    assert "missing=1" in out
+    assert "skipped=2" in out
+    assert "unsupported_pdf=1" in out
+    assert "unsupported_kindle=1" in out
+    assert "network_skipped=3" in out
+    assert calls[0]["actor_id"] == "user:bob"

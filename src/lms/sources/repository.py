@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,16 +18,34 @@ from lms.sources.models import SourceReference
 DEFAULT_HASH_ALGORITHM = "sha256"
 _LINE_RANGE_PATTERN = re.compile(r"^(?:L|lines?:)?(?P<start>\d+)(?:[-:](?:L)?(?P<end>\d+))?$")
 
+# Resolvers let the drift scan re-derive current content for source types whose
+# content is not persisted on ``SourceReference`` (only the hash is stored).
+# Mirrors the hermetic, opt-in posture the issue calls for: a ``url`` fetcher is
+# only consulted when ``allow_network`` is set, and an ``internal-note`` resolver
+# is injected by the caller (default: none -> reported as an explicit reason
+# rather than silently skipped).
+UrlFetcher = Callable[[str], "str | bytes"]
+NoteResolver = Callable[[SourceReference], "str | bytes | None"]
+
 
 @dataclass(frozen=True)
 class DriftScanSummary:
-    """Summary of one drift-scan pass."""
+    """Summary of one drift-scan pass.
+
+    The non-scanned references are split into explicit reasons so an operator can
+    tell a genuine coverage gap (``unsupported_pdf`` / ``unsupported_kindle``)
+    from a deferred-this-run no-op (``skipped`` for unresolved ``internal-note``
+    references, ``network_skipped`` for ``url`` references when network is off).
+    """
 
     scanned: int
     current: int
     stale: int
     missing: int
     skipped: int
+    unsupported_pdf: int = 0
+    unsupported_kindle: int = 0
+    network_skipped: int = 0
 
 
 def compute_source_hash(
@@ -199,6 +217,8 @@ def compute_source_hash_for_reference(
             hash_algorithm=hash_algorithm,
             base_path=base_path,
         )
+    if source_type in ("internal-note", "url"):
+        raise ValueError(f"{source_type!r} references require resolved content to compute a hash")
     raise ValueError("content or content_hash is required for non-file source references")
 
 
@@ -207,34 +227,93 @@ def scan_source_references(
     *,
     base_path: str | Path | None = None,
     actor_id: str = "system:drift-scan",
+    allow_network: bool = False,
+    url_fetcher: UrlFetcher | None = None,
+    note_resolver: NoteResolver | None = None,
 ) -> DriftScanSummary:
-    """Refresh drift status for file-backed source references."""
+    """Refresh drift status across source-reference types.
+
+    ``markdown-file`` references are re-hashed from disk. ``internal-note``
+    references are re-hashed when a ``note_resolver`` is supplied (their content
+    is not persisted on the model). ``url`` references are fetched and re-hashed
+    only when ``allow_network`` is true and a ``url_fetcher`` is provided, keeping
+    the default scan hermetic. ``pdf-passage`` and ``kindle-highlight`` are
+    reported as explicitly unsupported rather than silently skipped.
+    """
     scanned = current = stale = missing = skipped = 0
+    unsupported_pdf = unsupported_kindle = network_skipped = 0
     references = list(session.scalars(select(SourceReference).order_by(SourceReference.id)))
     for reference in references:
-        if reference.source_type != "markdown-file":
-            skipped += 1
-            continue
-        scanned += 1
-        before = _reference_summary(reference)
-        try:
+        source_type = reference.source_type
+        new_status: str | None = None
+
+        if source_type == "markdown-file":
+            try:
+                new_hash = compute_source_hash_for_reference(
+                    source_type=source_type,
+                    stable_locator=reference.stable_locator,
+                    passage_range=reference.passage_range,
+                    content=None,
+                    hash_algorithm=reference.hash_algorithm,
+                    base_path=base_path,
+                )
+            except FileNotFoundError:
+                new_status = "missing"
+            else:
+                new_status = "current" if new_hash == reference.content_hash else "stale"
+        elif source_type == "internal-note":
+            content = note_resolver(reference) if note_resolver is not None else None
+            if content is None:
+                # No resolver wired in (or it could not re-derive the note):
+                # an explicit, reportable reason -- not a silent skip.
+                skipped += 1
+                continue
             new_hash = compute_source_hash_for_reference(
-                source_type=reference.source_type,
+                source_type=source_type,
                 stable_locator=reference.stable_locator,
                 passage_range=reference.passage_range,
-                content=None,
+                content=content,
                 hash_algorithm=reference.hash_algorithm,
-                base_path=base_path,
             )
-        except FileNotFoundError:
-            new_status = "missing"
-            missing += 1
-        else:
             new_status = "current" if new_hash == reference.content_hash else "stale"
-            if new_status == "current":
-                current += 1
+        elif source_type == "url":
+            if not allow_network or url_fetcher is None:
+                network_skipped += 1
+                continue
+            try:
+                fetched = url_fetcher(reference.stable_locator)
+            except Exception:
+                # An unreachable/removed URL surfaces as a missing source rather
+                # than crashing the whole scan pass.
+                new_status = "missing"
             else:
-                stale += 1
+                new_hash = compute_source_hash_for_reference(
+                    source_type=source_type,
+                    stable_locator=reference.stable_locator,
+                    passage_range=reference.passage_range,
+                    content=fetched,
+                    hash_algorithm=reference.hash_algorithm,
+                )
+                new_status = "current" if new_hash == reference.content_hash else "stale"
+        elif source_type == "pdf-passage":
+            unsupported_pdf += 1
+            continue
+        elif source_type == "kindle-highlight":
+            unsupported_kindle += 1
+            continue
+        else:
+            skipped += 1
+            continue
+
+        scanned += 1
+        if new_status == "current":
+            current += 1
+        elif new_status == "stale":
+            stale += 1
+        else:
+            missing += 1
+
+        before = _reference_summary(reference)
         if reference.drift_status == new_status:
             continue
         reference.drift_status = new_status
@@ -255,6 +334,9 @@ def scan_source_references(
         stale=stale,
         missing=missing,
         skipped=skipped,
+        unsupported_pdf=unsupported_pdf,
+        unsupported_kindle=unsupported_kindle,
+        network_skipped=network_skipped,
     )
 
 

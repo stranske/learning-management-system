@@ -54,7 +54,10 @@ def main() -> None:
     source_subparsers = source_parser.add_subparsers(dest="source_references_command")
     scan_parser = source_subparsers.add_parser(
         "scan-drift",
-        help="mark changed markdown file references as stale or missing",
+        help=(
+            "refresh drift status for markdown-file references (and report "
+            "per-type coverage for the other source types) as current/stale/missing"
+        ),
     )
     scan_parser.add_argument(
         "--base-path",
@@ -356,7 +359,10 @@ def main() -> None:
                 f"current={drift_summary.current} "
                 f"stale={drift_summary.stale} "
                 f"missing={drift_summary.missing} "
-                f"skipped={drift_summary.skipped}"
+                f"skipped={drift_summary.skipped} "
+                f"unsupported_pdf={drift_summary.unsupported_pdf} "
+                f"unsupported_kindle={drift_summary.unsupported_kindle} "
+                f"network_skipped={drift_summary.network_skipped}"
             )
             return
         parser.error("source-references requires a subcommand")
