@@ -208,6 +208,8 @@ def compute_source_hash_for_reference(
     base_path: str | Path | None = None,
 ) -> str:
     """Compute the hash for a reference from content or its locator."""
+    if source_type == "markdown-file":
+        _validate_markdown_passage_range(passage_range)
     if content is not None:
         return compute_source_hash(content, hash_algorithm=hash_algorithm)
     if source_type == "markdown-file":
@@ -363,13 +365,18 @@ def _select_passage(text: str, passage_range: str | None) -> str:
         return text
     match = _LINE_RANGE_PATTERN.match(passage_range.strip())
     if match is None:
-        return text
+        raise ValueError(f"unsupported markdown passage_range: {passage_range!r}")
     start = max(int(match.group("start")), 1)
     end = int(match.group("end") or start)
     if end < start:
         start, end = end, start
     lines = text.splitlines(keepends=True)
     return "".join(lines[start - 1 : end])
+
+
+def _validate_markdown_passage_range(passage_range: str | None) -> None:
+    if passage_range and _LINE_RANGE_PATTERN.match(passage_range.strip()) is None:
+        raise ValueError(f"unsupported markdown passage_range: {passage_range!r}")
 
 
 def _reference_summary(reference: SourceReference) -> Mapping[str, Any]:

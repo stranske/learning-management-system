@@ -70,6 +70,25 @@ def test_missing_markdown_file_marks_reference_missing(
     assert reference.drift_status == "missing"
 
 
+def test_freetext_passage_range_not_false_stale(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Free-text markdown ranges are rejected before they can hash inconsistently."""
+    note = tmp_path / "research.md"
+    note.write_text("# Heading\npassage scoped text\ntrailing context\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unsupported markdown passage_range"):
+        create_source_reference(
+            db_session,
+            source_type="markdown-file",
+            stable_locator=str(note),
+            passage_range="Section 1",
+            content="passage scoped text",
+            actor_id="user:alice",
+        )
+
+
 def test_changed_internal_note_marks_reference_stale(db_session: Session) -> None:
     """A changed internal-note (re-derived via resolver) flips to stale + audits."""
     reference = create_source_reference(
