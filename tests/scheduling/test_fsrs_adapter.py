@@ -272,6 +272,41 @@ def test_fast_high_confidence_non_first_attempt_does_not_map_to_easy(db_session:
     assert rating.rule_id == "unsupported-correct"
 
 
+def test_partial_credit_uses_raw_score_divided_by_max_score(db_session: Session) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=True,
+        raw_score=3.0,
+        max_score=4.0,
+        normalized_score=None,
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.label == "hard"
+    assert rating.value == 2
+    assert rating.rule_id == "partial-under-mastery"
+
+
+def test_low_confidence_without_true_correctness_does_not_map_to_hard(db_session: Session) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=None,
+        confidence_rating=1,
+        support_level="none",
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.label == "again"
+    assert rating.value == 1
+    assert rating.rule_id == "insufficient-signal"
+
+
 def test_adapter_rule_table_is_data_driven() -> None:
     assert [rule.rule_id for rule in FSRS_RULES] == [
         "transfer-excluded",
