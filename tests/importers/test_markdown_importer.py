@@ -122,6 +122,44 @@ def test_dry_run_does_not_write_records(db_session: Session, tmp_path: Path) -> 
     assert db_session.query(AuditLog).count() == 0
 
 
+def test_setext_headings_do_not_crash(db_session: Session, tmp_path: Path) -> None:
+    note = tmp_path / "setext.md"
+    note.write_text(
+        "Big Title\n"
+        "=========\n"
+        "Intro text.\n"
+        "\n"
+        "Small Section\n"
+        "-------------\n"
+        "More details.\n",
+        encoding="utf-8",
+    )
+
+    summary = import_markdown_notes(db_session, note, actor_id="user:alice")
+    db_session.commit()
+
+    assert summary.created_nodes == 2
+    assert summary.created_edges == 1
+    assert [node.title for node in db_session.query(KnowledgeNode).order_by(KnowledgeNode.title)] == [
+        "Big Title",
+        "Small Section",
+    ]
+
+
+def test_non_utf8_markdown_file_is_skipped_with_warning(
+    db_session: Session, tmp_path: Path, caplog: Any
+) -> None:
+    note = tmp_path / "latin1.md"
+    note.write_bytes("Café Notes\n==========\n".encode("latin-1"))
+
+    summary = import_markdown_notes(db_session, note, dry_run=True)
+
+    assert summary.dry_run is True
+    assert summary.files_scanned == 0
+    assert summary.planned_nodes == 0
+    assert "skipping non-UTF-8 markdown file" in caplog.text
+
+
 def test_import_records_audit_events_for_sources_nodes_and_edges(
     db_session: Session, tmp_path: Path
 ) -> None:

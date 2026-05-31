@@ -93,6 +93,68 @@ def test_unknown_prerequisite_fails_before_writes(tmp_path: Path, db_session: Se
     assert db_session.query(SourceReference).count() == 0
 
 
+def test_invalid_enum_rejected_in_dry_run(tmp_path: Path, db_session: Session) -> None:
+    csv_path = tmp_path / "graph.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "title,knowledge_type,prerequisites,ownership_scope,status,source_locator",
+                "Probability Basics,conceptual,,personal,draft,outline.csv",
+                "Bayes Rule,not_a_type,Probability Basics,personal,draft,outline.csv",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CsvGraphImportError, match="row 3: unknown knowledge type"):
+        import_csv_graph(db_session, csv_path, dry_run=True)
+
+    assert db_session.query(KnowledgeNode).count() == 0
+    assert db_session.query(KnowledgeEdge).count() == 0
+    assert db_session.query(SourceReference).count() == 0
+
+
+def test_self_prerequisite_rejected_before_writes(
+    tmp_path: Path, db_session: Session
+) -> None:
+    csv_path = tmp_path / "graph.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "title,knowledge_type,prerequisites,ownership_scope,status,source_locator",
+                "Probability Basics,conceptual,Probability Basics,personal,draft,outline.csv",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CsvGraphImportError, match="cannot list itself as a prerequisite"):
+        import_csv_graph(db_session, csv_path)
+
+    assert db_session.query(KnowledgeNode).count() == 0
+    assert db_session.query(KnowledgeEdge).count() == 0
+    assert db_session.query(SourceReference).count() == 0
+
+
+def test_latin1_csv_raises_import_error(tmp_path: Path, db_session: Session) -> None:
+    csv_path = tmp_path / "graph.csv"
+    csv_path.write_bytes(
+        "\n".join(
+            [
+                "title,knowledge_type,prerequisites,ownership_scope,status,source_locator",
+                "Café Basics,conceptual,,personal,draft,outline.csv",
+            ]
+        ).encode("latin-1")
+    )
+
+    with pytest.raises(CsvGraphImportError, match="expected UTF-8 text"):
+        import_csv_graph(db_session, csv_path, dry_run=True)
+
+    assert db_session.query(KnowledgeNode).count() == 0
+    assert db_session.query(KnowledgeEdge).count() == 0
+    assert db_session.query(SourceReference).count() == 0
+
+
 def test_missing_required_column_fails_before_writes(tmp_path: Path, db_session: Session) -> None:
     csv_path = tmp_path / "graph.csv"
     csv_path.write_text(
