@@ -94,12 +94,18 @@ def complete_review_queue_item(
     session: Session,
     *,
     review_queue_item_id: str,
-    actor_id: str | None = None,
+    actor_id: str,
 ) -> ReviewQueueItem | None:
     """Mark a queue item and its durable schedule completed."""
     item = session.get(ReviewQueueItem, review_queue_item_id)
     if item is None:
         return None
+    if item.status == "completed":
+        return item
+    if item.reason_code not in {"due-review", "new-learning"}:
+        raise ValueError(
+            "only due-review and new-learning queue items can be completed as " "successful reviews"
+        )
 
     completed_at = utc_now()
     log = dict(item.decision_log or {})

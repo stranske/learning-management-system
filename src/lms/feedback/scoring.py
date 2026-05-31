@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -17,6 +18,8 @@ from lms.feedback.repository import (
 )
 from lms.prompts.models import Prompt
 from lms.scheduling.service import schedule_from_attempt
+
+logger = logging.getLogger(__name__)
 
 
 class RubricScoringError(ValueError):
@@ -94,7 +97,17 @@ def score_attempt_with_rubric(
         },
         attempt_context=attempt.response_metadata,
     )
-    schedule_from_attempt(session, attempt=attempt, evidence_record=evidence)
+    try:
+        schedule_from_attempt(session, attempt=attempt, evidence_record=evidence)
+    except Exception:
+        logger.exception(
+            "failed to schedule review queue item for rubric score",
+            extra={
+                "attempt_id": attempt.id,
+                "evidence_record_id": evidence.id,
+                "learner_id": attempt.learner_id,
+            },
+        )
 
     feedback_record_id: str | None = None
     if normalized_score < feedback_threshold:

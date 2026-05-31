@@ -7,7 +7,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from lms.auth.dependencies import get_current_user
+from lms.auth.models import User
 from lms.db.session import get_session
+from lms.learners.models import Learner
+from lms.scheduling.models import ReviewQueueItem
 from lms.scheduling.repository import (
     complete_review_queue_item,
     count_review_queue_for_learner,
@@ -34,6 +38,7 @@ from lms.scheduling.service import DEFAULT_DAILY_CAP, SchedulerSettings, get_rev
 
 router = APIRouter(tags=["scheduling"])
 SessionDep = Annotated[Session, Depends(get_session)]
+CurrentUserDep = Annotated[User, Depends(get_current_user)]
 
 
 @router.get(
@@ -106,13 +111,30 @@ def list_review_queue_route(
 def complete_review_queue_item_route(
     review_queue_item_id: str,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> ReviewQueueItemRead:
     """Mark a due review satisfied so future scheduling can advance the ramp."""
-    item = complete_review_queue_item(
-        session,
-        review_queue_item_id=review_queue_item_id,
-        actor_id="api:review-queue-complete",
-    )
+    existing = session.get(ReviewQueueItem, review_queue_item_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Review queue item not found.",
+        )
+    learner = session.get(Learner, existing.learner_id)
+    if learner is None or learner.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Review queue item does not belong to the current user.",
+        )
+    try:
+        item = complete_review_queue_item(
+            session,
+            review_queue_item_id=review_queue_item_id,
+            actor_id=current_user.id,
+        )
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if item is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
