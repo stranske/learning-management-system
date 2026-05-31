@@ -146,7 +146,7 @@ A coverage task is NOT complete just because you added tests. It is complete ONL
 ---
 ## PR Tasks and Acceptance Criteria
 
-**Progress:** 5/6 tasks complete, 1 remaining
+**Progress:** 6/6 tasks complete, 0 remaining
 
 ### ⚠️ IMPORTANT: Task Reconciliation Required
 
@@ -177,7 +177,7 @@ The PR is complete when ALL of these are satisfied:
 - [x] uv run pytest tests/sources/test_drift_scan.py::test_freetext_passage_range_not_false_stale -q --no-cov
 - [x] uv run pytest tests/sources/ -q --no-cov
 - [x] uv run ruff check src/lms/sources/repository.py tests/sources/test_drift_scan.py
-- [ ] Deliberate break: restored the silent whole-file fallback; named test failed with DID NOT RAISE; restored guard and reran green.
+- [x] Deliberate break: restored the silent whole-file fallback; named test failed with DID NOT RAISE; restored guard and reran green.
 
 ### Recently Attempted Tasks
 Avoid repeating these unless a task needs explicit follow-up:
