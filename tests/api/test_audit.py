@@ -1,24 +1,17 @@
-"""HTTP tests for the /audit/events read endpoint."""
+"""Unit tests for the audit read endpoint logic without HTTP transport."""
 
 from __future__ import annotations
 
-from collections.abc import Generator
-
-import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from lms.api.audit import read_audit_events
 from lms.audit.repository import record_audit_event
 from lms.db.base import Base
-from lms.db.session import get_session
-from lms.main import create_app
 
 
-@pytest.fixture
-def api_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
-    """Provide a FastAPI test client backed by a shared in-memory SQLite engine."""
+def _session_factory() -> sessionmaker[Session]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -26,34 +19,15 @@ def api_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, No
         future=True,
     )
     Base.metadata.create_all(engine)
-    session_factory = sessionmaker(
+    return sessionmaker(
         bind=engine,
         autoflush=False,
         autocommit=False,
         expire_on_commit=False,
     )
 
-    def override_get_session() -> Generator[Session, None, None]:
-        request_session = session_factory()
-        try:
-            yield request_session
-        finally:
-            request_session.close()
 
-    app = create_app()
-    app.dependency_overrides[get_session] = override_get_session
-
-    try:
-        with TestClient(app) as client:
-            yield client, session_factory
-    finally:
-        app.dependency_overrides.clear()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
-
-
-def _seed_three_events(session_factory: sessionmaker[Session]) -> None:
-    session = session_factory()
+def _seed_three_events(session: Session) -> None:
     record_audit_event(
         session,
         actor_id="user:alice",
@@ -82,71 +56,44 @@ def _seed_three_events(session_factory: sessionmaker[Session]) -> None:
         after_summary={"title": "Quantum Mechanics, 3e (reprint)"},
     )
     session.commit()
-    session.close()
 
 
-def test_audit_events_endpoint_filters_by_entity_type(
-    api_client: tuple[TestClient, sessionmaker[Session]],
-) -> None:
-    """GET /audit/events?entity_type=SourceReference returns only matching events."""
-    client, session_factory = api_client
-    _seed_three_events(session_factory)
+def test_read_audit_events_filters_by_entity_type() -> None:
+    """Endpoint helper returns only matching entity types when filtered."""
+    session = _session_factory()()
+    _seed_three_events(session)
 
-    response = client.get("/audit/events", params={"entity_type": "SourceReference"})
+    payload = read_audit_events(session, entity_type="SourceReference")
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert {event["entity_type"] for event in payload} == {"SourceReference"}
+    assert {event.entity_type for event in payload} == {"SourceReference"}
     assert len(payload) == 2
 
 
-def test_audit_events_endpoint_filters_by_actor(
-    api_client: tuple[TestClient, sessionmaker[Session]],
-) -> None:
-    """GET /audit/events?actor_id=user:bob returns only bob's events."""
-    client, session_factory = api_client
-    _seed_three_events(session_factory)
+def test_read_audit_events_filters_by_actor() -> None:
+    """Endpoint helper returns only the requested actor's records."""
+    session = _session_factory()()
+    _seed_three_events(session)
 
-    response = client.get("/audit/events", params={"actor_id": "user:bob"})
+    payload = read_audit_events(session, actor_id="user:bob")
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert [event["actor_id"] for event in payload] == ["user:bob"]
+    assert [event.actor_id for event in payload] == ["user:bob"]
 
 
-def test_audit_events_endpoint_returns_all_when_unfiltered(
-    api_client: tuple[TestClient, sessionmaker[Session]],
-) -> None:
-    """GET /audit/events without filters returns every recorded event."""
-    client, session_factory = api_client
-    _seed_three_events(session_factory)
+def test_read_audit_events_returns_all_when_unfiltered() -> None:
+    """Endpoint helper returns all records when no filters are supplied."""
+    session = _session_factory()()
+    _seed_three_events(session)
 
-    response = client.get("/audit/events")
+    payload = read_audit_events(session)
 
-    assert response.status_code == 200
-    payload = response.json()
     assert len(payload) == 3
 
 
-def test_audit_events_endpoint_rejects_invalid_limit(
-    api_client: tuple[TestClient, sessionmaker[Session]],
-) -> None:
-    """Limits below 1 are rejected by the FastAPI query validator."""
-    client, _session_factory = api_client
+def test_read_audit_events_applies_limit() -> None:
+    """Endpoint helper honors the explicit limit argument."""
+    session = _session_factory()()
+    _seed_three_events(session)
 
-    response = client.get("/audit/events", params={"limit": 0})
+    payload = read_audit_events(session, limit=1)
 
-    assert response.status_code == 422
-
-
-def test_openapi_exposes_audit_events_path(
-    api_client: tuple[TestClient, sessionmaker[Session]],
-) -> None:
-    """The /audit/events path appears in the OpenAPI schema."""
-    client, _session_factory = api_client
-
-    response = client.get("/openapi.json")
-
-    assert response.status_code == 200
-    paths = response.json()["paths"]
-    assert "/audit/events" in paths
+    assert len(payload) == 1

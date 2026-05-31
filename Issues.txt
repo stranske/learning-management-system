@@ -43,7 +43,7 @@ Tasks
 - [x] Verify pytest passes with >80% coverage
 
 Acceptance criteria
-- [ ] Package can be installed with pip install -e .
+- [x] Package can be installed with pip install -e .
 - [ ] Running pytest shows all tests passing
 - [x] Running ruff check shows no issues
 - [x] Running mypy shows no errors
