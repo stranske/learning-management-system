@@ -12,17 +12,21 @@ from lms.auth.models import User
 from lms.auth.repository import get_user
 from lms.db.session import get_session
 from lms.graphs.schemas import OwnershipScope
-from lms.learners.models import Learner, LearningGoal
+from lms.learners.models import Learner, LearnerReflection, LearningGoal
 from lms.learners.repository import (
     create_learner_for_user,
     create_learning_goal,
+    create_reflection,
     get_learner,
     get_learning_goal,
+    goal_progress_for_learner,
     knowledge_profile_for_learner,
     list_learning_goals_for_learner,
+    list_reflections_for_learner,
     update_learning_goal,
 )
 from lms.learners.schemas import (
+    GoalProgressRead,
     GoalStatus,
     KnowledgeProfileRead,
     LearnerCreate,
@@ -30,6 +34,8 @@ from lms.learners.schemas import (
     LearningGoalCreate,
     LearningGoalRead,
     LearningGoalUpdate,
+    ReflectionCreate,
+    ReflectionRead,
 )
 
 router = APIRouter(prefix="/learners", tags=["learners"])
@@ -182,3 +188,74 @@ def update_learning_goal_route(
             detail=str(exc),
         ) from exc
     return updated
+
+
+@router.post(
+    "/{learner_id}/reflections",
+    response_model=ReflectionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_reflection_route(
+    learner_id: str,
+    payload: ReflectionCreate,
+    session: SessionDep,
+    _current_user: CurrentUserDep,
+) -> LearnerReflection:
+    """Record a learner's metacognitive reflection after a review."""
+    if get_learner(session, learner_id=learner_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
+    try:
+        reflection = create_reflection(
+            session,
+            learner_id=learner_id,
+            prompt=payload.prompt,
+            response=payload.response,
+            knowledge_node_id=payload.knowledge_node_id,
+        )
+        session.commit()
+        session.refresh(reflection)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    return reflection
+
+
+@router.get("/{learner_id}/reflections", response_model=list[ReflectionRead])
+def list_reflections_route(
+    learner_id: str,
+    session: SessionDep,
+    _current_user: CurrentUserDep,
+) -> list[LearnerReflection]:
+    """Surface a learner's recorded reflections, newest first."""
+    if get_learner(session, learner_id=learner_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
+    return list_reflections_for_learner(session, learner_id=learner_id)
+
+
+@router.get(
+    "/{learner_id}/learning-goals/{goal_id}/progress",
+    response_model=GoalProgressRead,
+)
+def read_goal_progress_route(
+    learner_id: str,
+    goal_id: str,
+    session: SessionDep,
+    _current_user: CurrentUserDep,
+) -> dict[str, object]:
+    """Return goal-relative progress (target nodes covered vs. mastered)."""
+    if get_learner(session, learner_id=learner_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
+    try:
+        return goal_progress_for_learner(
+            session,
+            learner_id=learner_id,
+            goal_id=goal_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, String, Table, func
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, String, Table, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lms.auth.models import new_uuid, utc_now
@@ -18,6 +18,11 @@ if TYPE_CHECKING:
 
 
 GOAL_STATUSES: tuple[str, ...] = ("active", "paused", "completed", "archived")
+
+# A target node counts as "mastered" for goal-relative progress when its current
+# mastery estimate reaches this threshold. Matches the 0.8 confidence-threshold
+# default used by the capability-gap UI so the two surfaces agree on "mastered".
+MASTERY_THRESHOLD: float = 0.8
 
 learning_goal_nodes = Table(
     "learning_goal_nodes",
@@ -70,6 +75,12 @@ class Learner(Base):
 
     learning_goals: Mapped[list[LearningGoal]] = relationship(
         "LearningGoal",
+        back_populates="learner",
+        cascade="all, delete-orphan",
+    )
+
+    reflections: Mapped[list[LearnerReflection]] = relationship(
+        "LearnerReflection",
         back_populates="learner",
         cascade="all, delete-orphan",
     )
@@ -127,3 +138,39 @@ class LearningGoal(Base):
         secondary=learning_goal_nodes,
         order_by="KnowledgeNode.id",
     )
+
+
+class LearnerReflection(Base):
+    """A metacognitive reflection a learner records after a review.
+
+    Stored as a small standalone record (optionally tied to the reviewed
+    knowledge node) so the "reflection prompts" half of the motivation /
+    self-regulation commitment is persisted and retrievable, not just scaffolded.
+    """
+
+    __tablename__ = "learner_reflections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    learner_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("learners.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    knowledge_node_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_nodes.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    response: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    learner: Mapped[Learner] = relationship("Learner", back_populates="reflections")
