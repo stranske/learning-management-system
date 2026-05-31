@@ -20,6 +20,7 @@ from lms.capability.models import (
 )
 from lms.competencies.models import Competency, CompetencyEvidence
 from lms.evidence.models import EvidenceRecord
+from lms.evidence.scoring import record_score
 from lms.graphs.models import KnowledgeNode
 from lms.learners.models import Learner, LearningGoal
 from lms.learners.repository import knowledge_profile_for_learner
@@ -737,19 +738,9 @@ def _weighted_evidence_score(
         if record is None:
             continue
         weight = link.contribution_weight
-        weighted_score += _record_score(record) * weight
+        weighted_score += record_score(record) * weight
         total_weight += weight
     return round(weighted_score / total_weight, 4) if total_weight else 0.0
-
-
-def _record_score(record: EvidenceRecord) -> float:
-    if record.normalized_score is not None:
-        return float(record.normalized_score)
-    if record.raw_score is not None and record.max_score:
-        return float(record.raw_score) / float(record.max_score)
-    if record.correctness is not None:
-        return 1.0 if record.correctness else 0.0
-    return 0.5
 
 
 def _coverage_factor(
