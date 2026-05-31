@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from typing import Any, cast
 
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
+import pytest
+from sqlalchemy.orm import Session, sessionmaker
 
+from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
 from lms.capability.repository import create_capability_target
 from lms.competencies.repository import create_competency
@@ -15,10 +18,34 @@ from lms.graphs.repository import create_knowledge_node
 from lms.learners.repository import create_learner_for_user, create_learning_goal
 from lms.main import create_app
 
+pytestmark = pytest.mark.slow
+
 
 def _client(db_session: Session) -> TestClient:
     app = create_app(enable_local_identity_routes=True)
-    app.dependency_overrides[get_session] = lambda: db_session
+    bind = db_session.get_bind()
+    session_factory = sessionmaker(
+        bind=bind,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
+
+    def _override_session() -> Generator[Session, None, None]:
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_session] = _override_session
+    app.dependency_overrides[require_authenticated_user] = lambda: User(
+        id="test-user",
+        email="test-user@example.test",
+        username="test-user",
+        display_name="Test User",
+        is_local=True,
+    )
     return TestClient(app)
 
 
