@@ -2,11 +2,38 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
 PolicyMode = Literal["study-coach", "practice"]
 CoachingIntensity = Literal["full", "light", "quiet"]
+
+# Characters that can legitimately appear inside a citation/source identifier
+# (e.g. ``source:biology-note-1``). A citation counts as "present" only when it
+# occurs as a maximal run of these characters — i.e. not as a substring of a
+# longer identifier. This makes matching boundary-aware: a bare substring of a
+# larger token (``src1`` inside ``src12``) no longer satisfies the constraint,
+# closing the trivial "echo the id" gap of a naive ``in`` test.
+_CITATION_ID_CHARS = r"0-9A-Za-z_:.\-"
+
+
+def citation_present(text: str, citation: str) -> bool:
+    """Return whether ``citation`` appears in ``text`` as a bounded identifier.
+
+    Boundary-aware replacement for ``citation in text``: the citation must be
+    flanked by characters outside an identifier run (whitespace, punctuation,
+    or string boundaries), so it cannot be satisfied by appearing as a
+    substring of a longer token.
+    """
+    if not citation:
+        return False
+    pattern = (
+        rf"(?<![{_CITATION_ID_CHARS}])"
+        + re.escape(citation)
+        + rf"(?![{_CITATION_ID_CHARS}])"
+    )
+    return re.search(pattern, text) is not None
 
 ANSWER_SEEKING_TERMS = (
     "answer",
@@ -233,5 +260,7 @@ def flag_uncited_claims(text: str, source_constraints: tuple[str, ...]) -> tuple
     """Flag source-constrained output that omits required source identifiers."""
     if not source_constraints:
         return ()
-    missing = [source_id for source_id in source_constraints if source_id not in text]
+    missing = [
+        source_id for source_id in source_constraints if not citation_present(text, source_id)
+    ]
     return ("unverified",) if missing else ()

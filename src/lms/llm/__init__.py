@@ -3,6 +3,7 @@
 from lms.llm.exceptions import (
     BudgetExceeded,
     LLMError,
+    ProviderCallError,
     SourceConstraintViolation,
     StructuredOutputValidationError,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "LearningInteractionSkill",
     "LLMError",
     "BudgetExceeded",
+    "ProviderCallError",
     "SourceConstraintViolation",
     "StructuredOutputValidationError",
 ]

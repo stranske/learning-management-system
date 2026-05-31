@@ -18,10 +18,11 @@ from lms.llm.config import LLMConfig
 from lms.llm.exceptions import (
     BudgetExceeded,
     LLMError,
+    ProviderCallError,
     SourceConstraintViolation,
     StructuredOutputValidationError,
 )
-from lms.llm.interaction_policy import CoachingIntensity
+from lms.llm.interaction_policy import CoachingIntensity, citation_present
 from lms.llm.models import COACHING_INTENSITIES, LLM_MODES, TRACE_CLASSES, LLMSession
 from lms.llm.providers import ProviderAdapter, ProviderResponse
 from lms.llm.redaction import RedactionResult, redact_pii
@@ -113,16 +114,23 @@ class LLMClient:
         provider = self._resolve_provider(provider_name or derived_provider)
 
         projected_cost = self._estimate_cost(provider, prompt=prompt, max_tokens=max_tokens)
-        self.budget.preflight(mode, projected_cost)
-
-        provider_response = provider.complete(
-            model=model,
-            prompt=prompt,
-            max_tokens=max_tokens,
-            timeout_seconds=self.config.default_timeout_seconds,
-        )
-
-        self.budget.record(mode, provider_response.cost_micro_usd)
+        # Reserve atomically (check-and-debit in one critical section) so two
+        # concurrent calls cannot both pass preflight against a stale spend.
+        reservation = self.budget.reserve(mode, projected_cost)
+        try:
+            provider_response = provider.complete(
+                model=model,
+                prompt=prompt,
+                max_tokens=max_tokens,
+                timeout_seconds=self.config.default_timeout_seconds,
+            )
+        except BaseException:
+            # The call never produced billable usage; refund the reservation so
+            # a failed/timed-out call does not permanently consume the cap.
+            self.budget.release(reservation)
+            raise
+        # Reconcile the optimistic reservation down (or up) to actual cost.
+        self.budget.commit(reservation, provider_response.cost_micro_usd)
 
         redaction = self.redactor(provider_response.text)
         external_export_allowed = trace_class != "ephemeral"
@@ -146,7 +154,7 @@ class LLMClient:
             missing = [
                 citation
                 for citation in source_constraints
-                if citation not in provider_response.text
+                if not citation_present(provider_response.text, citation)
             ]
             if missing:
                 raise SourceConstraintViolation(
@@ -265,9 +273,20 @@ class LLMClient:
         even when the adapter does not expose a structured pricing model.
         """
         input_tokens = max(1, len(prompt.split()))
-        output_tokens = max_tokens if max_tokens is not None else max(64, input_tokens)
-        input_rate = getattr(provider, "input_token_cost_micro_usd", 1_000)
-        output_rate = getattr(provider, "output_token_cost_micro_usd", 4_000)
+        # When the caller does not cap output, the provider sends its own
+        # ``default_max_tokens`` (1024 for Anthropic), so preflight must project
+        # that many output tokens — not a 64-token floor that would let a
+        # full-length completion slip under the cap.
+        if max_tokens is not None:
+            output_tokens = max_tokens
+        else:
+            output_tokens = int(getattr(provider, "default_max_tokens", 1024))
+        # Fallback rates are on the module's real micro-USD-per-token scale
+        # (~3 in / 15 out, matching providers.py pricing) rather than the prior
+        # ~300x-inflated (1_000, 4_000) that mis-estimated any adapter lacking
+        # explicit cost attributes.
+        input_rate = getattr(provider, "input_token_cost_micro_usd", 3)
+        output_rate = getattr(provider, "output_token_cost_micro_usd", 15)
         return input_tokens * input_rate + output_tokens * output_rate
 
 
@@ -284,6 +303,7 @@ __all__ = [
     "GoldSetEntry",
     "LLMClient",
     "LLMResponse",
+    "ProviderCallError",
     "SourceConstraintViolation",
     "StructuredOutputValidationError",
 ]
