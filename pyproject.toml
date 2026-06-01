@@ -68,6 +68,14 @@ dev = [
     "black==26.3.1",
     "jupyter>=1.1.1",
     "types-PyYAML>=6.0.12.20260518",
+    # Shared app behavior baseline harness (tests/baseline). Pulls
+    # pytest-regressions, whose num_regression fixture needs numpy + pandas --
+    # both already core LMS dependencies. Tracked as a git direct reference
+    # pinned to the exact Workflows commit captured in requirements.lock; the URL
+    # (including the @<sha> fragment) MUST match the lock entry or uv rejects the
+    # resolve with "conflicting URLs for package `app-baseline-kit`".
+    "app-baseline-kit @ git+https://github.com/stranske/Workflows.git@13f94883220bbfb0ca69a4666fb44a49e0ae8172#subdirectory=packages/app-baseline-kit",
+    "pytest-regressions==2.11.0",
 ]
 # Deferred visual/accessibility harness. Not installed in CI: the required M6
 # smoke layer is the browser-free HTML snapshot suite in
@@ -190,4 +198,12 @@ ignore_missing_imports = true
 # without it installed; ignore the missing import so dev environments without
 # the wheel still type-check cleanly.
 module = ["anthropic", "anthropic.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# app-baseline-kit ships py.typed, but it is installed as a git/editable
+# direct reference; mypy in some environments cannot resolve the package's
+# implementation. The baseline harness (tests/baseline) only consumes its
+# thin public API, so ignore the missing import rather than vendoring stubs.
+module = ["baseline_kit", "baseline_kit.*"]
 ignore_missing_imports = true
