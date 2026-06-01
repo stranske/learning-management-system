@@ -31,6 +31,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    env_file:
+      # Optional local secrets/config. Compose continues when the file is
+      # absent, while developers can create it for AUTH_REQUIRED, LLM keys,
+      # LangSmith, or other private overrides without committing secrets.
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://lms:lms@db:5432/lms
       # Local dev keeps auth off so the existing test/dev shortcut works.
