@@ -31,13 +31,19 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    env_file:
+      # Optional local secrets/config. Compose continues when the file is
+      # absent, while developers can create it for AUTH_REQUIRED, LLM keys,
+      # LangSmith, or other private overrides without committing secrets.
+      - path: .env
+        required: false
     environment:
-      DATABASE_URL: postgresql+psycopg://lms:lms@db:5432/lms
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://lms:lms@db:5432/lms}
       # Local dev keeps auth off so the existing test/dev shortcut works.
       # Flip these on (and set AUTH_SECRET_KEY) to exercise the login flow.
-      AUTH_REQUIRED: "false"
-      AUTH_SECRET_KEY: dev-secret-do-not-use-in-production
-      ENABLE_LOCAL_IDENTITY_ROUTES: "true"
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-false}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-dev-secret-do-not-use-in-production}
+      ENABLE_LOCAL_IDENTITY_ROUTES: ${ENABLE_LOCAL_IDENTITY_ROUTES:-true}
       # Optional: surface LLM keys to the container.
       CLAUDE_API_STRANSKE: ${CLAUDE_API_STRANSKE:-}
     ports:

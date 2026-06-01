@@ -29,15 +29,24 @@ docker compose down -v
 
 ### Surfacing the LLM key
 
-`docker-compose.yml` forwards `CLAUDE_API_STRANSKE` from your shell env if it
-is set. The simplest way:
+`docker-compose.yml` reads a private `.env` file when present. Compose also
+uses exported shell variables for the same names, so either path can supply
+local secrets or override the development defaults. The simplest shell-only way:
 
 ```bash
 export CLAUDE_API_STRANSKE='sk-ant-...'
 docker compose up
 ```
 
-Don't add `.env` to the repo. The Compose file already reads from your shell.
+For repeated local work, create a private `.env` instead:
+
+```bash
+CLAUDE_API_STRANSKE=sk-ant-...
+LANGSMITH_API_KEY=...
+LLM_DAILY_BUDGET_USD=2.50
+```
+
+`.env` is gitignored and must stay local.
 
 ## Option B: Native venv
 
