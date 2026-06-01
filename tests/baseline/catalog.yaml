@@ -50,18 +50,31 @@ scenarios:
     response_time_seconds: 60
     prior_successes: 0
 
-  # Correct WITH support (a hint) at a confidently-at-mastery score. The hint
-  # makes the *internal* signal low-confidence (shortened 1-day interval,
-  # priority 0.7, signal severity 1) -- this is the dimension the directional
-  # check keys on. The FSRS rating itself stays "good" (3): the adapter's
-  # `partial-at-mastery` rule (normalized_score >= 0.85) fires before its
-  # `supported-or-low-confidence-correct` rule, so a high-scoring supported
-  # answer still rates FSRS good. The score is held well clear of the 0.85
-  # mastery boundary (0.97, a +0.12 margin) so the integer rating bucket is
-  # unambiguous and identical on every platform.
+  # Correct WITH support (a hint) and NO explicit normalized_score. This is a
+  # supported success that needed a hint, so its honest FSRS rating is "hard"
+  # (2) via the `supported-or-low-confidence-correct` rule, and the internal
+  # signal is low-confidence (shortened 1-day interval, priority 0.7, signal
+  # severity 1) -- the dimension the `support_raises_priority` directional keys
+  # on.
+  #
+  # IMPORTANT (cross-platform stability): `normalized_score` is intentionally
+  # null here. The FSRS adapter's score rules (`partial-under-half` /
+  # `partial-under-mastery` / `partial-at-mastery`) only fire when `_score()`
+  # returns a non-None value; with no score they are all skipped and the
+  # categorical `support_level: hint` rule alone decides the rating. That makes
+  # `fsrs_rating_value` depend on a string equality, not on any float threshold
+  # or arithmetic, so macOS and Linux agree deterministically.
+  #
+  # This deliberately avoids the earlier knife-edge design (a `normalized_score`
+  # >= 0.85 threshold deciding the bucket). Earlier revisions pinned the score
+  # at 0.92 then 0.97; CI on Linux still produced 2 while macOS produced 3 --
+  # because the divergence was NOT a float-threshold rounding issue but the
+  # `normalized_score` field itself arriving as None on Linux, which dropped the
+  # `partial-at-mastery` rule. Removing the score from this scenario's decision
+  # path eliminates that platform dependency entirely.
   - id: supported_success
     correctness: true
-    normalized_score: 0.97
+    normalized_score: null
     confidence_rating: 5
     support_level: hint
     response_time_seconds: 60
