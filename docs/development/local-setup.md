@@ -29,9 +29,10 @@ docker compose down -v
 
 ### Surfacing the LLM key
 
-`docker-compose.yml` reads a private `.env` file when present. Compose also
-uses exported shell variables for the same names, so either path can supply
-local secrets or override the development defaults. The simplest shell-only way:
+Docker Compose automatically reads a private `.env` file from the repo root when
+present. Compose also uses exported shell variables for the same names, so either
+path can supply local secrets or override the development defaults. The simplest
+shell-only way:
 
 ```bash
 export CLAUDE_API_STRANSKE='sk-ant-...'
