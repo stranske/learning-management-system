@@ -71,8 +71,10 @@ dev = [
     # Shared app behavior baseline harness (tests/baseline). Pulls
     # pytest-regressions, whose num_regression fixture needs numpy + pandas --
     # both already core LMS dependencies. Tracked as a git direct reference
-    # (latest on Workflows main).
-    "app-baseline-kit @ git+https://github.com/stranske/Workflows.git#subdirectory=packages/app-baseline-kit",
+    # pinned to the exact Workflows commit captured in requirements.lock; the URL
+    # (including the @<sha> fragment) MUST match the lock entry or uv rejects the
+    # resolve with "conflicting URLs for package `app-baseline-kit`".
+    "app-baseline-kit @ git+https://github.com/stranske/Workflows.git@13f94883220bbfb0ca69a4666fb44a49e0ae8172#subdirectory=packages/app-baseline-kit",
     "pytest-regressions==2.11.0",
 ]
 # Deferred visual/accessibility harness. Not installed in CI: the required M6
