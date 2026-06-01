@@ -68,6 +68,14 @@ def _is_supported_correct_or_low_confidence(record: EvidenceRecord) -> bool:
     )
 
 
+def _is_low_confidence_correct(record: EvidenceRecord) -> bool:
+    return (
+        record.correctness is True
+        and record.confidence_rating is not None
+        and record.confidence_rating <= LOW_CONFIDENCE_MAX
+    )
+
+
 def _is_fast_first_attempt(record: EvidenceRecord) -> bool:
     """Return true for explicitly first-attempt, fast, high-confidence correctness."""
 
@@ -118,6 +126,7 @@ def _is_score_at_mastery(record: EvidenceRecord) -> bool:
     return (
         record.correctness is not False
         and not _has_support(record)
+        and not _is_low_confidence_correct(record)
         and score is not None
         and score >= 0.85
     )

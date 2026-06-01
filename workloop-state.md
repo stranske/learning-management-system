@@ -1,5 +1,14 @@
 # Workloop State
 
+## 2026-06-01T01:26Z - closer (codex): opened follow-up lane for #230 FSRS rating precedence
+
+- Automation: `imi-merge-verify-closer` closer lane from neutral Code workspace. ACTION A zero exit; key PR pressure inactive; opener cap pressure active. Scoped blockers were consulted before discovery.
+- Fresh fleet discovery: open PRs across supported repos found no unscoped issue-linked merge-ready PRs. Trend_Model_Project #5353 remains scoped-blocked on #5343. Unlinked/no-agent PRs such as LMS #207, Workflows #2179/#2180/#2177, and baseline-kit/no-emit-lock traffic were excluded from the agent issue closer chain.
+- Complex lane selected: **learning-management-system #230**, a follow-up issue filed from merged baseline-kit PR #229, with no existing follow-up PR. The issue reports that low-confidence/supported-correct FSRS ratings can depend on whether `normalized_score` survives to scheduler time.
+- Implementation in branch `codex/followup-230-fsrs-rating`: `src/lms/scheduling/fsrs_adapter.py` now prevents low-confidence correct evidence from being upgraded by the high-score `partial-at-mastery` rule. Added `test_low_confidence_high_score_is_hard` and updated the baseline catalog/golden so the low-confidence scenario records FSRS hard (2), not good (3).
+- Validation: `uv run pytest tests/scheduling/test_fsrs_adapter.py tests/scheduling/test_review_queue.py::test_fsrs_conservative_blend_keeps_low_confidence_signal tests/baseline -q --no-cov` -> 55 passed; `uv run ruff check src/lms/scheduling/fsrs_adapter.py tests/scheduling/test_fsrs_adapter.py tests/baseline` -> passed; `uv run mypy src/lms/scheduling/fsrs_adapter.py` -> passed; `git diff --check` -> passed.
+- Next action: push this branch and open/update a bounded follow-up PR linked to #230; then keepalive/CI owns post-push review.
+
 ## 2026-05-31T22:17Z - codex opener opening PR for #206 (HTTP error branch coverage)
 
 - Automation: `pd-workloop-resume` opener lane from the neutral Code workspace. ACTION A zero exit; full discovery ran. Cap-health after repair helper reported raw cap below 5: LMS #227 `draining` with fresh Gate/Gate Followups evidence, Trend #5353 `runner-failed` under the existing scoped owner/product blocker, and Counter_Risk #665 as a human-authored draft/non-registry PR outside opener routing.
