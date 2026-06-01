@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from lms.evidence.api import create_attempt_route
 from lms.evidence.repository import create_attempt, get_attempt, list_evidence_records
 from lms.evidence.schemas import AttemptCreate, AttemptRead
+from lms.scheduling.fsrs_adapter import evidence_to_fsrs_rating
 
 
 def _attempt_payload() -> dict[str, object]:
@@ -149,6 +150,54 @@ def test_post_attempt_scoring_none_fields_fall_back_to_attempt_context(
     assert len(records) == 1
     assert records[0].response_time_seconds == attempt_payload.elapsed_seconds
     assert records[0].attempt_context == attempt_payload.response_metadata
+
+
+def test_post_attempt_derives_normalized_score_from_raw_and_max_score(db_session: Session) -> None:
+    """Raw/max scoring signals persist a normalized score for downstream schedulers."""
+    payload = _attempt_payload()
+    payload["evidence"] = {
+        "knowledge_node_id": "node-1",
+        "correctness": True,
+        "raw_score": 3.0,
+        "max_score": 4.0,
+    }
+
+    attempt_payload = AttemptCreate.model_validate(payload)
+    create_attempt_route(attempt_payload, db_session)
+
+    records = list_evidence_records(
+        db_session,
+        learner_id=attempt_payload.learner_id,
+        knowledge_node_id="node-1",
+    )
+    assert len(records) == 1
+    assert records[0].normalized_score == pytest.approx(0.75)
+
+
+def test_post_attempt_with_zero_normalized_score_is_persisted_and_used(db_session: Session) -> None:
+    """A zero score is explicit evidence and must not be treated as missing."""
+    payload = _attempt_payload()
+    payload["reference_accessed"] = False
+    payload["support_level"] = "none"
+    payload["evidence"] = {
+        "knowledge_node_id": "node-1",
+        "correctness": True,
+        "normalized_score": 0.0,
+    }
+
+    attempt_payload = AttemptCreate.model_validate(payload)
+    create_attempt_route(attempt_payload, db_session)
+
+    records = list_evidence_records(
+        db_session,
+        learner_id=attempt_payload.learner_id,
+        knowledge_node_id="node-1",
+    )
+    assert len(records) == 1
+    assert records[0].normalized_score == 0.0
+    rating = evidence_to_fsrs_rating(records[0])
+    assert rating.rule_id == "partial-under-half"
+    assert rating.label == "again"
 
 
 def test_post_attempt_with_evidence_without_scoring_does_not_create_record(

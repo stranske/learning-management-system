@@ -57,21 +57,10 @@ scenarios:
   # severity 1) -- the dimension the `support_raises_priority` directional keys
   # on.
   #
-  # IMPORTANT (cross-platform stability): `normalized_score` is intentionally
-  # null here. The FSRS adapter's score rules (`partial-under-half` /
-  # `partial-under-mastery` / `partial-at-mastery`) only fire when `_score()`
-  # returns a non-None value; with no score they are all skipped and the
-  # categorical `support_level: hint` rule alone decides the rating. That makes
-  # `fsrs_rating_value` depend on a string equality, not on any float threshold
-  # or arithmetic, so macOS and Linux agree deterministically.
-  #
-  # This deliberately avoids the earlier knife-edge design (a `normalized_score`
-  # >= 0.85 threshold deciding the bucket). Earlier revisions pinned the score
-  # at 0.92 then 0.97; CI on Linux still produced 2 while macOS produced 3 --
-  # because the divergence was NOT a float-threshold rounding issue but the
-  # `normalized_score` field itself arriving as None on Linux, which dropped the
-  # `partial-at-mastery` rule. Removing the score from this scenario's decision
-  # path eliminates that platform dependency entirely.
+  # IMPORTANT (cross-platform stability): support/low-confidence correctness
+  # now has explicit precedence over the high-score mastery rule in the FSRS
+  # adapter. Keeping this scenario scoreless still isolates the categorical
+  # support path in the baseline, while unit tests pin the score-present path.
   - id: supported_success
     correctness: true
     normalized_score: null
@@ -184,14 +173,15 @@ directionals:
     metric: priority
     direction: increase
     enforce: true
-  # NOTE: low confidence does NOT move the FSRS rating here. The FSRS adapter's
-  # `partial-at-mastery` rule (normalized_score >= 0.85) fires before its
-  # `supported-or-low-confidence-correct` rule, so a high-scoring but
-  # low-confidence answer still rates FSRS "good" (3) -- same as base. The
-  # confidence penalty surfaces in `priority`/`signal_severity` instead (above
-  # and below), via the conservative blend with the internal classifier. The
-  # FSRS-rating-decrease direction is covered by `partial_lowers_fsrs_rating`
-  # (a below-mastery score), which the adapter genuinely downgrades to "hard".
+  # Low confidence also lowers the FSRS rating even when a high normalized score
+  # is present; support/low-confidence correctness has precedence over the
+  # high-score mastery rule so the rating is not platform-dependent.
+  - id: low_confidence_lowers_fsrs_rating
+    scenario: low_confidence_success
+    control: base
+    metric: fsrs_rating_value
+    direction: decrease
+    enforce: true
   - id: low_confidence_lowers_signal_severity
     scenario: low_confidence_success
     control: base

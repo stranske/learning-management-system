@@ -68,6 +68,14 @@ def _is_supported_correct_or_low_confidence(record: EvidenceRecord) -> bool:
     )
 
 
+def _is_low_confidence_correct(record: EvidenceRecord) -> bool:
+    return (
+        record.correctness is True
+        and record.confidence_rating is not None
+        and record.confidence_rating <= LOW_CONFIDENCE_MAX
+    )
+
+
 def _is_fast_first_attempt(record: EvidenceRecord) -> bool:
     """Return true for explicitly first-attempt, fast, high-confidence correctness."""
 
@@ -118,6 +126,7 @@ def _is_score_at_mastery(record: EvidenceRecord) -> bool:
     return (
         record.correctness is not False
         and not _has_support(record)
+        and not _is_low_confidence_correct(record)
         and score is not None
         and score >= 0.85
     )
@@ -133,6 +142,22 @@ FSRS_RULES: tuple[FSRSRule, ...] = (
         applies=lambda record: (
             (record.transfer_distance or "").strip().lower() in TRANSFER_EXCLUDED_DISTANCES
         ),
+    ),
+    FSRSRule(
+        rule_id="incorrect",
+        rating="again",
+        value=1,
+        scheduling_included=True,
+        reason="Incorrect evidence maps to FSRS Again.",
+        applies=lambda record: record.correctness is False,
+    ),
+    FSRSRule(
+        rule_id="supported-or-low-confidence-correct",
+        rating="hard",
+        value=2,
+        scheduling_included=True,
+        reason="Correct evidence with support or low confidence maps to FSRS Hard.",
+        applies=_is_supported_correct_or_low_confidence,
     ),
     FSRSRule(
         rule_id="partial-under-half",
@@ -157,22 +182,6 @@ FSRS_RULES: tuple[FSRSRule, ...] = (
         scheduling_included=True,
         reason="Normalized or partial-credit score meets the 0.85 mastery threshold.",
         applies=_is_score_at_mastery,
-    ),
-    FSRSRule(
-        rule_id="incorrect",
-        rating="again",
-        value=1,
-        scheduling_included=True,
-        reason="Incorrect evidence maps to FSRS Again.",
-        applies=lambda record: record.correctness is False,
-    ),
-    FSRSRule(
-        rule_id="supported-or-low-confidence-correct",
-        rating="hard",
-        value=2,
-        scheduling_included=True,
-        reason="Correct evidence with support or low confidence maps to FSRS Hard.",
-        applies=_is_supported_correct_or_low_confidence,
     ),
     FSRSRule(
         rule_id="fast-first-attempt",

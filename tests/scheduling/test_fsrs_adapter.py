@@ -101,6 +101,27 @@ def test_low_confidence_unsupported_correct_maps_to_hard(db_session: Session) ->
     assert rating.rule_id == "supported-or-low-confidence-correct"
 
 
+def test_low_confidence_high_score_is_hard(db_session: Session) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=True,
+        confidence_rating=2,
+        support_level="none",
+        hint_used=False,
+        reference_accessed=False,
+        normalized_score=0.95,
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.label == "hard"
+    assert rating.value == 2
+    assert rating.scheduling_included is True
+    assert rating.rule_id == "supported-or-low-confidence-correct"
+
+
 def test_partial_credit_boundaries(db_session: Session) -> None:
     again = create_evidence_record(
         db_session,
@@ -310,11 +331,11 @@ def test_low_confidence_without_true_correctness_does_not_map_to_hard(db_session
 def test_adapter_rule_table_is_data_driven() -> None:
     assert [rule.rule_id for rule in FSRS_RULES] == [
         "transfer-excluded",
+        "incorrect",
+        "supported-or-low-confidence-correct",
         "partial-under-half",
         "partial-under-mastery",
         "partial-at-mastery",
-        "incorrect",
-        "supported-or-low-confidence-correct",
         "fast-first-attempt",
         "unsupported-correct",
     ]
