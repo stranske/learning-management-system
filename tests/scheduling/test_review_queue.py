@@ -644,6 +644,8 @@ def test_fsrs_conservative_blend_keeps_low_confidence_signal(db_session: Session
     item = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
     # Even though score >= 0.85, low confidence must shorten the interval
     assert item.decision_log["signal"] == "low-confidence-success"
+    assert item.decision_log["fsrs_rating"]["value"] == 2
+    assert item.decision_log["fsrs_rating"]["rule_id"] == "supported-or-low-confidence-correct"
     assert item.due_at == item.created_at + timedelta(days=1) or item.priority == 0.7
 
 

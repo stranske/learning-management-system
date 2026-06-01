@@ -331,11 +331,11 @@ def test_low_confidence_without_true_correctness_does_not_map_to_hard(db_session
 def test_adapter_rule_table_is_data_driven() -> None:
     assert [rule.rule_id for rule in FSRS_RULES] == [
         "transfer-excluded",
+        "incorrect",
+        "supported-or-low-confidence-correct",
         "partial-under-half",
         "partial-under-mastery",
         "partial-at-mastery",
-        "incorrect",
-        "supported-or-low-confidence-correct",
         "fast-first-attempt",
         "unsupported-correct",
     ]
