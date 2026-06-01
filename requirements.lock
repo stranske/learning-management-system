@@ -15,8 +15,6 @@ anyio==4.13.0
     #   jupyter-server
     #   starlette
     #   watchfiles
-app-baseline-kit @ git+https://github.com/stranske/Workflows.git@13f94883220bbfb0ca69a4666fb44a49e0ae8172#subdirectory=packages/app-baseline-kit
-    # via lms (pyproject.toml)
 appnope==0.1.4 ; sys_platform == 'darwin'
     # via ipykernel
 argon2-cffi==25.1.0
@@ -490,3 +488,6 @@ websockets==16.0
     # via uvicorn
 widgetsnbextension==4.0.15
     # via ipywidgets
+
+# The following packages were excluded from the output:
+# app-baseline-kit

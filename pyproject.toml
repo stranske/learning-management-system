@@ -71,10 +71,13 @@ dev = [
     # Shared app behavior baseline harness (tests/baseline). Pulls
     # pytest-regressions, whose num_regression fixture needs numpy + pandas --
     # both already core LMS dependencies. Tracked as a git direct reference
-    # pinned to the exact Workflows commit captured in requirements.lock; the URL
-    # (including the @<sha> fragment) MUST match the lock entry or uv rejects the
-    # resolve with "conflicting URLs for package `app-baseline-kit`".
-    "app-baseline-kit @ git+https://github.com/stranske/Workflows.git@13f94883220bbfb0ca69a4666fb44a49e0ae8172#subdirectory=packages/app-baseline-kit",
+    # unpinned at @main (Pattern A) and excluded from requirements.lock via
+    # [tool.uv.pip] no-emit-package below. Freezing a commit SHA in the lock
+    # while pyproject points at @main reintroduces uv's "conflicting URLs for
+    # package `app-baseline-kit`" error the moment Workflows main advances;
+    # no-emit avoids that conflict class permanently (see
+    # docs/baseline-kit-dependency.md).
+    "app-baseline-kit @ git+https://github.com/stranske/Workflows.git#subdirectory=packages/app-baseline-kit",
     "pytest-regressions==2.11.0",
 ]
 # Deferred visual/accessibility harness. Not installed in CI: the required M6
@@ -86,6 +89,16 @@ visual = [
     "playwright>=1.56.0",
     "pytest-playwright>=0.5.0",
 ]
+
+# Do not emit app-baseline-kit into requirements.lock (Pattern A). It is
+# consumed from the Workflows monorepo via an unpinned `@main` git URL (see
+# [project.optional-dependencies].dev), so freezing a commit SHA in the lock
+# conflicts with that URL the moment Workflows main advances ("conflicting URLs
+# for package app-baseline-kit" -> uv install aborts). Leaving it unpinned lets
+# the editable project install resolve it from main, with no lock to keep
+# refreshed. See docs/baseline-kit-dependency.md.
+[tool.uv.pip]
+no-emit-package = ["app-baseline-kit"]
 
 [project.urls]
 Homepage = "https://github.com/stranske/learning-management-system"
