@@ -29,6 +29,20 @@ def _value_or_default(value: Any, default: Any) -> Any:
     return default if value is None else value
 
 
+def _resolved_normalized_score(
+    *,
+    normalized_score: float | None,
+    raw_score: float | None,
+    max_score: float | None,
+) -> float | None:
+    """Prefer explicit normalized scores; derive when only raw/max are available."""
+    if normalized_score is not None:
+        return normalized_score
+    if raw_score is not None and max_score is not None:
+        return raw_score / max_score
+    return None
+
+
 def create_attempt(
     session: Session,
     *,
@@ -144,6 +158,11 @@ def create_evidence_record(
     answer_artifact_ref: str | None = None,
 ) -> EvidenceRecord:
     """Persist a verbose observed or inferred evidence signal."""
+    resolved_normalized_score = _resolved_normalized_score(
+        normalized_score=normalized_score,
+        raw_score=raw_score,
+        max_score=max_score,
+    )
     record = EvidenceRecord(
         learner_id=learner_id,
         knowledge_node_id=knowledge_node_id,
@@ -166,7 +185,7 @@ def create_evidence_record(
         source_match_quality=source_match_quality,
         scorer_metadata=scorer_metadata,
         raw_score=raw_score,
-        normalized_score=normalized_score,
+        normalized_score=resolved_normalized_score,
         max_score=max_score,
         partial_credit_dimensions=partial_credit_dimensions,
         item_difficulty_estimate=item_difficulty_estimate,
