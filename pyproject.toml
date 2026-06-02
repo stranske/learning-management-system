@@ -30,7 +30,7 @@ dependencies = [
     "psycopg[binary]>=3.3.4",
     "uvicorn[standard]>=0.48.0",
     "pandas>=3.0.3",
-    "mistune>=3.0.0",
+    "mistune>=3.2.1",
     # Argon2 powers password hashing for the local login flow that gates the
     # deployed Render instance (see docs/architecture/auth.md). Required for
     # any environment where AUTH_REQUIRED is enabled.
