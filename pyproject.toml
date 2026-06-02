@@ -51,7 +51,7 @@ dependencies = [
     # SDK lazily so unit tests can run without an API key; the dependency
     # is here so deployments that DO have CLAUDE_API_STRANSKE configured can
     # call the real Messages API without an extra install step.
-    "anthropic>=0.40.0",
+    "anthropic>=0.105.2",
 ]
 
 [project.scripts]
