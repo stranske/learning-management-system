@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from lms.evidence.models import EvidenceRecord
-from lms.mastery.policy import MasteryEstimatorPolicy, _record_score
+from lms.evidence.scoring import record_score
+from lms.mastery.policy import MasteryEstimatorPolicy
 
 
 def _record(**overrides: object) -> EvidenceRecord:
@@ -18,21 +19,21 @@ def _record(**overrides: object) -> EvidenceRecord:
 
 def test_record_score_prefers_normalized_score() -> None:
     record = _record(normalized_score=0.75, raw_score=1.0, max_score=2.0, correctness=False)
-    assert _record_score(record) == 0.75
+    assert record_score(record) == 0.75
 
 
 def test_record_score_uses_raw_over_max_when_normalized_missing() -> None:
     record = _record(raw_score=3.0, max_score=4.0, correctness=False)
-    assert _record_score(record) == 0.75
+    assert record_score(record) == 0.75
 
 
 def test_record_score_uses_correctness_when_scores_missing() -> None:
-    assert _record_score(_record(correctness=True)) == 1.0
-    assert _record_score(_record(correctness=False)) == 0.0
+    assert record_score(_record(correctness=True)) == 1.0
+    assert record_score(_record(correctness=False)) == 0.0
 
 
 def test_record_score_defaults_to_midpoint_when_no_signal() -> None:
-    assert _record_score(_record()) == 0.5
+    assert record_score(_record()) == 0.5
 
 
 def test_estimate_returns_zeroes_when_no_records() -> None:
