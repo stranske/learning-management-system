@@ -87,7 +87,7 @@ dev = [
 # when a later milestone justifies it (see docs/development/web-prototype.md).
 visual = [
     "playwright>=1.60.0",
-    "pytest-playwright>=0.5.0",
+    "pytest-playwright>=0.8.0",
 ]
 
 # Do not emit app-baseline-kit into requirements.lock (Pattern A). It is
