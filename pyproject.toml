@@ -45,7 +45,7 @@ dependencies = [
     # python-multipart is required by FastAPI for parsing form posts (the
     # /login endpoint uses Form()). FastAPI declares it as an optional extra;
     # we depend on it directly so the form-based login works out of the box.
-    "python-multipart>=0.0.20",
+    "python-multipart>=0.0.30",
     # Anthropic Python SDK powers the live LLM provider adapter
     # (src/lms/llm/providers.py::AnthropicProvider). The adapter loads the
     # SDK lazily so unit tests can run without an API key; the dependency
