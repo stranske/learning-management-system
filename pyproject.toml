@@ -37,7 +37,7 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     # starlette is FastAPI's underlying ASGI framework; we import SessionMiddleware
     # directly so it is declared as an explicit dependency.
-    "starlette>=0.46.0,<1.0.0",
+    "starlette>=1.2.1,<2.0.0",
     # itsdangerous is the signed-cookie library Starlette's SessionMiddleware
     # uses under the hood; declaring it explicitly keeps the dependency surface
     # visible even though Starlette ships it transitively today.
