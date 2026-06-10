@@ -25,6 +25,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any, cast
 
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 FALLBACK_DIMENSIONS = 256
@@ -170,9 +171,10 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             raise RuntimeError("langchain_openai is required for OpenAI embeddings.") from exc
 
         try:
+            api_key = cast(Any, os.environ["OPENAI_API_KEY"])
             client = OpenAIEmbeddings(
                 model=resolved_model,
-                api_key=os.environ["OPENAI_API_KEY"],
+                api_key=api_key,
             )
             vectors = client.embed_documents(items)
         except Exception as exc:  # pragma: no cover - depends on external SDK errors
