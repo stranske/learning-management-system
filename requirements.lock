@@ -341,7 +341,7 @@ python-dotenv==1.2.2
     #   uvicorn
 python-json-logger==4.1.0
     # via jupyter-events
-python-multipart==0.0.30
+python-multipart==0.0.32
     # via lms (pyproject.toml)
 pytokens==0.4.1
     # via black
