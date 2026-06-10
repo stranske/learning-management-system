@@ -167,12 +167,15 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         try:
             from langchain_openai import OpenAIEmbeddings
         except ImportError as exc:
-            raise RuntimeError("langchain_openai is required for OpenAI embeddings.") from exc
+            raise RuntimeError(
+                "langchain_openai and its dependencies are required for OpenAI embeddings."
+            ) from exc
 
         try:
             client = OpenAIEmbeddings(
                 model=resolved_model,
-                api_key=os.environ["OPENAI_API_KEY"],
+                # Keep a plain str for runtime compatibility across supported langchain_openai versions.
+                api_key=os.environ["OPENAI_API_KEY"],  # type: ignore[arg-type]
             )
             vectors = client.embed_documents(items)
         except Exception as exc:  # pragma: no cover - depends on external SDK errors
