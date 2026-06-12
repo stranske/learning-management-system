@@ -68,7 +68,7 @@ comm==0.2.3
     # via
     #   ipykernel
     #   ipywidgets
-coverage==7.14.0
+coverage==7.14.1
     # via pytest-cov
 debugpy==1.8.20
     # via ipykernel
@@ -384,7 +384,7 @@ rpds-py==0.30.0
     # via
     #   jsonschema
     #   referencing
-ruff==0.15.14
+ruff==0.15.17
     # via lms (pyproject.toml)
 send2trash==2.1.0
     # via jupyter-server
