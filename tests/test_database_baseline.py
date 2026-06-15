@@ -23,6 +23,33 @@ def test_settings_reads_database_url() -> None:
     assert settings.database_url == "postgresql+psycopg://user:pass@localhost:5432/test_lms"
 
 
+def test_settings_normalizes_render_postgres_url_to_psycopg() -> None:
+    # Render injects a driverless ``postgresql://`` URL, which SQLAlchemy would
+    # route to psycopg2 — a package this project does not install. Pin it to
+    # the psycopg 3 driver so engine creation (runtime + Alembic) succeeds.
+    settings = Settings(database_url="postgresql://user:pass@db.internal:5432/lms")
+
+    assert settings.database_url == "postgresql+psycopg://user:pass@db.internal:5432/lms"
+
+
+def test_settings_normalizes_legacy_postgres_scheme() -> None:
+    settings = Settings(database_url="postgres://user:pass@db.internal:5432/lms")
+
+    assert settings.database_url == "postgresql+psycopg://user:pass@db.internal:5432/lms"
+
+
+def test_settings_preserves_explicit_psycopg_driver() -> None:
+    url = "postgresql+psycopg://user:pass@db.internal:5432/lms"
+
+    assert Settings(database_url=url).database_url == url
+
+
+def test_settings_leaves_non_postgres_url_untouched() -> None:
+    url = "sqlite+pysqlite:///:memory:"
+
+    assert Settings(database_url=url).database_url == url
+
+
 def test_make_engine_uses_explicit_url() -> None:
     engine = make_engine("sqlite+pysqlite:///:memory:")
 
