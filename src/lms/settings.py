@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +37,29 @@ class Settings(BaseSettings):
             "DATABASE_URL in a private .env file or environment secret."
         ),
     )
+
+    @field_validator("database_url")
+    @classmethod
+    def _pin_psycopg_driver(cls, value: str) -> str:
+        """Pin driverless Postgres URLs to the psycopg (v3) driver.
+
+        Render injects ``DATABASE_URL`` as ``postgresql://…`` (and some
+        platforms still emit the legacy ``postgres://``), which SQLAlchemy maps
+        to the **psycopg2** dialect. This project only ships psycopg 3
+        (``psycopg[binary]``), so a driverless URL makes both the runtime engine
+        (``lms.db.session.make_engine``) and the Alembic ``upgrade head``
+        pre-deploy step raise ``ModuleNotFoundError: No module named 'psycopg2'``
+        — the observed Render pre-deploy failure. Rewriting the scheme to
+        ``postgresql+psycopg://`` selects the installed driver. URLs that already
+        name a driver (``postgresql+psycopg://``, ``sqlite+pysqlite://``, …) are
+        left untouched.
+        """
+        if value.startswith("postgres://"):
+            value = "postgresql://" + value[len("postgres://") :]
+        if value.startswith("postgresql://"):
+            value = "postgresql+psycopg://" + value[len("postgresql://") :]
+        return value
+
     database_echo: bool = Field(
         default=False,
         description="Enable SQLAlchemy SQL echo logging for local debugging.",
