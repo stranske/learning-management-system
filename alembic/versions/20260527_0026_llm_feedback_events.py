@@ -37,7 +37,7 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "mode IN ('study-coach', 'practice', 'transfer', 'authoring-assist')",
-            name=op.f("ck_learning_interaction_skills_learning_interaction_skill_mode_valid"),
+            name=op.f("ck_learning_interaction_skills_mode_valid"),
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
