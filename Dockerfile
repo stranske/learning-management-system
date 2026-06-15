@@ -9,7 +9,7 @@
 #   - local dev via ``docker compose up`` (see docker-compose.yml)
 #   - Render's optional container build path (Render also has a native
 #     Python runtime via render.yaml; the Dockerfile is the portable fallback)
-ARG PYTHON_IMAGE=python:3.13-slim
+ARG PYTHON_IMAGE=python:3.14-slim
 
 # -----------------------------------------------------------------------------
 # Builder stage
