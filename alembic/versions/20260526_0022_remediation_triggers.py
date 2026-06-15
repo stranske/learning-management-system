@@ -35,17 +35,17 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "ownership_scope IN ('personal', 'institutional')",
-            name=op.f("ck_misconception_patterns_misconception_pattern_ownership_scope_valid"),
+            name=op.f("ck_misconception_patterns_ownership_scope_valid"),
         ),
         sa.CheckConstraint(
             "confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)",
-            name=op.f("ck_misconception_patterns_misconception_pattern_confidence_unit_interval"),
+            name=op.f("ck_misconception_patterns_confidence_unit_interval"),
         ),
         sa.CheckConstraint(
             "suggested_feedback_action_type IN ('retry', 'parallel-prompt', "
             "'prerequisite-remediation', 'model-comparison', 'revision', "
             "'coach-review', 'author-review')",
-            name=op.f("ck_misconception_patterns_misconception_pattern_action_type_valid"),
+            name=op.f("ck_misconception_patterns_action_type_valid"),
         ),
         sa.ForeignKeyConstraint(
             ["target_knowledge_node_id"], ["knowledge_nodes.id"], ondelete="SET NULL"
@@ -84,7 +84,7 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "ownership_scope IN ('personal', 'institutional')",
-            name=op.f("ck_remediation_triggers_remediation_trigger_ownership_scope_valid"),
+            name=op.f("ck_remediation_triggers_ownership_scope_valid"),
         ),
         sa.ForeignKeyConstraint(["knowledge_node_id"], ["knowledge_nodes.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["pattern_id"], ["misconception_patterns.id"], ondelete="SET NULL"),

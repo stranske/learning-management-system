@@ -110,7 +110,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["source_reference_id"],
             ["source_references.id"],
-            name=op.f("fk_prompt_source_references_source_reference_id_source_references"),
+            name=op.f("fk_prompt_source_references_source_reference_id"),
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint(

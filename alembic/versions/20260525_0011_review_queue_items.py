@@ -72,7 +72,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["source_evidence_record_id"],
             ["evidence_records.id"],
-            name="fk_review_queue_items_source_evidence_record_id_evidence_records",
+            name="fk_review_queue_items_source_evidence_record_id",
             ondelete="SET NULL",
         ),
         sa.CheckConstraint(
