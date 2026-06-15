@@ -26,7 +26,12 @@ def upgrade() -> None:
             )
         return
     op.drop_constraint(
-        "ck_gap_analyses_ownership_scope_valid",
+        # op.f(): the constraint was created with this literal name (0021). A
+        # plain string would be re-processed through the metadata naming
+        # convention, doubling the prefix to
+        # ck_gap_analyses_ck_gap_analyses_ownership_scope_valid, which does not
+        # exist on Postgres (SQLite's batch ALTER tolerated the mismatch).
+        op.f("ck_gap_analyses_ownership_scope_valid"),
         "gap_analyses",
         type_="check",
     )
@@ -47,7 +52,7 @@ def downgrade() -> None:
             )
         return
     op.create_check_constraint(
-        constraint.name,
+        op.f(constraint.name),
         "gap_analyses",
         constraint.sqltext,
     )
