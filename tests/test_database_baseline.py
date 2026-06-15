@@ -8,12 +8,13 @@ from typing import Any
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from lms.db import session as db_session_module
 from lms.db.base import Base
 from lms.db.session import get_session, make_engine, session_scope
+from lms.db.version_table import ensure_version_table_width
 from lms.settings import Settings
 
 
@@ -55,6 +56,21 @@ def test_make_engine_uses_explicit_url() -> None:
 
     try:
         assert str(engine.url) == "sqlite+pysqlite:///:memory:"
+    finally:
+        engine.dispose()
+
+
+def test_ensure_version_table_width_is_noop_on_sqlite() -> None:
+    # The widening is Postgres-only (SQLite does not enforce VARCHAR length).
+    # On SQLite the helper must do nothing — in particular it must NOT create
+    # the alembic_version table, which would mean the postgres-only guard was
+    # lost and the migration entrypoint started issuing Postgres DDL elsewhere.
+    engine = make_engine("sqlite+pysqlite:///:memory:")
+
+    try:
+        with engine.connect() as connection:
+            ensure_version_table_width(connection)
+            assert not inspect(connection).has_table("alembic_version")
     finally:
         engine.dispose()
 
