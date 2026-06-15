@@ -19,6 +19,7 @@ import lms.prompts.models  # noqa: F401
 import lms.scheduling.models  # noqa: F401
 import lms.sources.models  # noqa: F401
 from lms.db.base import Base
+from lms.db.version_table import ensure_version_table_width
 from lms.settings import get_settings
 
 config = context.config
@@ -58,6 +59,9 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        # Alembic's default alembic_version.version_num is VARCHAR(32); our
+        # revision slugs exceed that on Postgres. Widen it before stamping.
+        ensure_version_table_width(connection)
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
