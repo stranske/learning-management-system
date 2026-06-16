@@ -25,8 +25,11 @@ local identity and source fixture records.
 | Submit a learner attempt | `POST /app/learner/attempts` | feedback page shows the recorded attempt and source citations |
 | Score with rubric feedback | `POST /rubric-scores` | feedback page shows rubric score and revision action |
 | Create capability target | `POST /app/learner/capability/targets` | capability page shows personal target |
-| Generate estimate and gap analysis | `POST /app/learner/capability/estimates`, `POST /app/learner/capability/gap-analyses` | capability page shows current evidence and weak-mastery gap |
-| Generate maintenance plan | `POST /app/learner/capability/maintenance-plans` | dashboard and review queue show scheduled maintenance steps |
+| Generate estimate and gap analysis | `POST /app/learner/capability/estimates`, `POST /app/learner/capability/gap-analyses` | capability page shows current evidence, weak-mastery, and transfer-evidence gaps |
+| Generate maintenance plan | `POST /app/learner/capability/maintenance-plans` | dashboard and review queue show scheduled maintenance steps, including transfer-case routing |
+| Submit a transfer-case work product | `GET /app/learner/cases`, `POST /app/learner/cases/{id}/work-products` | learner case page records the work product and shows it awaiting scoring |
+| Score the work product | `POST /work-products/{id}/score` | scoring records rubric score plus case-scoped transfer evidence |
+| Refresh capability evidence | `POST /app/learner/capability/estimates`, `POST /app/learner/capability/gap-analyses` | refreshed gap analysis no longer asks for transfer evidence already present |
 
 ## Manual Demo Path
 
@@ -43,7 +46,11 @@ local identity and source fixture records.
 7. Open `/app/learner/capability`, create a personal capability target for the
    node, recompute the estimate, generate a gap analysis, and create a
    maintenance plan.
-8. Verify `/app/learner`, `/app/learner/review`,
+8. Open `/app/learner/cases?learner_id=<learner-id>`, submit a work product for
+   the transfer case, score it through `POST /work-products/{id}/score`, then
+   recompute the capability estimate and gap analysis.
+9. Verify `/app/learner`, `/app/learner/review`,
    `/app/learner/feedback`, and `/app/learner/capability/targets/<target-id>`
    all show the same learner path: rubric-scored feedback, source/provenance,
-   current evidence, gap-analysis output, and scheduled maintenance steps.
+   current evidence, gap-analysis output, transfer-case evidence closure, and
+   scheduled maintenance steps.

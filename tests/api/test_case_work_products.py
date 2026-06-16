@@ -7,8 +7,10 @@ from typing import Any, cast
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from lms.cases.models import WorkProduct
 from lms.cases.repository import create_case
 from lms.db.session import get_session
+from lms.evidence.repository import get_evidence_record
 from lms.feedback.repository import create_rubric
 from lms.graphs.repository import create_knowledge_node
 from lms.main import create_app
@@ -128,3 +130,74 @@ def test_submit_work_product_unknown_case_returns_404(db_session: Session) -> No
         },
     )
     assert response.status_code == 404, response.text
+
+
+def test_score_case_work_product_records_transfer_evidence(db_session: Session) -> None:
+    """The work-product score route records rubric score and transfer evidence."""
+    case_id, rubric_id = _seed_case(db_session)
+    client = _client(db_session)
+    submit_response = client.post(
+        f"/cases/{case_id}/work-products",
+        json={
+            "learner_id": "learner-1",
+            "submission_type": "memo",
+            "rubric_id": rubric_id,
+            "body": "Recommend granting the exception with the controlling clause cited.",
+        },
+    )
+    assert submit_response.status_code == 201, submit_response.text
+    work_product_id = submit_response.json()["id"]
+
+    response = client.post(
+        f"/work-products/{work_product_id}/score",
+        json={
+            "scorer_type": "deterministic-test",
+            "criterion_scores": [{"criterion": "analysis", "points": 3, "max_points": 4}],
+            "raw_score": 3.0,
+            "max_score": 4.0,
+            "transfer_distance": "near",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = cast(dict[str, Any], response.json())
+    assert body["work_product_id"] == work_product_id
+    assert body["status"] == "scored"
+    assert body["rubric_score_id"]
+    assert body["evidence_record_id"]
+    assert body["normalized_score"] == 0.75
+    evidence = get_evidence_record(db_session, body["evidence_record_id"])
+    assert evidence is not None
+    assert evidence.validity_scope == f"transfer-case:{case_id}"
+    assert evidence.transfer_distance == "near"
+    work_product = db_session.get(WorkProduct, work_product_id)
+    assert work_product is not None
+    assert work_product.rubric_score_id == body["rubric_score_id"]
+
+
+def test_score_case_work_product_rejects_second_terminal_score(db_session: Session) -> None:
+    """A scored work product cannot be scored again without a revision loop."""
+    case_id, rubric_id = _seed_case(db_session)
+    client = _client(db_session)
+    work_product_id = client.post(
+        f"/cases/{case_id}/work-products",
+        json={
+            "learner_id": "learner-1",
+            "submission_type": "memo",
+            "rubric_id": rubric_id,
+            "body": "Recommend granting the exception.",
+        },
+    ).json()["id"]
+    payload = {
+        "scorer_type": "deterministic-test",
+        "criterion_scores": [],
+        "raw_score": 3.0,
+        "max_score": 4.0,
+    }
+
+    first = client.post(f"/work-products/{work_product_id}/score", json=payload)
+    second = client.post(f"/work-products/{work_product_id}/score", json=payload)
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 422, second.text
+    assert "not in a scoreable state" in second.text

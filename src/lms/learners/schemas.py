@@ -117,6 +117,7 @@ class KnowledgeProfileItem(BaseModel):
     evidence_count: int
     last_evidence_id: str
     support_dependence_markers: list[str]
+    has_transfer_evidence: bool
     next_evidence_needed: str
     generated_at: datetime
 

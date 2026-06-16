@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from lms.auth.models import User
 from lms.capability.models import CapabilityTarget
-from lms.evidence.models import Attempt
+from lms.cases.models import Case, WorkProduct
+from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.models import Rubric
 from lms.graphs.models import KnowledgeNode
 from lms.learners.models import LearningGoal
@@ -149,13 +150,18 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
     assert rubric_response.status_code == 200
     assert "Rubric created." in rubric_response.text
 
+    with session_factory() as session:
+        rubric_id = session.scalars(
+            select(Rubric.id).where(Rubric.title == "Source-backed explanation")
+        ).one()
+
     case_response = client.post(
         "/app/author/cases",
         data={
             "title": "Plan a spaced review",
             "description": "Transfer case for scheduling retrieval practice.",
             "ownership_scope": "personal",
-            "rubric_id": "",
+            "rubric_id": rubric_id,
             "knowledge_node_id": node_id,
             "status": "published",
             "step_order": "1",
@@ -176,6 +182,11 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
     )
     assert case_response.status_code == 200
     assert "Case created." in case_response.text
+
+    with session_factory() as session:
+        case = session.scalars(select(Case).where(Case.title == "Plan a spaced review")).one()
+        case_id = case.id
+        case_step_id = case.steps[0].id
 
     author_home = client.get("/app/author")
     assert author_home.status_code == 200
@@ -256,7 +267,7 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
             "learner_id": learner_id,
             "title": "Explain retrieval spacing with evidence",
             "target_node_ids": [node_id],
-            "required_evidence_types": "rubric-score",
+            "required_evidence_types": "rubric-score, transfer-case",
             "confidence_threshold": "0.85",
         },
     )
@@ -277,6 +288,8 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
     )
     assert gap_response.status_code == 200
     assert "Current gaps" in gap_response.text
+    assert "Transfer evidence needed" in gap_response.text
+    assert "/app/learner/cases" in gap_response.text
     gap_analysis_id = _hidden_value(gap_response.text, "gap_analysis_id")
 
     plan_response = client.post(
@@ -287,6 +300,80 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
     assert "Maintenance plan" in plan_response.text
     assert "Step 1:" in plan_response.text
     assert "Scheduled in your review queue." in plan_response.text
+    assert "Open transfer cases" in plan_response.text
+
+    case_list = client.get(f"/app/learner/cases?learner_id={learner_id}")
+    assert case_list.status_code == 200
+    _assert_mobile_viewport(case_list.text)
+    assert "Plan a spaced review" in case_list.text
+    assert "No work product submitted yet." in case_list.text
+
+    case_detail = client.get(f"/app/learner/cases/{case_id}?learner_id={learner_id}")
+    assert case_detail.status_code == 200
+    assert "Draft a review plan" in case_detail.text
+    assert "Spacing evidence" in case_detail.text
+    assert "Submit work product" in case_detail.text
+
+    work_product_response = client.post(
+        f"/app/learner/cases/{case_id}/work-products",
+        data={
+            "learner_id": learner_id,
+            "submission_type": "rationale",
+            "case_step_id": case_step_id,
+            "rubric_id": rubric_id,
+            "body": "Review next week because spacing creates a useful retrieval delay.",
+        },
+    )
+    assert work_product_response.status_code == 200
+    assert "Work product submitted." in work_product_response.text
+    assert "Submitted; awaiting scoring for transfer evidence." in work_product_response.text
+
+    with session_factory() as session:
+        work_product = session.scalars(
+            select(WorkProduct).where(
+                WorkProduct.case_id == case_id,
+                WorkProduct.learner_id == learner_id,
+            )
+        ).one()
+        work_product_id = work_product.id
+
+    work_product_score = client.post(
+        f"/work-products/{work_product_id}/score",
+        json={
+            "scorer_type": "deterministic-test",
+            "criterion_scores": [
+                {
+                    "criterion_id": criterion_id,
+                    "points": 3.5,
+                    "rationale": "Applies spacing evidence to a new scheduling decision.",
+                }
+            ],
+            "raw_score": 3.5,
+            "max_score": 4.0,
+            "transfer_distance": "near",
+        },
+    )
+    assert work_product_score.status_code == 201, work_product_score.text
+    score_payload = work_product_score.json()
+    assert score_payload["status"] == "scored"
+
+    with session_factory() as session:
+        evidence = session.get(EvidenceRecord, score_payload["evidence_record_id"])
+        assert evidence is not None
+        assert evidence.validity_scope == f"transfer-case:{case_id}"
+        assert evidence.transfer_distance == "near"
+
+    refreshed_estimate = client.post(
+        "/app/learner/capability/estimates", data={"target_id": target_id}
+    )
+    assert refreshed_estimate.status_code == 200
+    refreshed_estimate_id = _hidden_value(refreshed_estimate.text, "estimate_id")
+    refreshed_gap = client.post(
+        "/app/learner/capability/gap-analyses",
+        data={"target_id": target_id, "estimate_id": refreshed_estimate_id},
+    )
+    assert refreshed_gap.status_code == 200
+    assert "Transfer evidence needed" not in refreshed_gap.text
 
     dashboard = client.get(f"/app/learner?learner_id={learner_id}")
     review_queue = client.get(f"/app/learner/review?learner_id={learner_id}")
@@ -310,7 +397,7 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
 
     assert capability_view.status_code == 200
     assert "Current evidence score" in capability_view.text
-    assert "Weak mastery" in capability_view.text
+    assert "Transfer evidence needed" not in capability_view.text
     assert "Maintenance plan" in capability_view.text
 
     with session_factory() as session:

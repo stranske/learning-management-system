@@ -19,6 +19,8 @@ from lms.mastery.service import (
     mastery_estimates_with_evidence_for_learner,
 )
 
+TRANSFER_EVIDENCE_DISTANCES: tuple[str, ...] = ("near", "far", "novel", "case-transfer")
+
 
 def create_learner_for_user(
     session: Session,
@@ -198,6 +200,7 @@ def knowledge_profile_for_learner(
             continue
         records = evidence_by_node.get(node_id, [])
         markers = _support_dependence_markers(records)
+        has_transfer_evidence = _has_transfer_evidence(records)
         items.append(
             {
                 "learner_id": learner_id,
@@ -210,10 +213,12 @@ def knowledge_profile_for_learner(
                 "evidence_count": estimate["evidence_count"],
                 "last_evidence_id": estimate["last_evidence_id"],
                 "support_dependence_markers": markers,
+                "has_transfer_evidence": has_transfer_evidence,
                 "next_evidence_needed": _next_evidence_needed(
                     current_estimate=float(estimate["current_estimate"]),
                     confidence=float(estimate["confidence"]),
                     markers=markers,
+                    has_transfer_evidence=has_transfer_evidence,
                 ),
                 "generated_at": estimate["generated_at"],
             }
@@ -374,15 +379,28 @@ def _support_dependence_markers(records: list[EvidenceRecord]) -> list[str]:
     return sorted(markers)
 
 
+def _has_transfer_evidence(records: list[EvidenceRecord]) -> bool:
+    """Return whether a node has evidence from a transfer-case work product."""
+    for record in records:
+        validity_scope = (record.validity_scope or "").strip().lower()
+        if validity_scope.startswith("transfer-case:"):
+            return True
+        transfer_distance = (record.transfer_distance or "").strip().lower()
+        if transfer_distance in TRANSFER_EVIDENCE_DISTANCES:
+            return True
+    return False
+
+
 def _next_evidence_needed(
     *,
     current_estimate: float,
     confidence: float,
     markers: list[str],
+    has_transfer_evidence: bool = False,
 ) -> str:
     if current_estimate < 0.6:
         return "additional successful evidence"
-    if markers:
+    if markers and not has_transfer_evidence:
         return "independent transfer evidence"
     if confidence < 0.7:
         return "more evidence to raise confidence"

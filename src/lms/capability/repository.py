@@ -675,6 +675,7 @@ def _node_breakdown_row(
             "confidence": 0.0,
             "evidence_count": 0,
             "last_evidence_id": None,
+            "has_transfer_evidence": False,
             "next_evidence_needed": "initial observed evidence",
         }
     source = profile_item or mastery_estimate or {}
@@ -684,6 +685,7 @@ def _node_breakdown_row(
         "confidence": source.get("confidence", 0.0),
         "evidence_count": source.get("evidence_count", 0),
         "last_evidence_id": source.get("last_evidence_id"),
+        "has_transfer_evidence": bool(source.get("has_transfer_evidence", False)),
         "next_evidence_needed": source.get("next_evidence_needed", "more independent evidence"),
     }
 
@@ -776,6 +778,14 @@ def _as_int(value: object) -> int:
     return 0
 
 
+def _as_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return False
+
+
 def _json_safe(value: object) -> dict[str, object]:
     converted = _json_safe_value(value)
     if not isinstance(converted, dict):
@@ -854,6 +864,9 @@ def _node_gap_items(
     confidence = _as_float(row.get("confidence", 0.0))
     evidence_count = _as_int(row.get("evidence_count", 0))
     next_evidence_needed = str(row.get("next_evidence_needed", "more evidence"))
+    has_transfer_evidence = _as_bool(row.get("has_transfer_evidence")) or _as_bool(
+        profile_item.get("has_transfer_evidence")
+    )
     support_markers = profile_item.get("support_dependence_markers", [])
     markers = (
         [str(marker) for marker in support_markers if isinstance(marker, str)]
@@ -914,7 +927,11 @@ def _node_gap_items(
                 support_dependence_markers=markers,
             )
         )
-    if _needs_transfer_evidence(target.required_evidence_types, next_evidence_needed):
+    if _needs_transfer_evidence(
+        target.required_evidence_types,
+        next_evidence_needed,
+        has_transfer_evidence=has_transfer_evidence,
+    ):
         items.append(
             _gap_item(
                 gap_type="transfer_evidence_needed",
@@ -1018,7 +1035,14 @@ def _analysis_severity(gap_items: list[dict[str, object]]) -> str:
     return "low"
 
 
-def _needs_transfer_evidence(required_evidence_types: list[str], next_evidence_needed: str) -> bool:
+def _needs_transfer_evidence(
+    required_evidence_types: list[str],
+    next_evidence_needed: str,
+    *,
+    has_transfer_evidence: bool = False,
+) -> bool:
+    if has_transfer_evidence:
+        return False
     required = {value.lower() for value in required_evidence_types}
     return "transfer-case" in required or "transfer" in next_evidence_needed.lower()
 

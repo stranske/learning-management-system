@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from html import escape
 from typing import Annotated
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote_plus
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
@@ -57,6 +57,7 @@ GAP_PATH = f"{CAPABILITY_PATH}/gap-analyses"
 PLAN_PATH = f"{CAPABILITY_PATH}/maintenance-plans"
 REVIEW_QUEUE_PATH = "/app/learner/review"
 ATTEMPT_FLOW_PATH = "/app/learner/attempts"
+TRANSFER_CASES_PATH = "/app/learner/cases"
 
 # Display groups for gap items. Keys match ``gap_type`` values produced by
 # :func:`lms.capability.repository.create_gap_analysis`.
@@ -237,6 +238,7 @@ def _overview_surface(*, session: Session, learner_id: str, error: str | None) -
 
 def _detail_surface(*, session: Session, target: dict[str, object], notice: str | None) -> str:
     target_id = _s(target["id"])
+    learner_id = _s(target["learner_id"])
     estimates = _estimate_payloads(session, target_id)
     analyses = _analysis_payloads(session, target_id)
     plans = _plan_payloads(session, target_id)
@@ -252,8 +254,15 @@ def _detail_surface(*, session: Session, target: dict[str, object], notice: str 
         <p class="scope-note">Personal scope only. {escape(_CURRENT_EVIDENCE_NOTE)}</p>
         {_target_summary_block(session, target)}
         {_estimate_block(target_id=target_id, estimate=latest_estimate)}
-        {_gap_block(target_id=target_id, estimate=latest_estimate, analysis=latest_analysis)}
-        {_plan_block(analysis=latest_analysis, plan=latest_plan)}
+        {
+            _gap_block(
+                target_id=target_id,
+                estimate=latest_estimate,
+                analysis=latest_analysis,
+                learner_id=learner_id,
+            )
+        }
+        {_plan_block(analysis=latest_analysis, plan=latest_plan, learner_id=learner_id)}
         <p class="back-link"><a href="{CAPABILITY_PATH}?learner_id={escape(_s(target["learner_id"]))}">
           Back to all capability targets</a></p>
         """,
@@ -277,6 +286,7 @@ def _action_error(*, session: Session, target_id: str, exc: ValidationError | Va
 
 def _detail_surface_with_error(*, session: Session, target: dict[str, object], error: str) -> str:
     target_id = _s(target["id"])
+    learner_id = _s(target["learner_id"])
     estimates = _estimate_payloads(session, target_id)
     analyses = _analysis_payloads(session, target_id)
     plans = _plan_payloads(session, target_id)
@@ -294,12 +304,14 @@ def _detail_surface_with_error(*, session: Session, target: dict[str, object], e
                 target_id=target_id,
                 estimate=estimates[0] if estimates else None,
                 analysis=analyses[0] if analyses else None,
+                learner_id=learner_id,
             )
         }
         {
             _plan_block(
                 analysis=analyses[0] if analyses else None,
                 plan=plans[0] if plans else None,
+                learner_id=learner_id,
             )
         }
         """,
@@ -465,7 +477,11 @@ def _evidence_breakdown_block(breakdown: object) -> str:
 
 
 def _gap_block(
-    *, target_id: str, estimate: dict[str, object] | None, analysis: dict[str, object] | None
+    *,
+    target_id: str,
+    estimate: dict[str, object] | None,
+    analysis: dict[str, object] | None,
+    learner_id: str,
 ) -> str:
     if analysis is None:
         detail = (
@@ -504,13 +520,13 @@ def _gap_block(
         <section aria-labelledby="gap-heading" class="capability-gaps">
           <h2 id="gap-heading">Current gaps</h2>
           <p class="gap-severity">Overall severity right now: <strong>{severity}</strong>.</p>
-          {_grouped_gap_items(gap_items)}
+          {_grouped_gap_items(gap_items, learner_id=learner_id)}
           {plan_form}
         </section>
     """
 
 
-def _grouped_gap_items(gap_items: list[dict[str, object]]) -> str:
+def _grouped_gap_items(gap_items: list[dict[str, object]], *, learner_id: str) -> str:
     sections: list[str] = []
     for gap_type, label in GAP_TYPE_GROUPS:
         group = [item for item in gap_items if _s(item.get("gap_type")) == gap_type]
@@ -520,7 +536,8 @@ def _grouped_gap_items(gap_items: list[dict[str, object]]) -> str:
             "<li class='gap-item'>"
             f"<span class='gap-target'>{_gap_target_label(item)}</span>"
             f"<span class='gap-rationale'>{escape(_s(item.get('rationale', '')))}</span>"
-            f"<span class='gap-action'>Suggested next step: {escape(_s(item.get('recommended_action_type', '')))}</span>"
+            f"<span class='gap-action'>Suggested next step: {escape(_s(item.get('recommended_action_type', '')))}"
+            f"{_gap_action_link(item, learner_id=learner_id)}</span>"
             "</li>"
             for item in group
         )
@@ -540,7 +557,18 @@ def _gap_target_label(item: dict[str, object]) -> str:
     return "Target"
 
 
-def _plan_block(*, analysis: dict[str, object] | None, plan: dict[str, object] | None) -> str:
+def _gap_action_link(item: dict[str, object], *, learner_id: str) -> str:
+    if _s(item.get("recommended_action_type")) != "transfer-case":
+        return ""
+    return (
+        f' <a href="{TRANSFER_CASES_PATH}?learner_id={escape(quote_plus(learner_id))}">'
+        "Open transfer cases</a>"
+    )
+
+
+def _plan_block(
+    *, analysis: dict[str, object] | None, plan: dict[str, object] | None, learner_id: str
+) -> str:
     if plan is None:
         return f"""
         <section aria-labelledby="plan-heading" class="maintenance-plan">
@@ -562,7 +590,11 @@ def _plan_block(*, analysis: dict[str, object] | None, plan: dict[str, object] |
             "This plan has no scheduled steps because your current evidence has no open gaps.",
         )
     else:
-        body = f"<ol class='plan-steps'>{''.join(_plan_step(step) for step in steps)}</ol>"
+        body = (
+            "<ol class='plan-steps'>"
+            + "".join(_plan_step(step, learner_id=learner_id) for step in steps)
+            + "</ol>"
+        )
     return f"""
         <section aria-labelledby="plan-heading" class="maintenance-plan">
           <h2 id="plan-heading">Maintenance plan</h2>
@@ -572,16 +604,24 @@ def _plan_block(*, analysis: dict[str, object] | None, plan: dict[str, object] |
     """
 
 
-def _plan_step(step: dict[str, object]) -> str:
+def _plan_step(step: dict[str, object], *, learner_id: str) -> str:
     number = _as_int(step.get("step_number"))
     rationale = escape(_s(step.get("rationale", "")))
-    action_type = escape(_s(step.get("action_type", "")))
+    action_type_raw = _s(step.get("action_type", ""))
+    action_type = escape(action_type_raw)
     node_id = step.get("knowledge_node_id")
     scheduled = isinstance(step.get("review_schedule_id"), str) and bool(
         step.get("review_schedule_id")
     )
     links = ""
-    if isinstance(node_id, str) and node_id:
+    if action_type_raw == "transfer-case":
+        links = (
+            '<span class="step-links">'
+            f'<a href="{TRANSFER_CASES_PATH}?learner_id={escape(quote_plus(learner_id))}">'
+            "Open transfer cases</a>"
+            "</span>"
+        )
+    elif isinstance(node_id, str) and node_id:
         links = (
             '<span class="step-links">'
             f'<a href="{REVIEW_QUEUE_PATH}">Open review queue</a> · '
