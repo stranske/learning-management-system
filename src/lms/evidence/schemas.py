@@ -91,6 +91,10 @@ class AttemptEvidenceCreate(BaseModel):
     retrieval_demand: str | None = Field(default=None, max_length=64)
     transfer_distance: str | None = Field(default=None, max_length=64)
     source_match_quality: str | None = Field(default=None, max_length=64)
+    scorer_type: str | None = Field(default=None, max_length=64)
+    scorer_id: str | None = Field(default=None, max_length=255)
+    scorer_version: str | None = Field(default=None, max_length=120)
+    scoring_method: str | None = Field(default=None, max_length=32)
     scorer_metadata: dict[str, object] | None = None
     raw_score: float | None = Field(default=None, ge=0)
     normalized_score: float | None = Field(default=None, ge=0, le=1)
@@ -124,6 +128,10 @@ class EvidenceRecordCreate(BaseModel):
     retrieval_demand: str | None = Field(default=None, max_length=64)
     transfer_distance: str | None = Field(default=None, max_length=64)
     source_match_quality: str | None = Field(default=None, max_length=64)
+    scorer_type: str | None = Field(default=None, max_length=64)
+    scorer_id: str | None = Field(default=None, max_length=255)
+    scorer_version: str | None = Field(default=None, max_length=120)
+    scoring_method: str | None = Field(default=None, max_length=32)
     scorer_metadata: dict[str, object] | None = None
     raw_score: float | None = Field(default=None, ge=0)
     normalized_score: float | None = Field(default=None, ge=0, le=1)

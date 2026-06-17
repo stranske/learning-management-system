@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lms.evidence.api import list_evidence_records_route
@@ -47,7 +48,9 @@ def _evidence_payload() -> dict[str, object]:
         "retrieval_demand": "free-recall",
         "transfer_distance": "near",
         "source_match_quality": "strong",
-        "scorer_metadata": {"scorer": "unit-test", "rubric_version": "v1"},
+        "scorer_type": "auto",
+        "scorer_id": "unit-test",
+        "scorer_version": "v1",
         "raw_score": 4.0,
         "normalized_score": 0.8,
         "max_score": 5.0,
@@ -85,6 +88,9 @@ def test_evidence_record_roundtrip_full_schema(db_session: Session) -> None:
     assert record.confidence_rating == 4
     assert record.reference_accessed is True
     assert record.support_level == "reference"
+    assert record.scorer_type == "auto"
+    assert record.scorer_id == "unit-test"
+    assert record.scorer_version == "v1"
     assert record.raw_score == 4.0
     assert record.normalized_score == 0.8
     assert record.max_score == 5.0
@@ -113,7 +119,7 @@ def test_observed_and_inferred_evidence_are_distinct(db_session: Session) -> Non
         knowledge_node_id="node-1",
         evidence_kind="inferred",
         normalized_score=0.72,
-        scorer_metadata={"source": "mastery-estimator"},
+        scorer_type="auto",
     )
     db_session.commit()
 
@@ -138,7 +144,7 @@ def test_binary_and_partial_credit_records_roundtrip(db_session: Session) -> Non
         raw_score=1.0,
         normalized_score=1.0,
         max_score=1.0,
-        scorer_metadata={"scoring_method": "binary"},
+        scoring_method="binary",
     )
     partial_credit = create_evidence_record(
         db_session,
@@ -150,7 +156,7 @@ def test_binary_and_partial_credit_records_roundtrip(db_session: Session) -> Non
         normalized_score=0.75,
         max_score=4.0,
         partial_credit_dimensions={"setup": 1.0, "calculation": 0.5, "units": 0.5},
-        scorer_metadata={"scoring_method": "partial-credit"},
+        scoring_method="partial-credit",
     )
     db_session.commit()
 
@@ -159,9 +165,26 @@ def test_binary_and_partial_credit_records_roundtrip(db_session: Session) -> Non
 
     assert by_id[binary.id].partial_credit_dimensions is None
     assert by_id[binary.id].normalized_score == 1.0
+    assert by_id[binary.id].scoring_method == "binary"
     partial = cast(dict[str, Any], by_id[partial_credit.id].partial_credit_dimensions)
     assert partial["calculation"] == 0.5
     assert by_id[partial_credit.id].normalized_score == 0.75
+    assert by_id[partial_credit.id].scoring_method == "partial-credit"
+
+
+def test_scorer_type_check_constraint_rejects_invalid(db_session: Session) -> None:
+    """Evidence scorer type must stay within the design-backed enum."""
+    with pytest.raises(IntegrityError):
+        create_evidence_record(
+            db_session,
+            learner_id="learner-1",
+            knowledge_node_id="node-1",
+            evidence_kind="observed",
+            normalized_score=1.0,
+            scorer_type="unknown-scorer",
+        )
+
+    db_session.rollback()
 
 
 def test_attempt_evidence_validation_rejects_invalid_scores() -> None:

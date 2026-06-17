@@ -86,15 +86,13 @@ def score_attempt_with_rubric(
         partial_credit_dimensions={
             "rubric_id": rubric.id,
             "criterion_scores": normalized_scores,
-        },
-        scorer_metadata={
-            "scoring_method": "rubric",
-            "scorer_type": scorer_type,
-            "scorer_id": scorer_id,
-            "scorer_version": scorer_version,
             "rubric_ownership_scope": rubric.ownership_scope,
             **(score_metadata or {}),
         },
+        scorer_type=scorer_type,
+        scorer_id=scorer_id,
+        scorer_version=scorer_version,
+        scoring_method="rubric-scored",
         attempt_context=attempt.response_metadata,
     )
     try:
