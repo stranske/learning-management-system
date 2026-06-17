@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 MINIMUM_DEMO_HANDOFF_DOCS = (
@@ -31,7 +30,9 @@ def test_minimum_demo_project_plan_excludes_capability_requirements() -> None:
     )
 
     for forbidden in FORBIDDEN_DEMO_REQUIREMENTS:
-        assert forbidden not in required_steps
+        assert forbidden not in required_steps, (
+            f"{forbidden} leaked into project-plan.md Minimum Demo criterion"
+        )
 
 
 def test_minimum_demo_handoff_steps_exclude_capability_requirements() -> None:
@@ -42,8 +43,14 @@ def test_minimum_demo_handoff_steps_exclude_capability_requirements() -> None:
 
 
 def _section_between(text: str, start_marker: str, end_marker: str) -> str:
-    start = text.index(start_marker)
-    end = text.index(end_marker, start)
+    try:
+        start = text.index(start_marker)
+    except ValueError as exc:
+        raise ValueError(f"start marker not found: {start_marker}") from exc
+    try:
+        end = text.index(end_marker, start)
+    except ValueError as exc:
+        raise ValueError(f"end marker not found: {end_marker}") from exc
     return text[start:end]
 
 
