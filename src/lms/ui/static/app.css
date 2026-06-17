@@ -64,6 +64,25 @@ h2 {
 .author-list small {
   display: block;
 }
+.case-list,
+.case-steps,
+.decision-points {
+  padding-left: 1rem;
+}
+.case-item,
+.case-step,
+.decision-points li {
+  margin: 0.6rem 0;
+  overflow-wrap: anywhere;
+}
+.case-item span,
+.case-item small,
+.decision-points span,
+.decision-points small,
+.source-panel span,
+.source-panel small {
+  display: block;
+}
 .notice,
 .preview {
   border-left: 0.25rem solid #2f80ed;

@@ -17,6 +17,7 @@ from lms.cases.repository import (
     get_work_product,
     list_cases,
     list_work_products,
+    score_work_product,
     serialize_case,
     serialize_case_step,
     serialize_decision_point,
@@ -36,6 +37,8 @@ from lms.cases.schemas import (
     OwnershipScope,
     WorkProductCreate,
     WorkProductRead,
+    WorkProductScoreCreate,
+    WorkProductScoreRead,
     WorkProductStatus,
 )
 from lms.db.session import get_session
@@ -207,3 +210,49 @@ def get_work_product_route(work_product_id: str, session: SessionDep) -> dict[st
     if work_product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work product not found.")
     return serialize_work_product(work_product)
+
+
+@router.post(
+    "/work-products/{work_product_id}/score",
+    response_model=WorkProductScoreRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def score_work_product_route(
+    work_product_id: str,
+    payload: WorkProductScoreCreate,
+    session: SessionDep,
+) -> dict[str, object]:
+    """Score a work product and record transfer evidence."""
+    work_product = get_work_product(session, work_product_id)
+    if work_product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work product not found.")
+    try:
+        score = score_work_product(
+            session,
+            work_product,
+            scorer_type=payload.scorer_type,
+            criterion_scores=payload.criterion_scores,
+            raw_score=payload.raw_score,
+            max_score=payload.max_score,
+            normalized_score=payload.normalized_score,
+            scorer_id=payload.scorer_id,
+            scorer_version=payload.scorer_version,
+            knowledge_node_id=payload.knowledge_node_id,
+            transfer_distance=payload.transfer_distance,
+            validity_scope=payload.validity_scope,
+            score_metadata=payload.score_metadata,
+        )
+        session.commit()
+        refreshed = get_work_product(session, work_product_id) or work_product
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return {
+        "work_product_id": work_product_id,
+        "rubric_score_id": score.id,
+        "evidence_record_id": score.evidence_record_id,
+        "normalized_score": score.normalized_score,
+        "status": refreshed.status,
+    }

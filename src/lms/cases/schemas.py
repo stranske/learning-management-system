@@ -116,6 +116,28 @@ class WorkProductCreate(BaseModel):
         return self
 
 
+class WorkProductScoreCreate(BaseModel):
+    scorer_type: str = Field(min_length=1, max_length=80)
+    criterion_scores: list[dict[str, Any]] = Field(default_factory=list)
+    raw_score: float = Field(ge=0.0)
+    max_score: float = Field(gt=0.0)
+    normalized_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    scorer_id: str | None = Field(default=None, min_length=1, max_length=255)
+    scorer_version: str | None = Field(default=None, min_length=1, max_length=120)
+    knowledge_node_id: str | None = Field(default=None, min_length=1, max_length=36)
+    transfer_distance: str = Field(default="case-transfer", min_length=1, max_length=64)
+    validity_scope: str | None = None
+    score_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkProductScoreRead(BaseModel):
+    work_product_id: str
+    rubric_score_id: str
+    evidence_record_id: str | None
+    normalized_score: float
+    status: WorkProductStatus
+
+
 class WorkProductRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

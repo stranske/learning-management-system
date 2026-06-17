@@ -79,11 +79,49 @@ def test_knowledge_profile_summarizes_mastery_and_support_dependence(
                 "support_level:hint",
                 "support_level:reference",
             ],
+            "has_transfer_evidence": False,
             "next_evidence_needed": "independent transfer evidence",
             "generated_at": items[0]["generated_at"],
         }
     ]
     assert first.id != second.id
+
+
+def test_knowledge_profile_marks_transfer_case_evidence(db_session: Session) -> None:
+    """Transfer-case evidence satisfies the profile's transfer-evidence signal."""
+    user = create_local_user(db_session, username="mary", display_name="Mary Somerville")
+    learner = create_learner_for_user(db_session, user_id=user.id, display_name="Mary")
+    node = create_knowledge_node(
+        db_session,
+        title="Apply retrieval in a new case",
+        knowledge_type="judgment",
+        scope="personal",
+        actor_id=user.id,
+        status="published",
+    )
+    create_evidence_record(
+        db_session,
+        learner_id=learner.id,
+        knowledge_node_id=node.id,
+        knowledge_type="judgment",
+        normalized_score=0.9,
+        support_level="none",
+        transfer_distance="near",
+        validity_scope="transfer-case:case-1",
+    )
+    db_session.commit()
+
+    profile = knowledge_profile_for_learner(
+        db_session,
+        learner_id=learner.id,
+        ownership_scope="personal",
+    )
+    items = cast(list[dict[str, Any]], profile["items"])
+
+    assert len(items) == 1
+    assert items[0]["knowledge_node_id"] == node.id
+    assert items[0]["has_transfer_evidence"] is True
+    assert items[0]["next_evidence_needed"] == "more evidence to raise confidence"
 
 
 def test_knowledge_profile_filters_by_ownership_scope(db_session: Session) -> None:
