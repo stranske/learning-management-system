@@ -17,15 +17,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("evidence_records", sa.Column("scorer_type", sa.String(length=64), nullable=True))
-    op.add_column("evidence_records", sa.Column("scorer_id", sa.String(length=255), nullable=True))
-    op.add_column(
-        "evidence_records", sa.Column("scorer_version", sa.String(length=120), nullable=True)
-    )
-    op.add_column(
-        "evidence_records", sa.Column("scoring_method", sa.String(length=32), nullable=True)
-    )
     with op.batch_alter_table("evidence_records") as batch_op:
+        batch_op.add_column(sa.Column("scorer_type", sa.String(length=64), nullable=True))
+        batch_op.add_column(sa.Column("scorer_id", sa.String(length=255), nullable=True))
+        batch_op.add_column(sa.Column("scorer_version", sa.String(length=120), nullable=True))
+        batch_op.add_column(sa.Column("scoring_method", sa.String(length=32), nullable=True))
         batch_op.create_check_constraint(
             op.f("ck_evidence_records_scorer_type_valid"),
             "scorer_type IS NULL OR scorer_type IN ('auto', 'llm-judge', 'rubric-self', 'human')",
@@ -46,7 +42,7 @@ def downgrade() -> None:
             op.f("ck_evidence_records_scorer_type_valid"),
             type_="check",
         )
-    op.drop_column("evidence_records", "scoring_method")
-    op.drop_column("evidence_records", "scorer_version")
-    op.drop_column("evidence_records", "scorer_id")
-    op.drop_column("evidence_records", "scorer_type")
+        batch_op.drop_column("scoring_method")
+        batch_op.drop_column("scorer_version")
+        batch_op.drop_column("scorer_id")
+        batch_op.drop_column("scorer_type")
