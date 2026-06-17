@@ -151,7 +151,7 @@ def test_score_case_work_product_records_transfer_evidence(db_session: Session) 
     response = client.post(
         f"/work-products/{work_product_id}/score",
         json={
-            "scorer_type": "deterministic-test",
+            "scorer_type": "rubric-self",
             "criterion_scores": [{"criterion": "analysis", "points": 3, "max_points": 4}],
             "raw_score": 3.0,
             "max_score": 4.0,
@@ -189,7 +189,7 @@ def test_score_case_work_product_rejects_second_terminal_score(db_session: Sessi
         },
     ).json()["id"]
     payload = {
-        "scorer_type": "deterministic-test",
+        "scorer_type": "rubric-self",
         "criterion_scores": [],
         "raw_score": 3.0,
         "max_score": 4.0,

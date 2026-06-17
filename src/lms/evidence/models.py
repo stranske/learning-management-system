@@ -28,6 +28,8 @@ from lms.graphs.models import KNOWLEDGE_TYPES
 SUPPORT_LEVELS: tuple[str, ...] = ("none", "hint", "reference", "worked-example", "coach")
 DEMAND_LEVELS: tuple[str, ...] = ("low", "medium", "high")
 EVIDENCE_KINDS: tuple[str, ...] = ("observed", "inferred")
+SCORER_TYPES: tuple[str, ...] = ("auto", "llm-judge", "rubric-self", "human")
+SCORING_METHODS: tuple[str, ...] = ("binary", "partial-credit", "rubric-scored")
 
 
 def _sql_values(values: tuple[str, ...]) -> str:
@@ -136,6 +138,14 @@ class EvidenceRecord(Base):
             "(item_difficulty_estimate >= 0.0 AND item_difficulty_estimate <= 1.0)",
             name="item_difficulty_unit_interval",
         ),
+        CheckConstraint(
+            f"scorer_type IS NULL OR scorer_type IN ({_sql_values(SCORER_TYPES)})",
+            name="scorer_type_valid",
+        ),
+        CheckConstraint(
+            f"scoring_method IS NULL OR scoring_method IN ({_sql_values(SCORING_METHODS)})",
+            name="scoring_method_valid",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -192,6 +202,10 @@ class EvidenceRecord(Base):
     retrieval_demand: Mapped[str | None] = mapped_column(String(64))
     transfer_distance: Mapped[str | None] = mapped_column(String(64))
     source_match_quality: Mapped[str | None] = mapped_column(String(64))
+    scorer_type: Mapped[str | None] = mapped_column(String(64))
+    scorer_id: Mapped[str | None] = mapped_column(String(255))
+    scorer_version: Mapped[str | None] = mapped_column(String(120))
+    scoring_method: Mapped[str | None] = mapped_column(String(32))
     scorer_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     raw_score: Mapped[float | None] = mapped_column(Float)
     normalized_score: Mapped[float | None] = mapped_column(Float)

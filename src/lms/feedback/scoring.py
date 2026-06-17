@@ -40,6 +40,16 @@ class InvalidRubricScoringError(RubricScoringError):
     http_status = 422
 
 
+def _evidence_scorer_type(scorer_type: str) -> str:
+    if scorer_type in {"auto", "llm-judge", "rubric-self", "human"}:
+        return scorer_type
+    if scorer_type in {"deterministic", "deterministic-test"}:
+        return "auto"
+    if scorer_type == "rubric":
+        return "rubric-self"
+    return "auto"
+
+
 def score_attempt_with_rubric(
     session: Session,
     *,
@@ -86,15 +96,13 @@ def score_attempt_with_rubric(
         partial_credit_dimensions={
             "rubric_id": rubric.id,
             "criterion_scores": normalized_scores,
-        },
-        scorer_metadata={
-            "scoring_method": "rubric",
-            "scorer_type": scorer_type,
-            "scorer_id": scorer_id,
-            "scorer_version": scorer_version,
             "rubric_ownership_scope": rubric.ownership_scope,
             **(score_metadata or {}),
         },
+        scorer_type=_evidence_scorer_type(scorer_type),
+        scorer_id=scorer_id,
+        scorer_version=scorer_version,
+        scoring_method="rubric-scored",
         attempt_context=attempt.response_metadata,
     )
     try:

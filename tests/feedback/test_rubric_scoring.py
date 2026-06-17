@@ -90,9 +90,11 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
     assert evidence.raw_score == 4
     assert evidence.max_score == 5
     assert evidence.normalized_score == 0.8
-    assert evidence.scorer_metadata is not None
     assert evidence.partial_credit_dimensions is not None
-    assert evidence.scorer_metadata["scoring_method"] == "rubric"
+    assert evidence.scoring_method == "rubric-scored"
+    assert evidence.scorer_type == "human"
+    assert evidence.scorer_id == "teacher-1"
+    assert evidence.scorer_version == "rubric-v1"
     assert evidence.partial_credit_dimensions["rubric_id"] == rubric_id
     assert evidence.partial_credit_dimensions["criterion_scores"][1]["points"] == 2
 
