@@ -46,8 +46,9 @@ local identity and source fixture records.
 7. Open `/app/learner/capability`, create a personal capability target for the
    node, recompute the estimate, generate a gap analysis, and create a
    maintenance plan.
-8. Open `/app/learner/cases?learner_id=<learner-id>`, submit a work product for
-   the transfer case, score it through `POST /work-products/{id}/score`, then
+8. Open `/app/learner/cases`, submit a work product for the transfer case, copy
+   the work product id from the submission API response or the learner case
+   work-products list, score it through `POST /work-products/{id}/score`, then
    recompute the capability estimate and gap analysis.
 9. Verify `/app/learner`, `/app/learner/review`,
    `/app/learner/feedback`, and `/app/learner/capability/targets/<target-id>`

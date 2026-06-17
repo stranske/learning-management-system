@@ -10,13 +10,15 @@ from __future__ import annotations
 
 from html import escape
 from typing import Annotated, cast
-from urllib.parse import parse_qs, quote_plus
+from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from lms.auth.login import require_authenticated_user
+from lms.auth.models import User
 from lms.cases.models import (
     WORK_PRODUCT_SUBMISSION_TYPES,
     Case,
@@ -29,20 +31,24 @@ from lms.cases.schemas import WorkProductCreate, WorkProductSubmissionType
 from lms.db.session import get_session
 from lms.feedback.models import RubricScore
 from lms.graphs.models import KnowledgeNode
+from lms.learners.repository import list_learners_for_user
 from lms.ui.shell import empty_state, render_page
 
 router = APIRouter(tags=["learner-ui"])
 SessionDep = Annotated[Session, Depends(get_session)]
+CurrentUserDep = Annotated[User, Depends(require_authenticated_user)]
 
 CASES_PATH = "/app/learner/cases"
+DEFAULT_LOCAL_LEARNER_ID = "learner-1"
 
 
 @router.get(CASES_PATH, response_class=HTMLResponse)
 def learner_cases_route(
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    current_user: CurrentUserDep,
 ) -> str:
     """Return published transfer cases available to the learner."""
+    learner_id = _learner_id_for_user(session=session, current_user=current_user)
     return _case_list_surface(session=session, learner_id=learner_id)
 
 
@@ -50,9 +56,10 @@ def learner_cases_route(
 def learner_case_detail_route(
     case_id: str,
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    current_user: CurrentUserDep,
 ) -> str:
     """Return one published transfer case with the work-product form."""
+    learner_id = _learner_id_for_user(session=session, current_user=current_user)
     return _case_detail_surface(
         session=session,
         learner_id=learner_id,
@@ -63,13 +70,18 @@ def learner_case_detail_route(
 
 
 @router.post(f"{CASES_PATH}/{{case_id}}/work-products", response_class=HTMLResponse)
-async def submit_work_product_route(case_id: str, request: Request, session: SessionDep) -> str:
+async def submit_work_product_route(
+    case_id: str,
+    request: Request,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> str:
     """Record a learner work product for a published transfer case."""
     form = _read_form((await request.body()).decode())
-    learner_id = form.get("learner_id", "") or "learner-1"
+    learner_id = _learner_id_for_user(session=session, current_user=current_user)
     case = get_case(session, case_id)
     if case is None or case.status != "published":
-        return _case_not_found_page(learner_id=learner_id)
+        return _case_not_found_page()
 
     try:
         payload = WorkProductCreate(
@@ -150,7 +162,7 @@ def _case_detail_surface(
 ) -> str:
     case = get_case(session, case_id)
     if case is None or case.status != "published":
-        return _case_not_found_page(learner_id=learner_id)
+        return _case_not_found_page()
     latest = _latest_work_product(session, case_id=case.id, learner_id=learner_id)
     return _page(
         title="Transfer Case",
@@ -164,8 +176,8 @@ def _case_detail_surface(
         {_steps_block(case.steps)}
         {_evidence_packets_block(case.evidence_packets)}
         {_submission_status_block(session, latest)}
-        {_work_product_form(case=case, learner_id=learner_id, latest=latest)}
-        <p class="back-link"><a href="{CASES_PATH}?learner_id={escape(quote_plus(learner_id))}">Back to transfer cases</a></p>
+        {_work_product_form(case=case, latest=latest)}
+        <p class="back-link"><a href="{CASES_PATH}">Back to transfer cases</a></p>
         """,
     )
 
@@ -173,7 +185,7 @@ def _case_detail_surface(
 def _case_card(session: Session, *, case: Case, learner_id: str) -> str:
     latest = _latest_work_product(session, case_id=case.id, learner_id=learner_id)
     status = _work_product_status_line(session, latest)
-    href = _case_url(case_id=case.id, learner_id=learner_id)
+    href = _case_url(case_id=case.id)
     node_label = _node_label(session, case.knowledge_node_id)
     return (
         "<li class='case-item'>"
@@ -282,7 +294,7 @@ def _submission_status_block(session: Session, work_product: WorkProduct | None)
     """
 
 
-def _work_product_form(*, case: Case, learner_id: str, latest: WorkProduct | None) -> str:
+def _work_product_form(*, case: Case, latest: WorkProduct | None) -> str:
     if latest is not None and latest.status in {"submitted", "scored"}:
         return f"""
         <section aria-labelledby="submit-work-product-heading">
@@ -297,7 +309,6 @@ def _work_product_form(*, case: Case, learner_id: str, latest: WorkProduct | Non
         <section aria-labelledby="submit-work-product-heading">
           <h2 id="submit-work-product-heading">Submit work product</h2>
           <form method="post" action="{CASES_PATH}/{escape(case.id)}/work-products">
-            <input type="hidden" name="learner_id" value="{escape(learner_id)}">
             <input type="hidden" name="case_step_id" value="{escape(case_step_id)}">
             <input type="hidden" name="rubric_id" value="{escape(rubric_id)}">
             <label for="submission_type">Submission type</label>
@@ -310,7 +321,7 @@ def _work_product_form(*, case: Case, learner_id: str, latest: WorkProduct | Non
               <option value="other">other</option>
             </select>
             <label for="body">Work product</label>
-            <textarea id="body" name="body" rows="6" required></textarea>
+            <textarea id="body" name="body" rows="6"></textarea>
             <label for="artifact_ref">Artifact reference</label>
             <input id="artifact_ref" name="artifact_ref" placeholder="Optional file or URL reference">
             <button type="submit">Submit work product</button>
@@ -366,11 +377,11 @@ def _node_label(session: Session, node_id: str | None) -> str:
     return escape(node.title)
 
 
-def _case_url(*, case_id: str, learner_id: str) -> str:
-    return f"{CASES_PATH}/{escape(case_id)}?learner_id={escape(quote_plus(learner_id))}"
+def _case_url(*, case_id: str) -> str:
+    return f"{CASES_PATH}/{escape(case_id)}"
 
 
-def _case_not_found_page(*, learner_id: str) -> str:
+def _case_not_found_page() -> str:
     return _page(
         title="Transfer Case",
         eyebrow="Transfer evidence",
@@ -379,7 +390,7 @@ def _case_not_found_page(*, learner_id: str) -> str:
             "Transfer case not available",
             "This transfer case is missing or not published. Return to the transfer case list.",
         )
-        + f'<p class="back-link"><a href="{CASES_PATH}?learner_id={escape(quote_plus(learner_id))}">Back to transfer cases</a></p>',
+        + f'<p class="back-link"><a href="{CASES_PATH}">Back to transfer cases</a></p>',
     )
 
 
@@ -402,6 +413,13 @@ def _page(*, title: str, eyebrow: str, heading: str, body: str) -> str:
 def _read_form(body: str) -> dict[str, str]:
     raw_form = parse_qs(body, keep_blank_values=True)
     return {key: values[-1] for key, values in raw_form.items()}
+
+
+def _learner_id_for_user(*, session: Session, current_user: User) -> str:
+    learners = list_learners_for_user(session, user_id=current_user.id)
+    if learners:
+        return learners[0].id
+    return DEFAULT_LOCAL_LEARNER_ID
 
 
 def _optional_text(value: str | None) -> str | None:

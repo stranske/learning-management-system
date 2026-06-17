@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from lms.auth.models import User
+from lms.auth.repository import get_or_create_local_dev_user
 from lms.capability.models import CapabilityTarget
 from lms.cases.models import Case, WorkProduct
 from lms.evidence.models import Attempt, EvidenceRecord
@@ -36,9 +36,7 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
 ) -> None:
     client, session_factory = api_client
     with session_factory() as session:
-        learner_user = User(username="m6-learner", display_name="M6 Learner")
-        session.add(learner_user)
-        session.flush()
+        learner_user = get_or_create_local_dev_user(session)
         learner = create_learner_for_user(
             session,
             user_id=learner_user.id,
@@ -152,7 +150,11 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
 
     with session_factory() as session:
         rubric_id = session.scalars(
-            select(Rubric.id).where(Rubric.title == "Source-backed explanation")
+            select(Rubric.id).where(
+                Rubric.title == "Source-backed explanation",
+                Rubric.prompt_id == prompt_id,
+                Rubric.knowledge_node_id == node_id,
+            )
         ).one()
 
     case_response = client.post(
@@ -184,7 +186,13 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
     assert "Case created." in case_response.text
 
     with session_factory() as session:
-        case = session.scalars(select(Case).where(Case.title == "Plan a spaced review")).one()
+        case = session.scalars(
+            select(Case).where(
+                Case.title == "Plan a spaced review",
+                Case.rubric_id == rubric_id,
+                Case.knowledge_node_id == node_id,
+            )
+        ).one()
         case_id = case.id
         case_step_id = case.steps[0].id
 
@@ -302,13 +310,13 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
     assert "Scheduled in your review queue." in plan_response.text
     assert "Open transfer cases" in plan_response.text
 
-    case_list = client.get(f"/app/learner/cases?learner_id={learner_id}")
+    case_list = client.get("/app/learner/cases")
     assert case_list.status_code == 200
     _assert_mobile_viewport(case_list.text)
     assert "Plan a spaced review" in case_list.text
     assert "No work product submitted yet." in case_list.text
 
-    case_detail = client.get(f"/app/learner/cases/{case_id}?learner_id={learner_id}")
+    case_detail = client.get(f"/app/learner/cases/{case_id}")
     assert case_detail.status_code == 200
     assert "Draft a review plan" in case_detail.text
     assert "Spacing evidence" in case_detail.text
@@ -317,7 +325,6 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
     work_product_response = client.post(
         f"/app/learner/cases/{case_id}/work-products",
         data={
-            "learner_id": learner_id,
             "submission_type": "rationale",
             "case_step_id": case_step_id,
             "rubric_id": rubric_id,

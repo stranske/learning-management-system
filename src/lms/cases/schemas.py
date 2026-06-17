@@ -135,7 +135,7 @@ class WorkProductScoreRead(BaseModel):
     rubric_score_id: str
     evidence_record_id: str | None
     normalized_score: float
-    status: str
+    status: WorkProductStatus
 
 
 class WorkProductRead(BaseModel):
