@@ -28,6 +28,10 @@ Neither command exercises real Claude API calls (`run` uses synthetic content + 
 - **Milestone-4 persistence-wiring gate**: `lms demo run` plus the test `tests/demo/test_minimum_demo_run.py`, which queries the DB via `select(...)` and asserts the printed summary equals what's actually persisted.
 - **Milestone-4 efficacy gate**: the manual day-30 retention protocol below. Neither automated command claims efficacy.
 
+Mounted capability surfaces, including `/capability/*` and
+`/app/learner/capability`, are authenticated preview/post-demo functionality.
+They are intentionally excluded from both Minimum Demo gates.
+
 ## Real Demo Manual Steps
 
 1. Lock the 8-item retention protocol before choosing or authoring real demo prompts.
