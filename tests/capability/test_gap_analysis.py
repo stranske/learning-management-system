@@ -133,7 +133,7 @@ def test_gap_analysis_clears_transfer_evidence_needed_after_case_score(
     score_work_product(
         db_session,
         work_product,
-        scorer_type="deterministic-test",
+        scorer_type="rubric-self",
         criterion_scores=[{"criterion": "transfer", "points": 3, "max_points": 4}],
         raw_score=3.0,
         max_score=4.0,

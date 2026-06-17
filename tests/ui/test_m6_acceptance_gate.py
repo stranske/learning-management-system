@@ -248,7 +248,7 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
         json={
             "rubric_id": rubric.id,
             "attempt_id": attempt_id,
-            "scorer_type": "deterministic-test",
+            "scorer_type": "rubric-self",
             "criterion_scores": [
                 {
                     "criterion_id": criterion_id,
@@ -347,7 +347,7 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
     work_product_score = client.post(
         f"/work-products/{work_product_id}/score",
         json={
-            "scorer_type": "deterministic-test",
+            "scorer_type": "rubric-self",
             "criterion_scores": [
                 {
                     "criterion_id": criterion_id,

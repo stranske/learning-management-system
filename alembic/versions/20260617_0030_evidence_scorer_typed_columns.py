@@ -25,29 +25,27 @@ def upgrade() -> None:
     op.add_column(
         "evidence_records", sa.Column("scoring_method", sa.String(length=32), nullable=True)
     )
-    op.create_check_constraint(
-        op.f("ck_evidence_records_scorer_type_valid"),
-        "evidence_records",
-        "scorer_type IS NULL OR scorer_type IN ('auto', 'llm-judge', 'rubric-self', 'human')",
-    )
-    op.create_check_constraint(
-        op.f("ck_evidence_records_scoring_method_valid"),
-        "evidence_records",
-        "scoring_method IS NULL OR scoring_method IN ('binary', 'partial-credit', 'rubric-scored')",
-    )
+    with op.batch_alter_table("evidence_records") as batch_op:
+        batch_op.create_check_constraint(
+            op.f("ck_evidence_records_scorer_type_valid"),
+            "scorer_type IS NULL OR scorer_type IN ('auto', 'llm-judge', 'rubric-self', 'human')",
+        )
+        batch_op.create_check_constraint(
+            op.f("ck_evidence_records_scoring_method_valid"),
+            "scoring_method IS NULL OR scoring_method IN ('binary', 'partial-credit', 'rubric-scored')",
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        op.f("ck_evidence_records_scoring_method_valid"),
-        "evidence_records",
-        type_="check",
-    )
-    op.drop_constraint(
-        op.f("ck_evidence_records_scorer_type_valid"),
-        "evidence_records",
-        type_="check",
-    )
+    with op.batch_alter_table("evidence_records") as batch_op:
+        batch_op.drop_constraint(
+            op.f("ck_evidence_records_scoring_method_valid"),
+            type_="check",
+        )
+        batch_op.drop_constraint(
+            op.f("ck_evidence_records_scorer_type_valid"),
+            type_="check",
+        )
     op.drop_column("evidence_records", "scoring_method")
     op.drop_column("evidence_records", "scorer_version")
     op.drop_column("evidence_records", "scorer_id")

@@ -51,6 +51,7 @@ def _evidence_payload() -> dict[str, object]:
         "scorer_type": "auto",
         "scorer_id": "unit-test",
         "scorer_version": "v1",
+        "scoring_method": "partial-credit",
         "raw_score": 4.0,
         "normalized_score": 0.8,
         "max_score": 5.0,
@@ -91,6 +92,7 @@ def test_evidence_record_roundtrip_full_schema(db_session: Session) -> None:
     assert record.scorer_type == "auto"
     assert record.scorer_id == "unit-test"
     assert record.scorer_version == "v1"
+    assert record.scoring_method == "partial-credit"
     assert record.raw_score == 4.0
     assert record.normalized_score == 0.8
     assert record.max_score == 5.0

@@ -70,7 +70,7 @@ def test_work_product_scoring_creates_transfer_evidence(db_session: Session) -> 
     score = score_work_product(
         db_session,
         work_product,
-        scorer_type="rubric-local",
+        scorer_type="rubric-self",
         criterion_scores=[{"criterion": "analysis", "points": 8, "max_points": 10}],
         raw_score=8.0,
         max_score=10.0,
@@ -116,7 +116,7 @@ def test_work_product_scoring_aligns_attempt_and_evidence_prompt_ids(
     score = score_work_product(
         db_session,
         work_product,
-        scorer_type="rubric-local",
+        scorer_type="rubric-self",
         criterion_scores=[{"criterion": "analysis", "points": 8, "max_points": 10}],
         raw_score=8.0,
         max_score=10.0,
@@ -146,7 +146,7 @@ def test_work_product_scoring_requires_a_linked_rubric(db_session: Session) -> N
         score_work_product(
             db_session,
             work_product,
-            scorer_type="rubric-local",
+            scorer_type="rubric-self",
             criterion_scores=[],
             raw_score=1.0,
             max_score=2.0,
@@ -168,7 +168,7 @@ def test_case_feedback_can_request_work_product_revision(db_session: Session) ->
     score = score_work_product(
         db_session,
         work_product,
-        scorer_type="rubric-local",
+        scorer_type="rubric-self",
         criterion_scores=[{"criterion": "analysis", "points": 4, "max_points": 10}],
         raw_score=4.0,
         max_score=10.0,
@@ -245,7 +245,7 @@ def test_rescore_terminal_product_rejected(db_session: Session) -> None:
     score_work_product(
         db_session,
         work_product,
-        scorer_type="rubric-local",
+        scorer_type="rubric-self",
         criterion_scores=[{"criterion": "analysis", "points": 8, "max_points": 10}],
         raw_score=8.0,
         max_score=10.0,
@@ -258,7 +258,7 @@ def test_rescore_terminal_product_rejected(db_session: Session) -> None:
         score_work_product(
             db_session,
             work_product,
-            scorer_type="rubric-local",
+            scorer_type="rubric-self",
             criterion_scores=[{"criterion": "analysis", "points": 9, "max_points": 10}],
             raw_score=9.0,
             max_score=10.0,
@@ -304,7 +304,7 @@ def test_rescore_stale_loaded_product_rejected(db_session: Session) -> None:
         score_work_product(
             db_session,
             work_product,
-            scorer_type="rubric-local",
+            scorer_type="rubric-self",
             criterion_scores=[{"criterion": "analysis", "points": 8, "max_points": 10}],
             raw_score=8.0,
             max_score=10.0,
@@ -317,7 +317,7 @@ def test_rescore_stale_loaded_product_rejected(db_session: Session) -> None:
             score_work_product(
                 stale_session,
                 stale_product,
-                scorer_type="rubric-local",
+                scorer_type="rubric-self",
                 criterion_scores=[{"criterion": "analysis", "points": 9, "max_points": 10}],
                 raw_score=9.0,
                 max_score=10.0,
@@ -352,7 +352,7 @@ def test_revision_rescore_supersedes_prior_score(db_session: Session) -> None:
     first = score_work_product(
         db_session,
         work_product,
-        scorer_type="rubric-local",
+        scorer_type="rubric-self",
         criterion_scores=[{"criterion": "analysis", "points": 6, "max_points": 10}],
         raw_score=6.0,
         max_score=10.0,
@@ -370,7 +370,7 @@ def test_revision_rescore_supersedes_prior_score(db_session: Session) -> None:
     second = score_work_product(
         db_session,
         work_product,
-        scorer_type="rubric-local",
+        scorer_type="rubric-self",
         criterion_scores=[{"criterion": "analysis", "points": 9, "max_points": 10}],
         raw_score=9.0,
         max_score=10.0,

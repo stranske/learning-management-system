@@ -81,7 +81,7 @@ def test_attempt_flow_routes_to_feedback_after_rubric_scoring(
             session,
             rubric_id=rubric_id,
             attempt_id=attempt.id,
-            scorer_type="rubric",
+            scorer_type="rubric-self",
             criterion_scores=[{"criterion_id": criterion_id, "points": 1.0}],
         )
         session.commit()

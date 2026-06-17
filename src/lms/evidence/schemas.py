@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 SupportLevel = Literal["none", "hint", "reference", "worked-example", "coach"]
 DemandLevel = Literal["low", "medium", "high"]
 EvidenceKind = Literal["observed", "inferred"]
+ScorerType = Literal["auto", "llm-judge", "rubric-self", "human"]
+ScoringMethod = Literal["binary", "partial-credit", "rubric-scored"]
 KnowledgeType = Literal[
     "factual",
     "conceptual",
@@ -91,10 +93,10 @@ class AttemptEvidenceCreate(BaseModel):
     retrieval_demand: str | None = Field(default=None, max_length=64)
     transfer_distance: str | None = Field(default=None, max_length=64)
     source_match_quality: str | None = Field(default=None, max_length=64)
-    scorer_type: str | None = Field(default=None, max_length=64)
+    scorer_type: ScorerType | None = None
     scorer_id: str | None = Field(default=None, max_length=255)
     scorer_version: str | None = Field(default=None, max_length=120)
-    scoring_method: str | None = Field(default=None, max_length=32)
+    scoring_method: ScoringMethod | None = None
     scorer_metadata: dict[str, object] | None = None
     raw_score: float | None = Field(default=None, ge=0)
     normalized_score: float | None = Field(default=None, ge=0, le=1)
@@ -128,10 +130,10 @@ class EvidenceRecordCreate(BaseModel):
     retrieval_demand: str | None = Field(default=None, max_length=64)
     transfer_distance: str | None = Field(default=None, max_length=64)
     source_match_quality: str | None = Field(default=None, max_length=64)
-    scorer_type: str | None = Field(default=None, max_length=64)
+    scorer_type: ScorerType | None = None
     scorer_id: str | None = Field(default=None, max_length=255)
     scorer_version: str | None = Field(default=None, max_length=120)
-    scoring_method: str | None = Field(default=None, max_length=32)
+    scoring_method: ScoringMethod | None = None
     scorer_metadata: dict[str, object] | None = None
     raw_score: float | None = Field(default=None, ge=0)
     normalized_score: float | None = Field(default=None, ge=0, le=1)
