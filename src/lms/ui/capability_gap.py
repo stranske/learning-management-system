@@ -266,7 +266,9 @@ def _detail_surface(*, session: Session, target: dict[str, object], notice: str 
             )
         }
         {_plan_block(analysis=latest_analysis, plan=latest_plan, learner_id=learner_id)}
-        <p class="back-link"><a href="{CAPABILITY_PATH}?learner_id={escape(_s(target["learner_id"]))}">
+        <p class="back-link"><a href="{CAPABILITY_PATH}?learner_id={
+            escape(_s(target["learner_id"]))
+        }">
           Back to all capability targets</a></p>
         """,
     )
