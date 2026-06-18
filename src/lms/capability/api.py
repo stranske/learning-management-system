@@ -1,4 +1,8 @@
-"""HTTP routes for personal capability targets."""
+"""Authenticated preview API for post-demo personal capability planning.
+
+The routes stay mounted so completed capability work remains usable, but they
+are not part of the Milestones 0-4 Minimum Demo acceptance path.
+"""
 
 from __future__ import annotations
 

@@ -597,7 +597,7 @@ Purpose:
 
 Certification stance:
 
-- Personal gap-closing artifacts (`CapabilityTarget`, `CapabilityEstimate`, `GapAnalysis`, `MaintenancePlan`) land in **Milestone 5**, after the Phase 1 Minimum Demo proves the core learner loop. They are explicitly **not** part of the Phase 1 / Milestones 0-4 scope or the v1 API surface; the corresponding endpoints (`/capability/targets`, `/capability/estimates`, `/capability/gap-analyses`) live in the Phase 2+ API block. Gap-closing is the actionable core for both personal and institutional use: "I want to understand X; the system tells me what evidence I'm missing and what to do next."
+- Personal gap-closing artifacts (`CapabilityTarget`, `CapabilityEstimate`, `GapAnalysis`, `MaintenancePlan`) land in **Milestone 5**, after the Phase 1 Minimum Demo proves the core learner loop. They are explicitly **not** part of the Phase 1 / Milestones 0-4 acceptance path. The corresponding endpoints (`/capability/targets`, `/capability/estimates`, `/capability/gap-analyses`) may be mounted early as authenticated preview/post-demo surfaces, but they must not be counted toward Minimum Demo readiness; only the core learner loop (Milestones 0-4) determines Phase 1 acceptance. Gap-closing is the actionable core for both personal and institutional use: "I want to understand X; the system tells me what evidence I'm missing and what to do next."
 - Defer `CertificationSnapshot`, `RecertificationPolicy`, and `EvidenceDecayPolicy` until institutional or analyst-evaluation contexts enter the system. They are not needed when one learner is evaluating themselves.
 - Certification, when it lands, should not be treated as final, permanent, or punitive. A current-capability evaluation is a time-bounded estimate with evidence, confidence, scope, and decay risk.
 - The system should support formal certification where institutions need it, but retrieval practice and learning maintenance should remain more important than preserving a static certified label.
@@ -1296,6 +1296,11 @@ The system has not met its v1 thesis until the following can be demonstrated end
 4. View current mastery per node in the Inspect surface; view the scheduler's review queue with reason codes.
 5. Complete one `study-coach` LLM session per topic, with the formative-feedback policy active, trace classification working, and per-mode cost monitored.
 6. At day 30: complete a pre-registered retention test (see protocol below).
+
+Implemented preview surfaces outside this list, including `/capability/*` and
+`/app/learner/capability`, may remain mounted for authenticated post-demo
+exploration. They are not Minimum Demo requirements and must not be used as
+evidence that the Milestones 0-4 core learner-loop gate is complete.
 
 Day-30 retention protocol (default shape; locked in `docs/handoff/demo-retention-protocol.md` before any of the items are picked):
 

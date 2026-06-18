@@ -1,10 +1,13 @@
-"""Personal capability and gap-analysis surface (Surface 7).
+"""Authenticated preview UI for personal capability and gap analysis.
 
 This is the M6 learner-facing UI over the M5 capability service in
 :mod:`lms.capability.api`. It is personal-scope only: it never offers
 institutional targets, manager approvals, certifications, or permanent
 pass/fail labels, and it speaks in cautious present-tense "current evidence"
 language so an estimate reads as a snapshot rather than a verdict.
+
+The surface may remain mounted before the Minimum Demo, but it is a
+preview/post-demo surface rather than a Milestones 0-4 readiness requirement.
 """
 
 from __future__ import annotations
