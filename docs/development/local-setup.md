@@ -13,7 +13,7 @@ docker compose up --build
 That single command:
 
 1. Builds the LMS image from `Dockerfile`.
-2. Starts a Postgres 16 container with a persistent volume (`lms_pg_data`).
+2. Starts the Compose-defined Postgres container with a persistent volume (`lms_pg_data`).
 3. Waits for Postgres to be healthy.
 4. Runs `alembic upgrade head` against the new DB.
 5. Starts uvicorn with `--reload` pointed at the bind-mounted `src/` tree, so
