@@ -217,7 +217,7 @@ matplotlib-inline==0.2.2
     # via
     #   ipykernel
     #   ipython
-mistune==3.3.0
+mistune==3.3.1
     # via
     #   lms (pyproject.toml)
     #   nbconvert
