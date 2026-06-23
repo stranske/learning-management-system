@@ -70,6 +70,7 @@ def test_compose_stack_starts_and_serves_admin() -> None:
                 text=True,
                 capture_output=True,
                 check=False,
+                timeout=15,
             )
             admin = subprocess.run(
                 [
@@ -85,6 +86,7 @@ def test_compose_stack_starts_and_serves_admin() -> None:
                 text=True,
                 capture_output=True,
                 check=False,
+                timeout=15,
             )
             if health.returncode == 0 and admin.returncode == 0:
                 break
