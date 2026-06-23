@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib.resources import files
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -117,6 +118,28 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     app.include_router(support_admin_ui_router, dependencies=auth)
     static_path = files("lms.ui.static")
     app.mount("/static/ui", StaticFiles(directory=str(static_path)), name="ui-static")
+
+    # Root landing: the base URL used to return a bare JSON 404 (no UI route is
+    # mounted at "/"). Serve a minimal, un-gated index that points at the real
+    # entry points so a fresh visitor (or an uptime probe) lands somewhere
+    # useful instead of an error. Kept intentionally tiny — it is a signpost,
+    # not application UI.
+    @app.get("/", include_in_schema=False, response_class=HTMLResponse)
+    async def root_landing() -> HTMLResponse:
+        return HTMLResponse(
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            "<title>Learning Management System</title></head><body>"
+            "<h1>Learning Management System</h1>"
+            "<p>API-first backend for evidence-informed personal learning.</p>"
+            "<ul>"
+            '<li><a href="/app/learner">Learner workspace</a></li>'
+            '<li><a href="/app/author">Author workspace</a></li>'
+            '<li><a href="/app/admin">Admin</a></li>'
+            '<li><a href="/docs">API docs</a></li>'
+            '<li><a href="/health">Health</a></li>'
+            "</ul></body></html>"
+        )
+
     return app
 
 

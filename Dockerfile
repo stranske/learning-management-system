@@ -70,6 +70,14 @@ WORKDIR /app
 
 COPY --from=builder /build /app
 
+# The builder ran ``pip install -e .`` from /build, so the editable record
+# (__editable__.lms-*.pth) points at the build-time path /build/src, which does
+# not exist in this runtime image (sources were copied to /app). Put the real
+# package root on the import path so ``lms`` is importable for both
+# ``alembic upgrade head`` and ``uvicorn lms.main:app``. This path also matches
+# the docker-compose ``./src:/app/src`` bind mount, so --reload still works.
+ENV PYTHONPATH=/app/src
+
 # Drop privileges before exposing the runtime surface.
 RUN useradd --create-home --uid 1001 appuser && \
     chown -R appuser:appuser /app /opt/venv

@@ -17,7 +17,13 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - lms_pg_data:/var/lib/postgresql/data
+      # postgres:18 stores data in a major-version subdir under
+      # /var/lib/postgresql (pg_ctlcluster layout). Mounting at the legacy
+      # /var/lib/postgresql/data path makes the image refuse to start
+      # ("unused mount/volume"). Mount the parent so the version subdir
+      # (e.g. .../18/docker) lands inside the persisted volume.
+      # See docker-library/postgres#1259.
+      - lms_pg_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lms -d lms"]
       interval: 5s

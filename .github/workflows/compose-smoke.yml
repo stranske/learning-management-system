@@ -1,0 +1,29 @@
+# Compose smoke test — guards issue #351 (the documented local dev stack,
+# `docker compose up`, must start end-to-end from a clean volume).
+#
+# Repo-specific workflow (NOT a Workflows template file): unlike the static
+# deployment-contract tests in tests/deployment/ (which parse YAML and never
+# touch Docker), this job actually boots the full compose stack on a clean
+# volume and probes the running app. GitHub-hosted ubuntu runners ship Docker +
+# the compose plugin + curl, so no extra setup is needed.
+name: Compose smoke
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose-smoke:
+    name: docker compose up (clean volume)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Run compose smoke test
+        run: bash scripts/compose_smoke.sh
