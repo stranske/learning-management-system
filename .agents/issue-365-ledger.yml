@@ -7,10 +7,10 @@ tasks:
     title: Make `design-system/{tokens,components}.css` importable by the Vite frontend,
       e.g. copy into `frontend/src/styles/` kept in sync with the repo-root vendored
       copy, or add a build alias.
-    status: doing
+    status: done
     started_at: '2026-06-23T16:09:47Z'
-    finished_at: null
-    commit: ''
+    finished_at: '2026-06-23T16:09:58Z'
+    commit: 90a4d31b45d000f3a1302e0663ffd5b527f6bf2b
     notes: []
   - id: task-02
     title: 'Evaluate whether to copy CSS files into frontend/src/styles or create
