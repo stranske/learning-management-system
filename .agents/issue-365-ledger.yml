@@ -1,0 +1,186 @@
+version: 1
+issue: 365
+base: main
+branch: codex/issue-365
+tasks:
+  - id: task-01
+    title: Make `design-system/{tokens,components}.css` importable by the Vite frontend,
+      e.g. copy into `frontend/src/styles/` kept in sync with the repo-root vendored
+      copy, or add a build alias.
+    status: doing
+    started_at: '2026-06-23T16:09:47Z'
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-02
+    title: 'Evaluate whether to copy CSS files into frontend/src/styles or create
+      a Vite build alias to the repo-root design-system directory (verify: confirm
+      completion in repo)'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-03
+    title: 'Implement the chosen approach to make design-system tokens.css (verify:
+      confirm completion in repo)'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-04
+    title: 'components.css importable by the Vite frontend (verify: confirm completion
+      in repo)'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-05
+    title: 'Document the synchronization strategy if copying files (verify: confirm
+      completion in repo)'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-06
+    title: or verify the alias resolution if using build aliases
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-07
+    title: Import `design-system/tokens.css` and `components.css` in `frontend/src/main.tsx`
+      and wrap the app root element in `class="ds theme-paper"`.
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-08
+    title: Update the most-visible bespoke styles to use the shared tokens.
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-09
+    title: 'Identify three to five high-traffic UI components that currently use bespoke
+      color or spacing values (verify: confirm completion in repo)'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-10
+    title: 'Replace hardcoded color values in the identified components with design-system
+      CSS custom properties (verify: confirm completion in repo)'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-11
+    title: 'Replace hardcoded spacing values in the identified components with design-system
+      spacing tokens (verify: confirm completion in repo)'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-12
+    title: 'Document which bespoke styles were migrated (verify: confirm completion
+      in repo)'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-13
+    title: 'which remain for future work (verify: confirm completion in repo)'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-14
+    title: Write a vitest static/unit check asserting the entry imports both shared
+      stylesheets and the root carries `ds` and `theme-paper`.
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-15
+    title: A vitest static/unit check exists and passes, asserting the entry imports
+      both shared stylesheets and the root carries `ds` and `theme-paper`.
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-16
+    title: Removing a shared CSS import causes the test to fail, and restoring the
+      import causes the test to pass.
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-17
+    title: The app renders with the shared theme, with a screenshot captured.
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-18
+    title: Make `design-system/{tokens,components}.css` importable by the Vite frontend
+      (e.g. copy into `frontend/src/styles/` kept in sync with the repo-root vendored
+      copy, or a build alias).
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-19
+    title: Import both stylesheets in the app entry (`frontend/src/main.tsx`); wrap
+      the app root element in `class="ds theme-paper"`.
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-20
+    title: Map the most-visible bespoke styles to the shared tokens.
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-21
+    title: 'Named test gate: a static/unit check (vitest) asserting the entry imports
+      both shared stylesheets AND the root carries `ds`/`theme-paper`.'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-22
+    title: '**Deliberate-break -> revert:** remove the CSS import -> the test **FAILS**
+      -> revert -> passes. Capture both runs.'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
+  - id: task-23
+    title: 'Live: the app renders with the shared theme (screenshot).'
+    status: todo
+    started_at: null
+    finished_at: null
+    commit: ''
+    notes: []
