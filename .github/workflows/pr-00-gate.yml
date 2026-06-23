@@ -80,9 +80,38 @@ jobs:
       enable-soft-gate: false
     secrets: inherit
 
+  compose-smoke:
+    name: Compose smoke
+    needs: detect
+    if: >-
+      ${{
+        needs.detect.outputs.is_docs_only != 'true' &&
+        needs.detect.outputs.is_python_code == 'true'
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install project test dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Run Docker Compose startup smoke
+        env:
+          LMS_RUN_COMPOSE_SMOKE: "1"
+        run: uv run pytest tests/test_compose_smoke.py -q --no-cov
+
   summary:
     name: gate-summary
-    needs: [detect, python-ci]
+    needs: [detect, python-ci, compose-smoke]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     permissions:
@@ -105,10 +134,12 @@ jobs:
         env:
           DETECT_RESULT: ${{ needs.detect.result || 'skipped' }}
           PYTHON_RESULT: ${{ needs.python-ci.result || 'skipped' }}
+          COMPOSE_SMOKE_RESULT: ${{ needs.compose-smoke.result || 'skipped' }}
         run: |
           set -euo pipefail
 
           python_result="${PYTHON_RESULT:-skipped}"
+          compose_smoke_result="${COMPOSE_SMOKE_RESULT:-skipped}"
           state="success"
           description="All checks passed"
 
@@ -132,6 +163,23 @@ jobs:
             *)
               state="pending"
               description="Python CI status unknown"
+              ;;
+          esac
+
+          case "$compose_smoke_result" in
+            success|skipped)
+              ;;
+            failure)
+              state="failure"
+              description="Compose smoke failed"
+              ;;
+            cancelled)
+              state="error"
+              description="Compose smoke was cancelled"
+              ;;
+            *)
+              state="pending"
+              description="Compose smoke status unknown"
               ;;
           esac
 
