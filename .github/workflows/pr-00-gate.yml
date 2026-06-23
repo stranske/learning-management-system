@@ -83,6 +83,8 @@ jobs:
   compose-smoke:
     name: Compose smoke
     needs: detect
+    permissions:
+      contents: read
     if: >-
       ${{
         needs.detect.outputs.is_docs_only != 'true' &&
@@ -92,6 +94,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v6

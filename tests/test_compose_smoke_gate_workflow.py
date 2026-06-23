@@ -20,10 +20,14 @@ def test_pr_gate_runs_named_compose_smoke_check() -> None:
     assert "Run Docker Compose startup smoke" in step_names
 
     smoke_step = next(
-        step
-        for step in compose_smoke["steps"]
-        if step["name"] == "Run Docker Compose startup smoke"
+        (
+            step
+            for step in compose_smoke["steps"]
+            if step["name"] == "Run Docker Compose startup smoke"
+        ),
+        None,
     )
+    assert smoke_step is not None, "Run Docker Compose startup smoke step not found"
     assert smoke_step["env"]["LMS_RUN_COMPOSE_SMOKE"] == "1"
     assert smoke_step["run"] == "uv run pytest tests/test_compose_smoke.py -q --no-cov"
 
