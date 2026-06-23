@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib.resources import files
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -92,6 +93,11 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
         # auth gate they are intended to initialize.
         app.include_router(auth_router)
         app.include_router(learners_router, dependencies=auth)
+
+    @app.get("/", include_in_schema=False)
+    def root_redirect() -> RedirectResponse:
+        """Send the base URL to the local admin entry point."""
+        return RedirectResponse(url="/app/admin", status_code=307)
 
     app.include_router(health_router)
     app.include_router(inspect_router, dependencies=auth)
