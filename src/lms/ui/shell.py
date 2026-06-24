@@ -19,13 +19,16 @@ def render_page(title: str, body: str, *, active_path: str | None = None) -> str
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#1f6feb">
+  <meta name="theme-color" content="#a85a34">
   <title>LMS {escape(title)}</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/static/ui/pico.min.css">
   <link rel="stylesheet" href="/static/ui/app.css">
+  <link rel="stylesheet" href="/static/ui/tokens.css">
+  <link rel="stylesheet" href="/static/ui/components.css">
+  <link rel="stylesheet" href="/static/ui/ds-reconcile.css">
 </head>
-<body>
+<body class="ds theme-paper">
   <header class="app-header">
     <nav aria-label="Application sections">
       <ul><li><strong>LMS</strong></li></ul>
