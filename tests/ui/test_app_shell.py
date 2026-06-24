@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -20,10 +22,30 @@ def test_app_shell_uses_documented_routes_and_mobile_viewport(
     assert 'href="/static/ui/app.css"' in html
     assert 'href="/manifest.webmanifest"' in html
     assert 'navigator.serviceWorker.register("/service-worker.js")' in html
+    assert '<meta name="theme-color" content="#a85a34">' in html
+    assert 'href="/static/ui/tokens.css"' in html
+    assert 'href="/static/ui/components.css"' in html
+    assert 'href="/static/ui/ds-reconcile.css"' in html
+    assert '<body class="ds theme-paper">' in html
     assert 'href="/app/learner" aria-current="page"' in html
     assert 'href="/app/author"' in html
     assert 'href="/app/support"' in html
     assert 'href="/app/admin"' in html
+
+    stylesheet_pairs = re.findall(
+        r'<link[^>]*(?:rel="stylesheet"[^>]*href="([^"]+)"|'
+        r'href="([^"]+)"[^>]*rel="stylesheet")[^>]*>',
+        html,
+    )
+    stylesheet_refs = [first or second for first, second in stylesheet_pairs]
+    assert stylesheet_refs == [
+        "/static/ui/pico.min.css",
+        "/static/ui/app.css",
+        "/static/ui/tokens.css",
+        "/static/ui/components.css",
+        "/static/ui/ds-reconcile.css",
+    ]
+    assert all(ref.startswith("/static/ui/") for ref in stylesheet_refs)
 
 
 def test_app_shell_empty_surfaces_are_available(

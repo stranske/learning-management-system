@@ -1,0 +1,63 @@
+.theme-paper {
+  --lms-page-bg: var(--bg);
+  --lms-surface-bg: var(--surface);
+  --lms-panel-bg: var(--panel);
+  --lms-text: var(--text);
+  --lms-muted: var(--muted);
+  --lms-border: var(--border);
+  --lms-accent: var(--accent);
+}
+
+.ds.theme-paper {
+  background: var(--lms-page-bg);
+  color: var(--lms-text);
+}
+
+.theme-paper .app-header,
+.theme-paper .empty-state,
+.theme-paper .panel {
+  background: var(--lms-surface-bg);
+  border-color: var(--lms-border);
+  box-shadow: var(--shadow);
+}
+
+.theme-paper .app-header {
+  border-bottom-color: var(--lms-border);
+}
+
+.theme-paper .surface {
+  color: var(--lms-text);
+}
+
+.theme-paper .eyebrow,
+.theme-paper .note,
+.theme-paper .panel-item span,
+.theme-paper .panel-item small,
+.theme-paper .source-panel span,
+.theme-paper .source-panel small {
+  color: var(--lms-muted);
+}
+
+.theme-paper h1,
+.theme-paper h2,
+.theme-paper h3,
+.theme-paper strong {
+  color: var(--lms-text);
+  font-family: var(--font-heading);
+  font-weight: var(--heading-weight);
+}
+
+.theme-paper a,
+.theme-paper [aria-current="page"] {
+  color: var(--lms-accent);
+}
+
+.theme-paper .subnav a {
+  border-color: var(--lms-border);
+  background: var(--lms-surface-bg);
+}
+
+.theme-paper .preview {
+  border-left-color: var(--lms-accent);
+  background: var(--accent-weak);
+}
