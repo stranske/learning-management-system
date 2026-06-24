@@ -54,12 +54,10 @@ create-user` command locally. The hash ends up in the same row either way.
 
 ### 4. Visit the app
 
-The service URL is shown at the top of the Render dashboard for the service —
-something like `https://learning-management-system.onrender.com`. Open it,
-log in with the user you just created, and you should land on the learner
-shell.
-
-Update `README.md` "Development Workflow" with the URL once it stabilizes.
+The service URL is shown at the top of the Render dashboard for the service.
+The current LMS service is
+`https://learning-management-system-5s7a.onrender.com`. Open it, log in with
+the user you just created, and you should land on the learner shell.
 
 ## Routine operations
 
