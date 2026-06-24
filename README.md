@@ -182,9 +182,9 @@ for the one-time setup (connect repo, set secrets, create the first user)
 and [`docs/architecture/auth.md`](docs/architecture/auth.md) for the password
 authentication design.
 
-Once deployed, the service URL is shown in the Render dashboard
-(e.g. `https://learning-management-system.onrender.com`). The deployed
-instance enforces Argon2 password login; create the bootstrap user via:
+The Render service is live at
+`https://learning-management-system-5s7a.onrender.com`. The deployed instance
+enforces Argon2 password login; create the bootstrap user via:
 
 ```bash
 python -m lms auth create-user --username YOU --display-name "Your Name" --password
