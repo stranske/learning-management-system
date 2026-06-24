@@ -32,7 +32,12 @@ def test_app_shell_uses_documented_routes_and_mobile_viewport(
     assert 'href="/app/support"' in html
     assert 'href="/app/admin"' in html
 
-    stylesheet_refs = re.findall(r'<link rel="stylesheet" href="([^"]+)"', html)
+    stylesheet_pairs = re.findall(
+        r'<link[^>]*(?:rel="stylesheet"[^>]*href="([^"]+)"|'
+        r'href="([^"]+)"[^>]*rel="stylesheet")[^>]*>',
+        html,
+    )
+    stylesheet_refs = [first or second for first, second in stylesheet_pairs]
     assert stylesheet_refs == [
         "/static/ui/pico.min.css",
         "/static/ui/app.css",
