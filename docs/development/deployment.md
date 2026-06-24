@@ -64,8 +64,8 @@ the user you just created, and you should land on the learner shell.
 ### Redeploys
 
 Render's GitHub integration auto-deploys every push to `main`. The Blueprint's
-`preDeployCommand: alembic upgrade head` runs before the new instance accepts
-traffic, so schema changes go out cleanly.
+`preDeployCommand: python -m alembic.config upgrade head` runs before the new
+instance accepts traffic, so schema changes go out cleanly.
 
 ### Rolling back
 
@@ -132,8 +132,8 @@ hostname; certs are issued automatically.
 ## Troubleshooting
 
 - **`502 Bad Gateway` immediately after deploy**: check the **Logs** tab for
-  uvicorn startup errors. Common cause: `alembic upgrade head` failed during
-  preDeploy. Fix the migration, push, redeploy.
+  uvicorn startup errors. Common cause: `python -m alembic.config upgrade head`
+  failed during preDeploy. Fix the migration, push, redeploy.
 - **Login form returns 401 with valid credentials**: check
   `users.password_hash` is non-null for that row. If you created the user via
   the API rather than the bootstrap CLI, the hash may not have been set.

@@ -111,7 +111,7 @@ def test_deployment_docs_cover_bootstrap_plan_tradeoffs_and_local_auth() -> None
 
     assert "python -m lms auth create-user" in deployment_doc
     assert "AUTH_REQUIRED=true" in deployment_doc
-    assert "preDeployCommand: alembic upgrade head" in deployment_doc
+    assert "preDeployCommand: python -m alembic.config upgrade head" in deployment_doc
     assert "basic-256mb" in deployment_doc
     assert "pg_dump" in deployment_doc and "pg_restore" in deployment_doc
 
