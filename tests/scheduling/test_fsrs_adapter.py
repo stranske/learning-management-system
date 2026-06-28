@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy.orm import Session
 
 from lms.evidence.repository import create_evidence_record
@@ -122,36 +123,86 @@ def test_low_confidence_high_score_is_hard(db_session: Session) -> None:
     assert rating.rule_id == "supported-or-low-confidence-correct"
 
 
-def test_partial_credit_boundaries(db_session: Session) -> None:
-    again = create_evidence_record(
+@pytest.mark.parametrize(
+    ("score", "expected_label", "expected_rule_id"),
+    [
+        (0.30, "again", "partial-under-half"),
+        (0.70, "hard", "partial-under-mastery"),
+        (0.90, "good", "partial-at-mastery"),
+    ],
+    ids=["representative-under-half", "representative-under-mastery", "representative-at-mastery"]
+)
+def test_partial_credit_representative_cases(
+    db_session: Session,
+    score: float,
+    expected_label: str,
+    expected_rule_id: str,
+) -> None:
+    record = create_evidence_record(
         db_session,
         learner_id="learner-1",
         knowledge_node_id="node-1",
         correctness=True,
-        normalized_score=0.49,
-    )
-    hard = create_evidence_record(
-        db_session,
-        learner_id="learner-1",
-        knowledge_node_id="node-1",
-        correctness=True,
-        normalized_score=0.84,
-    )
-    good = create_evidence_record(
-        db_session,
-        learner_id="learner-1",
-        knowledge_node_id="node-1",
-        correctness=True,
-        normalized_score=0.85,
+        normalized_score=score,
         confidence_rating=3,
     )
+    rating = evidence_to_fsrs_rating(record)
+    assert rating.label == expected_label
+    assert rating.rule_id == expected_rule_id
 
-    assert evidence_to_fsrs_rating(again).label == "again"
-    assert evidence_to_fsrs_rating(again).rule_id == "partial-under-half"
-    assert evidence_to_fsrs_rating(hard).label == "hard"
-    assert evidence_to_fsrs_rating(hard).rule_id == "partial-under-mastery"
-    assert evidence_to_fsrs_rating(good).label == "good"
-    assert evidence_to_fsrs_rating(good).rule_id == "partial-at-mastery"
+
+@pytest.mark.parametrize(
+    ("score", "expected_label", "expected_rule_id"),
+    [
+        (0.49, "again", "partial-under-half"),
+        (0.50, "hard", "partial-under-mastery"),
+    ],
+    ids=["under-half-upper-boundary", "under-mastery-lower-boundary"]
+)
+def test_partial_credit_half_threshold_boundary(
+    db_session: Session,
+    score: float,
+    expected_label: str,
+    expected_rule_id: str,
+) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=True,
+        normalized_score=score,
+        confidence_rating=3,
+    )
+    rating = evidence_to_fsrs_rating(record)
+    assert rating.label == expected_label
+    assert rating.rule_id == expected_rule_id
+
+
+@pytest.mark.parametrize(
+    ("score", "expected_label", "expected_rule_id"),
+    [
+        (0.84, "hard", "partial-under-mastery"),
+        (0.85, "good", "partial-at-mastery"),
+    ],
+    ids=["under-mastery-upper-boundary", "at-mastery-lower-boundary"]
+)
+def test_partial_credit_mastery_threshold_boundary(
+    db_session: Session,
+    score: float,
+    expected_label: str,
+    expected_rule_id: str,
+) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        correctness=True,
+        normalized_score=score,
+        confidence_rating=3,
+    )
+    rating = evidence_to_fsrs_rating(record)
+    assert rating.label == expected_label
+    assert rating.rule_id == expected_rule_id
 
 
 def test_mastery_score_without_correctness_maps_to_good(db_session: Session) -> None:
