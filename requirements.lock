@@ -67,7 +67,7 @@ comm==0.2.3
     # via
     #   ipykernel
     #   ipywidgets
-coverage==7.15.1
+coverage==7.15.2
     # via pytest-cov
 debugpy==1.8.21
     # via ipykernel
@@ -220,7 +220,7 @@ mistune==3.3.3
     # via
     #   lms (pyproject.toml)
     #   nbconvert
-mypy==2.2.0
+mypy==2.3.0
     # via lms (pyproject.toml)
 mypy-extensions==1.1.0
     # via
@@ -388,7 +388,7 @@ rpds-py==2026.6.3
     # via
     #   jsonschema
     #   referencing
-ruff==0.15.20
+ruff==0.15.22
     # via lms (pyproject.toml)
 send2trash==2.1.0
     # via jupyter-server
