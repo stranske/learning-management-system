@@ -30,9 +30,9 @@ def test_minimum_demo_project_plan_excludes_capability_requirements() -> None:
     )
 
     for forbidden in FORBIDDEN_DEMO_REQUIREMENTS:
-        assert forbidden not in required_steps, (
-            f"{forbidden} leaked into project-plan.md Minimum Demo criterion"
-        )
+        assert (
+            forbidden not in required_steps
+        ), f"{forbidden} leaked into project-plan.md Minimum Demo criterion"
 
 
 def test_minimum_demo_handoff_steps_exclude_capability_requirements() -> None:
