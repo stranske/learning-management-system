@@ -130,7 +130,7 @@ def test_low_confidence_high_score_is_hard(db_session: Session) -> None:
         (0.70, "hard", "partial-under-mastery"),
         (0.90, "good", "partial-at-mastery"),
     ],
-    ids=["representative-under-half", "representative-under-mastery", "representative-at-mastery"]
+    ids=["representative-under-half", "representative-under-mastery", "representative-at-mastery"],
 )
 def test_partial_credit_representative_cases(
     db_session: Session,
@@ -157,7 +157,7 @@ def test_partial_credit_representative_cases(
         (0.49, "again", "partial-under-half"),
         (0.50, "hard", "partial-under-mastery"),
     ],
-    ids=["under-half-upper-boundary", "under-mastery-lower-boundary"]
+    ids=["under-half-upper-boundary", "under-mastery-lower-boundary"],
 )
 def test_partial_credit_half_threshold_boundary(
     db_session: Session,
@@ -184,7 +184,7 @@ def test_partial_credit_half_threshold_boundary(
         (0.84, "hard", "partial-under-mastery"),
         (0.85, "good", "partial-at-mastery"),
     ],
-    ids=["under-mastery-upper-boundary", "at-mastery-lower-boundary"]
+    ids=["under-mastery-upper-boundary", "at-mastery-lower-boundary"],
 )
 def test_partial_credit_mastery_threshold_boundary(
     db_session: Session,
