@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,16 +22,30 @@ from lms.feedback.scoring import score_attempt_with_rubric
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.models import Learner
 from lms.main import create_app
+from lms.scheduling import service as scheduling_service
 from lms.scheduling.models import ReviewQueueItem, ReviewSchedule
 from lms.scheduling.repository import complete_review_queue_item, create_review_queue_item
-from lms.scheduling.service import SUCCESS_INTERVALS_DAYS
 
 
-def test_rubric_scoring_runtime_advances_success_ramp(db_session: Session) -> None:
-    """Production scoring plus completion advances 1 -> 3 -> 7 day reviews."""
+def _aware(value: datetime) -> datetime:
+    """SQLite hands back naive datetimes; normalize to UTC for arithmetic."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def test_rubric_scoring_runtime_advances_success_ramp(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production scoring plus completion grows the review interval each round.
+
+    FSRS derives stability from time actually elapsed, so this walks a clock
+    forward to each item's due date rather than scoring three times in the
+    same instant (which correctly would NOT extend the interval).
+    """
     rubric_id, criterion_id, node_id = _rubric(db_session)
-    due_gaps: list[int] = []
+    due_gaps: list[float] = []
     rules: list[str] = []
+    clock = {"now": datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)}
+    monkeypatch.setattr(scheduling_service, "utc_now", lambda: clock["now"])
 
     for index in range(3):
         attempt = create_attempt(
@@ -66,7 +81,7 @@ def test_rubric_scoring_runtime_advances_success_ramp(db_session: Session) -> No
 
         assert item is not None
         assert item.knowledge_node_id == node_id
-        due_gaps.append(round((item.due_at - item.created_at).total_seconds() / 86400))
+        due_gaps.append((_aware(item.due_at) - clock["now"]).total_seconds() / 86400)
         rules.append(item.decision_log["rule"])
         if index < 2:
             complete_review_queue_item(
@@ -75,9 +90,13 @@ def test_rubric_scoring_runtime_advances_success_ramp(db_session: Session) -> No
                 actor_id="test:runtime-wiring",
             )
             db_session.flush()
+            # Study again when the item actually comes due.
+            clock["now"] = _aware(item.due_at)
 
-    assert due_gaps == list(SUCCESS_INTERVALS_DAYS[:3])
-    assert rules == ["success-ramp-step-0", "success-ramp-step-1", "success-ramp-step-2"]
+    assert all(gap > 0 for gap in due_gaps), f"every review must schedule forward: {due_gaps}"
+    assert due_gaps[1] > due_gaps[0], f"interval must grow after an on-time success: {due_gaps}"
+    assert due_gaps[2] > due_gaps[1], f"interval must keep growing: {due_gaps}"
+    assert rules == ["fsrs-warm-review"] * 3
 
 
 def test_rubric_scoring_keeps_score_when_scheduler_fails(

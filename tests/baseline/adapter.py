@@ -58,7 +58,7 @@ mutable ``repetition_count`` stored on the item. The faithful analogues are:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -166,6 +166,17 @@ def _make_attempt(
     return attempt, attempt.evidence_records[0]
 
 
+def _seed_lookback_days(prior_successes: int) -> int:
+    """How far back to start seeding so the measured attempt lands on FIXED_NOW.
+
+    Generous by design: the seed loop clamps forward to FIXED_NOW, so an
+    over-estimate simply means the last seed sits on the measurement instant.
+    """
+    if prior_successes <= 0:
+        return 0
+    return 30 * prior_successes
+
+
 def run_scenario(scenario: dict[str, Any]) -> dict[str, float | int]:
     """Run ``schedule_from_attempt`` for one scenario and flatten to scalars.
 
@@ -181,8 +192,15 @@ def run_scenario(scenario: dict[str, Any]) -> dict[str, float | int]:
         node_id = "baseline-node"
         prior = int(scenario.get("prior_successes", 0) or 0)
 
-        # Seed prior COMPLETED successful reviews to step the ramp. Each seed is a
-        # confident, unsupported correct retrieval -> a "success" signal.
+        # Seed prior COMPLETED successful reviews to build up memory strength.
+        # Each seed is a confident, unsupported correct retrieval -> "success".
+        #
+        # These are spaced in TIME, not stacked on one instant. FSRS derives
+        # stability from elapsed time between reviews, so N reviews at the same
+        # timestamp represent cramming and correctly do not extend the interval.
+        # We therefore walk a clock forward from far enough in the past that the
+        # final, measured attempt lands exactly on FIXED_NOW.
+        seed_clock = FIXED_NOW - timedelta(days=_seed_lookback_days(prior))
         for index in range(prior):
             seed_attempt, seed_evidence = _make_attempt(
                 session,
@@ -201,10 +219,15 @@ def run_scenario(scenario: dict[str, Any]) -> dict[str, float | int]:
                 session,
                 attempt=seed_attempt,
                 evidence_record=seed_evidence,
-                now=FIXED_NOW,
+                now=seed_clock,
             )
             seed_item.status = "completed"
             session.flush()
+            # The learner studies again when the item actually comes due.
+            due = seed_item.due_at
+            seed_clock = due if due.tzinfo else due.replace(tzinfo=UTC)
+            if seed_clock > FIXED_NOW:
+                seed_clock = FIXED_NOW
 
         attempt, evidence = _make_attempt(
             session,

@@ -7,7 +7,9 @@ NOT generic placeholders:
   * priority is a fraction:      0 <= priority <= 1
                                  (ReviewQueueItem.priority CHECK constraint)
   * non-negative interval:       next_interval_days >= 0
-  * bounded interval:            next_interval_days <= max(SUCCESS_INTERVALS_DAYS)
+  * bounded interval:            next_interval_days <= the retention tier's
+                                 maximum_interval_days (FSRS replaced the fixed
+                                 1/3/7/14/28 ladder cap with a per-tier ceiling)
                                  (the ramp caps at its last step; low-confidence
                                  and remediation are at or below 1 day)
   * non-negative repetition:     repetition_count >= 0
@@ -37,14 +39,17 @@ from typing import Any
 from baseline_kit import InvariantResult
 
 # Policy constants pulled from the surface so the bounds track the source.
+from lms.scheduling.fsrs_engine import DEFAULT_RETENTION_TIER, tier_policy
 from lms.scheduling.service import (
     LOW_CONFIDENCE_INTERVAL_DAYS,
-    SUCCESS_INTERVALS_DAYS,
 )
 
 from . import adapter
 
-_MAX_RAMP_DAYS = max(SUCCESS_INTERVALS_DAYS)
+# The scheduler now bounds intervals by the retention tier's ceiling rather
+# than the old ladder's last step. Baseline scenarios run on the default tier,
+# so that tier's ceiling is the precise bound to assert.
+_MAX_RAMP_DAYS = tier_policy(DEFAULT_RETENTION_TIER).maximum_interval_days
 _FAIL_PRIORITY = 0.9
 _SUCCESS_PRIORITY = 0.4
 _EPS = 1e-9
