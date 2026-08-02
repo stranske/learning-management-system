@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.evidence.repository import create_attempt, get_evidence_record
@@ -238,3 +239,43 @@ def test_unknown_rubric_raises_rubric_not_found(db_session: Session) -> None:
             ],
         )
     assert excinfo.value.http_status == 404
+
+
+def test_rubric_score_retry_is_refused_as_duplicate(db_session: Session) -> None:
+    """A second score for the same attempt+rubric is a 409, not a duplicate write.
+
+    Audit LMS-R4: HTTP retries and double-submits used to duplicate evidence,
+    review queue items, and rubric scores, inflating mastery signals.
+    """
+    from lms.evidence.models import EvidenceRecord
+    from lms.feedback.scoring import DuplicateRubricScoreError
+
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+    criterion_scores = [
+        {"criterion_id": criterion_ids[0], "points": 2, "rationale": "Clear step."},
+        {"criterion_id": criterion_ids[1], "points": 2, "rationale": "Solid."},
+    ]
+
+    score_attempt_with_rubric(
+        db_session,
+        rubric_id=rubric_id,
+        attempt_id=attempt_id,
+        scorer_type="human",
+        criterion_scores=criterion_scores,
+    )
+
+    with pytest.raises(DuplicateRubricScoreError) as excinfo:
+        score_attempt_with_rubric(
+            db_session,
+            rubric_id=rubric_id,
+            attempt_id=attempt_id,
+            scorer_type="human",
+            criterion_scores=criterion_scores,
+        )
+    assert excinfo.value.http_status == 409
+
+    evidence_rows = list(
+        db_session.scalars(select(EvidenceRecord).where(EvidenceRecord.attempt_id == attempt_id))
+    )
+    assert len(evidence_rows) == 1, "the refused retry must not write more evidence"

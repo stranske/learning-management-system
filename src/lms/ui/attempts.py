@@ -13,7 +13,7 @@ from html import escape
 from typing import Annotated
 from urllib.parse import parse_qs, quote_plus
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -22,8 +22,13 @@ from sqlalchemy.orm import Session
 from lms.auth.login import SettingsDep
 from lms.db.session import get_session
 from lms.evidence.models import Attempt
-from lms.evidence.repository import create_attempt
+from lms.evidence.repository import create_evidence_record
 from lms.evidence.schemas import AttemptCreate, StructuredFeedback
+from lms.evidence.service import (
+    evidence_record_for_attempt,
+    record_attempt,
+    schedule_for_evidence,
+)
 from lms.feedback.models import RubricScore
 from lms.feedback.repository import list_feedback_actions, list_feedback_records
 from lms.learners.identity import CurrentUserDep, LearnerIdDep, resolve_learner_id
@@ -40,6 +45,17 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 ATTEMPTS_PATH = "/app/learner/attempts"
 FEEDBACK_PATH = "/app/learner/attempts/feedback"
+SELF_GRADE_PATH = "/app/learner/attempts/self-grade"
+
+# Learner self-grading (LMS-R2): the UI needs a scoring step a solo learner
+# can complete, or attempts stall at "Awaiting scoring" forever. Grades map
+# onto the same evidence fields the rubric path produces so the FSRS adapter
+# and scheduler treat them uniformly.
+_SELF_GRADES: dict[str, dict[str, object]] = {
+    "incorrect": {"correctness": False, "normalized_score": 0.0, "scoring_method": "binary"},
+    "partial": {"correctness": None, "normalized_score": 0.7, "scoring_method": "partial-credit"},
+    "correct": {"correctness": True, "normalized_score": 1.0, "scoring_method": "binary"},
+}
 
 
 @router.get(ATTEMPTS_PATH, response_class=HTMLResponse)
@@ -92,8 +108,9 @@ async def submit_attempt_route(
             error="Enter a response and a confidence rating between 1 and 5 before submitting.",
         )
 
-    attempt = create_attempt(session, **payload.model_dump())
+    recorded = record_attempt(session, **payload.model_dump())
     session.commit()
+    attempt = recorded.attempt
     session.refresh(attempt)
     return _attempt_feedback_surface(
         session=session,
@@ -101,6 +118,76 @@ async def submit_attempt_route(
         prompt_id=payload.prompt_id,
         attempt_id=attempt.id,
         just_submitted=True,
+    )
+
+
+@router.post(SELF_GRADE_PATH, response_class=HTMLResponse)
+async def self_grade_attempt_route(
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    current_user: CurrentUserDep,
+) -> str:
+    """Record the learner's self-assessment and schedule the next review."""
+    form = _read_form((await request.body()).decode())
+    learner_id = resolve_learner_id(
+        session,
+        user=current_user,
+        settings=settings,
+        requested=form.get("learner_id") or None,
+    )
+    attempt = session.get(Attempt, form.get("attempt_id", ""))
+    if attempt is None or attempt.learner_id != learner_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attempt not found for this learner.",
+        )
+    existing = evidence_record_for_attempt(session, attempt.id)
+    if existing is None:
+        grade = _SELF_GRADES.get(form.get("grade", ""))
+        if grade is None:
+            return _attempt_feedback_surface(
+                session=session,
+                learner_id=learner_id,
+                prompt_id=attempt.prompt_id,
+                attempt_id=attempt.id,
+                just_submitted=False,
+            )
+        prompt = session.get(Prompt, attempt.prompt_id)
+        if prompt is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Prompt for this attempt no longer exists.",
+            )
+        normalized = float(grade["normalized_score"])  # type: ignore[arg-type]
+        correctness = grade["correctness"]
+        assert correctness is None or isinstance(correctness, bool)
+        evidence = create_evidence_record(
+            session,
+            learner_id=learner_id,
+            knowledge_node_id=prompt.target_node_id,
+            attempt_id=attempt.id,
+            prompt_id=attempt.prompt_id,
+            correctness=correctness,
+            raw_score=normalized,
+            normalized_score=normalized,
+            max_score=1.0,
+            scorer_type="rubric-self",
+            scoring_method=str(grade["scoring_method"]),
+            confidence_rating=attempt.confidence_rating,
+            reference_accessed=attempt.reference_accessed,
+            hint_used=attempt.hint_used,
+            support_level=attempt.support_level,
+            response_time_seconds=attempt.elapsed_seconds,
+        )
+        schedule_for_evidence(session, attempt=attempt, evidence_record=evidence)
+        session.commit()
+    return _attempt_feedback_surface(
+        session=session,
+        learner_id=learner_id,
+        prompt_id=attempt.prompt_id,
+        attempt_id=attempt.id,
+        just_submitted=False,
     )
 
 
@@ -259,6 +346,7 @@ def _attempt_feedback_surface(
         <section aria-labelledby="score-heading">
           <h2 id="score-heading">Scored feedback</h2>
           {_score_block(session, attempt)}
+          {_self_grade_block(session, attempt)}
           {_feedback_records_block(session, attempt)}
         </section>
         <section aria-labelledby="next-action-heading">
@@ -277,6 +365,22 @@ def _attempt_feedback_surface(
     )
 
 
+def _self_grade_block(session: Session, attempt: Attempt) -> str:
+    """Offer self-grading while an attempt has no scoring evidence yet."""
+    if evidence_record_for_attempt(session, attempt.id) is not None:
+        return ""
+    return f"""
+        <form method="post" action="{SELF_GRADE_PATH}" class="self-grade">
+          <input type="hidden" name="learner_id" value="{escape(attempt.learner_id)}">
+          <input type="hidden" name="attempt_id" value="{escape(attempt.id)}">
+          <p>How did you do? Grading yourself schedules the next review.</p>
+          <button type="submit" name="grade" value="incorrect">Incorrect</button>
+          <button type="submit" name="grade" value="partial">Partially</button>
+          <button type="submit" name="grade" value="correct">Correct</button>
+        </form>
+    """
+
+
 def _score_block(session: Session, attempt: Attempt) -> str:
     score = session.scalars(
         select(RubricScore)
@@ -292,11 +396,16 @@ def _score_block(session: Session, attempt: Attempt) -> str:
             f"{_correctness_label(score.normalized_score >= 0.85)}.</p>"
         )
 
+    evidence = evidence_record_for_attempt(session, attempt.id)
+    if evidence is not None and evidence.normalized_score is not None:
+        label = "Self-graded" if evidence.scorer_type == "rubric-self" else "Scored"
+        return (
+            f"<p class='score'>{label}: " f"<strong>{evidence.normalized_score:.0%}</strong>.</p>"
+        )
+
     correctness = _attempt_correctness(attempt)
     if correctness is None:
-        return (
-            "<p class='score'>Awaiting scoring. Feedback appears once this attempt is scored.</p>"
-        )
+        return "<p class='score'>Not yet scored. Grade yourself below to continue the loop.</p>"
     return f"<p class='score'>Correctness: {_correctness_label(correctness)}.</p>"
 
 
