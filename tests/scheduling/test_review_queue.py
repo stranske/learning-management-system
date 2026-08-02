@@ -30,6 +30,7 @@ from lms.db.session import get_session
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.evidence.repository import create_attempt, create_evidence_record
 from lms.main import create_app
+from lms.scheduling import fsrs_engine
 from lms.scheduling.models import ReviewQueueItem
 from lms.scheduling.repository import (
     count_review_queue_for_learner,
@@ -106,14 +107,24 @@ def test_successful_retrieval_schedules_future_review(db_session: Session) -> No
     db_session.commit()
 
     assert item.reason_code == "due-review"
-    assert item.due_at == fixed_now + timedelta(days=SUCCESS_INTERVALS_DAYS[0])
+    # FSRS sets the first interval from the warm tier's retention target
+    # rather than a fixed ladder step; assert the behavior (a short, forward
+    # first check inside the tier ceiling) instead of a literal day count.
+    warm_cap = fsrs_engine.tier_policy(fsrs_engine.WARM).maximum_interval_days
+    interval_days = (item.due_at - fixed_now).total_seconds() / 86400
+    assert 0 < interval_days <= warm_cap
+    assert interval_days < 14, "a first successful review should come back soon"
     assert item.priority == 0.4
-    assert "Re-checking" in item.reason_explanation
+    assert "Next check" in item.reason_explanation
     assert item.source_attempt_id == attempt.id
     assert item.source_evidence_record_id == evidence.id
-    assert item.decision_log["rule"] == "success-ramp-step-0"
+    assert item.decision_log["rule"] == "fsrs-warm-review"
     assert item.decision_log["signal"] == "success"
     assert item.decision_log["inputs"]["correctness"] is True
+    fsrs_state = item.decision_log["fsrs_state"]
+    assert fsrs_state["retention_tier"] == fsrs_engine.WARM
+    assert fsrs_state["stability"] is not None and fsrs_state["stability"] > 0
+    assert fsrs_state["review_count"] == 1
 
 
 def test_failed_retrieval_creates_remediation_item(db_session: Session) -> None:
@@ -191,9 +202,11 @@ def test_success_ramp_extends_after_prior_completions(db_session: Session) -> No
         normalized_score=0.95,
         confidence_rating=5,
     )
-    first = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    start = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
+    first = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence, now=start)
     first.status = "completed"
     db_session.flush()
+    first_interval = (first.due_at - start).total_seconds() / 86400
 
     attempt_two, evidence_two = _make_attempt(
         db_session,
@@ -204,15 +217,21 @@ def test_success_ramp_extends_after_prior_completions(db_session: Session) -> No
         normalized_score=0.95,
         confidence_rating=5,
     )
-    fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
+    # FSRS grows stability from time actually elapsed, so the second review
+    # happens when the first one came due. (Reviewing twice in the same
+    # instant legitimately does NOT extend the interval — that is the model
+    # refusing to reward cramming, and the v1 ladder could not express it.)
+    second_now = first.due_at
     second = schedule_from_attempt(
         db_session,
         attempt=attempt_two,
         evidence_record=evidence_two,
-        now=fixed_now,
+        now=second_now,
     )
-    assert second.due_at == fixed_now + timedelta(days=SUCCESS_INTERVALS_DAYS[1])
-    assert second.decision_log["rule"] == "success-ramp-step-1"
+    second_interval = (second.due_at - second_now).total_seconds() / 86400
+    assert second_interval > first_interval, "a second on-time success must extend the interval"
+    assert second.decision_log["rule"] == "fsrs-warm-review"
+    assert second.decision_log["fsrs_state"]["review_count"] == 2
 
 
 def test_seed_new_learning_item_creates_pending_entry(db_session: Session) -> None:

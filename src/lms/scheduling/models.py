@@ -15,6 +15,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    false,
     func,
     text,
     true,
@@ -25,6 +26,7 @@ from lms.auth.models import new_uuid, utc_now
 from lms.db.base import Base
 from lms.evidence.models import SUPPORT_LEVELS
 from lms.graphs.models import KNOWLEDGE_TYPES, OWNERSHIP_SCOPES
+from lms.scheduling.fsrs_engine import DEFAULT_RETENTION_TIER, RETENTION_TIERS
 
 REASON_CODES: tuple[str, ...] = (
     "new-learning",
@@ -360,4 +362,69 @@ class SchedulerDecision(Base):
         server_default=func.now(),
         nullable=False,
         index=True,
+    )
+
+
+class ReviewCardState(Base):
+    """Per-learner, per-node FSRS memory state.
+
+    The v1 scheduler derived its interval by counting prior successful
+    reviews, so an item's "memory" lived implicitly in the queue history.
+    FSRS needs real state — stability and difficulty — carried between
+    reviews, and a retention tier so the same rating can mean "check me in
+    three weeks" for one item and "check me next year" for another.
+
+    ``card_state`` is the serialized ``fsrs.Card``; the scalar columns beside
+    it are denormalized copies so analytics and the Inspect surface can query
+    memory strength without deserializing every row.
+    """
+
+    __tablename__ = "review_card_states"
+    __table_args__ = (
+        CheckConstraint(
+            f"retention_tier IN ({_sql_values(RETENTION_TIERS)})",
+            name="review_card_retention_tier_valid",
+        ),
+        Index(
+            "ux_review_card_states_learner_node",
+            "learner_id",
+            "knowledge_node_id",
+            unique=True,
+        ),
+        Index("ix_review_card_states_due", "learner_id", "due_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    learner_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("learners.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    knowledge_node_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    retention_tier: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=DEFAULT_RETENTION_TIER,
+        server_default=DEFAULT_RETENTION_TIER,
+    )
+    card_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    stability: Mapped[float | None] = mapped_column(Float)
+    difficulty: Mapped[float | None] = mapped_column(Float)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_count: Mapped[int] = mapped_column(default=0, server_default=text("0"), nullable=False)
+    lapse_count: Mapped[int] = mapped_column(default=0, server_default=text("0"), nullable=False)
+    seeded_from_legacy_ladder: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.now(),
+        nullable=False,
     )

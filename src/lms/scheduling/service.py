@@ -20,6 +20,8 @@ from sqlalchemy.orm import Session
 from lms.auth.models import utc_now
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.graphs.models import KnowledgeNode
+from lms.scheduling import fsrs_engine
+from lms.scheduling.card_state import advance_card_state, get_or_seed_card_state
 from lms.scheduling.fsrs_adapter import FSRSRating, evidence_to_fsrs_rating
 from lms.scheduling.models import RemediationTrigger, ReviewQueueItem
 from lms.scheduling.repository import (
@@ -473,6 +475,18 @@ def _fsrs_to_signal(rating: FSRSRating) -> str | None:
     return "success"
 
 
+_RATING_VALUE_BY_SIGNAL: dict[str, int] = {
+    "fail": 1,
+    "low-confidence-success": 2,
+    "success": 3,
+}
+
+
+def _signal_to_rating_value(signal: str) -> int:
+    """Map the blended internal signal onto an FSRS 1-4 rating value."""
+    return _RATING_VALUE_BY_SIGNAL.get(signal, 2)
+
+
 def _conservative_signal(a: str, b: str) -> str:
     """Return the more conservative (lower-confidence) of two signal strings."""
     return a if _SIGNAL_ORDER[a] <= _SIGNAL_ORDER[b] else b
@@ -505,6 +519,22 @@ def _classify_signal(
     ):
         return "success"
     return "low-confidence-success"
+
+
+def _explain_success_fsrs(*, prior_successes: int, interval_days: float, tier: str) -> str:
+    """Render the explanation for an FSRS-scheduled future review."""
+    policy = fsrs_engine.tier_policy(tier)
+    rounded = int(round(interval_days))
+    target = int(round(policy.desired_retention * 100))
+    if prior_successes == 0:
+        return (
+            f"Correct on first review. Next check in {rounded} day(s), the point where "
+            f"recall is predicted to fall to the {tier} target of {target}%."
+        )
+    return (
+        f"{prior_successes} prior successful review(s). Next check in {rounded} day(s) — "
+        f"the {tier} tier holds predicted recall at {target}%."
+    )
 
 
 def _explain_success(prior_successes: int, interval_days: int) -> str:
@@ -545,6 +575,8 @@ def _decide(
     confidence_rating: int | None,
     support_level: str,
     normalized_score: float | None,
+    success_due_at: datetime | None = None,
+    success_tier: str | None = None,
 ) -> ScheduleDecision:
     """Translate a classified signal into a single scheduling decision."""
     if signal == "fail":
@@ -572,13 +604,28 @@ def _decide(
             priority=0.7,
             rule="low-confidence-shortened-interval",
         )
-    interval = _success_interval_days(prior_successes)
+    if success_due_at is None:
+        # No memory state supplied (helper-level callers and tests): fall back
+        # to the legacy ladder so the function stays usable standalone.
+        interval = _success_interval_days(prior_successes)
+        return ScheduleDecision(
+            reason_code="due-review",
+            reason_explanation=_explain_success(prior_successes, interval),
+            due_at=now + timedelta(days=interval),
+            priority=0.4,
+            rule=f"success-ramp-step-{prior_successes}",
+        )
+    interval_days = max(0.0, (success_due_at - now).total_seconds() / 86400.0)
     return ScheduleDecision(
         reason_code="due-review",
-        reason_explanation=_explain_success(prior_successes, interval),
-        due_at=now + timedelta(days=interval),
+        reason_explanation=_explain_success_fsrs(
+            prior_successes=prior_successes,
+            interval_days=interval_days,
+            tier=success_tier or fsrs_engine.DEFAULT_RETENTION_TIER,
+        ),
+        due_at=success_due_at,
         priority=0.4,
-        rule=f"success-ramp-step-{prior_successes}",
+        rule=f"fsrs-{success_tier or fsrs_engine.DEFAULT_RETENTION_TIER}-review",
     )
 
 
@@ -652,6 +699,7 @@ def schedule_from_attempt(
     attempt: Attempt,
     evidence_record: EvidenceRecord | None,
     now: datetime | None = None,
+    retention_tier: str | None = None,
 ) -> ReviewQueueItem:
     """Create a review queue item from an attempt and (optionally) its evidence.
 
@@ -690,6 +738,26 @@ def schedule_from_attempt(
         else internal_signal
     )
 
+    # FSRS memory state for this learner/node pair. Items with v1 ladder
+    # history are seeded from it rather than reset (see card_state module).
+    card = get_or_seed_card_state(
+        session,
+        learner_id=attempt.learner_id,
+        knowledge_node_id=evidence_record.knowledge_node_id,
+        prior_successes=prior_successes,
+        retention_tier=retention_tier,
+        now=decision_now,
+    )
+    # The rating handed to FSRS is the CONSERVATIVELY BLENDED signal, not the
+    # raw adapter rating: a hint-supported or low-confidence correct answer
+    # must never be promoted to "good" just because the score was high.
+    outcome = advance_card_state(
+        session,
+        state=card,
+        rating_value=_signal_to_rating_value(signal),
+        now=decision_now,
+    )
+
     decision = _decide(
         signal=signal,
         now=decision_now,
@@ -697,10 +765,22 @@ def schedule_from_attempt(
         confidence_rating=confidence_rating,
         support_level=support_level,
         normalized_score=normalized_score,
+        success_due_at=outcome.due_at,
+        success_tier=card.retention_tier,
     )
     decision_log: dict[str, Any] = {
         "rule": decision.rule,
         "signal": signal,
+        "fsrs_state": {
+            "retention_tier": card.retention_tier,
+            "desired_retention": fsrs_engine.tier_policy(card.retention_tier).desired_retention,
+            "stability": outcome.stability,
+            "difficulty": outcome.difficulty,
+            "interval_days": round(outcome.interval_days, 3),
+            "review_count": outcome.review_count,
+            "lapse_count": outcome.lapse_count,
+            "seeded_from_legacy_ladder": card.seeded_from_legacy_ladder,
+        },
         "fsrs_rating": {
             "label": fsrs_rating.label,
             "value": fsrs_rating.value,

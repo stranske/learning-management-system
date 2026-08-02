@@ -11,7 +11,7 @@ queue-status writes, pinning the wiring between the tested units.
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import timedelta
+from datetime import UTC
 
 import pytest
 from fastapi.testclient import TestClient
@@ -158,6 +158,13 @@ def _queue_items(session_factory: sessionmaker[Session], learner_id: str) -> lis
         )
 
 
+def _interval_days(item: ReviewQueueItem) -> float:
+    """Scheduled interval in days, tolerant of SQLite's naive datetimes."""
+    due = item.due_at if item.due_at.tzinfo else item.due_at.replace(tzinfo=UTC)
+    created = item.created_at if item.created_at.tzinfo else item.created_at.replace(tzinfo=UTC)
+    return (due - created).total_seconds() / 86400
+
+
 def test_attempt_to_next_review_e2e(
     loop_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
@@ -175,8 +182,10 @@ def test_attempt_to_next_review_e2e(
     assert len(items) == 1, "a scored attempt must schedule its follow-up review"
     first = items[0]
     assert first.status == "pending"
-    interval_days = (first.due_at - first.created_at).total_seconds() / 86400
-    assert interval_days == pytest.approx(1.0, abs=0.05), "first success -> 1-day interval"
+    first_interval = _interval_days(first)
+    # FSRS picks the interval from the tier's retention target rather than a
+    # fixed ladder step, so assert the behavior: a real, short, forward check.
+    assert 0 < first_interval < 14, f"first success should come back soon: {first_interval}"
 
     # 2. Complete the review from the UI surface (no manual status writes).
     completion = client.post(
@@ -196,9 +205,9 @@ def test_attempt_to_next_review_e2e(
     items = _queue_items(session_factory, learner_id)
     assert len(items) == 2
     second = items[-1]
-    interval_days = (second.due_at - second.created_at).total_seconds() / 86400
-    assert interval_days == pytest.approx(3.0, abs=0.05), "second success -> 3-day interval"
-    assert second.due_at - first.due_at > timedelta(days=1)
+    second_interval = _interval_days(second)
+    assert second_interval > 0
+    assert second.due_at > first.due_at, "the next review must be scheduled later than the first"
 
 
 def test_ui_attempt_self_grade_schedules_review(
