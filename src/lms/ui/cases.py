@@ -31,7 +31,7 @@ from lms.cases.schemas import WorkProductCreate, WorkProductSubmissionType
 from lms.db.session import get_session
 from lms.feedback.models import RubricScore
 from lms.graphs.models import KnowledgeNode
-from lms.learners.repository import list_learners_for_user
+from lms.learners.repository import get_or_create_learner_for_user
 from lms.ui.shell import empty_state, render_page
 
 router = APIRouter(tags=["learner-ui"])
@@ -39,7 +39,6 @@ SessionDep = Annotated[Session, Depends(get_session)]
 CurrentUserDep = Annotated[User, Depends(require_authenticated_user)]
 
 CASES_PATH = "/app/learner/cases"
-DEFAULT_LOCAL_LEARNER_ID = "learner-1"
 
 
 @router.get(CASES_PATH, response_class=HTMLResponse)
@@ -416,10 +415,14 @@ def _read_form(body: str) -> dict[str, str]:
 
 
 def _learner_id_for_user(*, session: Session, current_user: User) -> str:
-    learners = list_learners_for_user(session, user_id=current_user.id)
-    if learners:
-        return learners[0].id
-    return DEFAULT_LOCAL_LEARNER_ID
+    learner, created = get_or_create_learner_for_user(
+        session,
+        user_id=current_user.id,
+        display_name=current_user.display_name or current_user.username,
+    )
+    if created:
+        session.commit()
+    return learner.id
 
 
 def _optional_text(value: str | None) -> str | None:

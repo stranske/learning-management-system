@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#1f6feb">
+  <meta name="theme-color" content="#a85a34">
   <title>LMS Author Goals</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/static/ui/pico.min.css">
   <link rel="stylesheet" href="/static/ui/app.css">
+  <link rel="stylesheet" href="/static/ui/tokens.css">
+  <link rel="stylesheet" href="/static/ui/components.css">
+  <link rel="stylesheet" href="/static/ui/ds-reconcile.css">
 </head>
-<body>
+<body class="ds theme-paper">
   <header class="app-header">
     <nav aria-label="Application sections">
       <ul><li><strong>LMS</strong></li></ul>
@@ -24,7 +27,7 @@
             <h1>Goals</h1>
           </header>
           <form method="post" action="/app/author/goals">
-            <input type="hidden" name="learner_id" value="learner-1">
+            <input type="hidden" name="learner_id" value="snapshot-id">
             <label for="ownership_scope">ownership scope</label><select id="ownership_scope" name="ownership_scope"><option value="personal" selected>personal</option><option value="institutional">institutional</option></select>
             <label for="goal-title">Goal title</label>
             <input id="goal-title" name="title" required>
@@ -38,7 +41,7 @@
           </form>
           <section aria-labelledby="goal-list-heading">
             <h2 id="goal-list-heading">Current goals</h2>
-            <ul class="author-list"><li><strong>Use spacing to retain key ideas</strong><span>active; conceptual; 1 target nodes</span></li></ul>
+            <ul class="author-list"><li class='empty'>No goals yet.</li></ul>
           </section>
         </main>
         

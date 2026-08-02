@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#1f6feb">
+  <meta name="theme-color" content="#a85a34">
   <title>LMS LLM study</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/static/ui/pico.min.css">
   <link rel="stylesheet" href="/static/ui/app.css">
+  <link rel="stylesheet" href="/static/ui/tokens.css">
+  <link rel="stylesheet" href="/static/ui/components.css">
+  <link rel="stylesheet" href="/static/ui/ds-reconcile.css">
 </head>
-<body>
+<body class="ds theme-paper">
   <header class="app-header">
     <nav aria-label="Application sections">
       <ul><li><strong>LMS</strong></li></ul>
@@ -28,7 +31,7 @@
           </header>
           
           <form method="post" action="/app/learner/llm-study/sessions" class="llm-study-form">
-            <input type="hidden" name="learner_id" value="learner-1">
+            <input type="hidden" name="learner_id" value="snapshot-id">
             <label for="mode">mode</label><select id="mode" name="mode"><option value="study-coach" selected>study-coach</option><option value="practice">practice</option></select>
             <label for="coaching_intensity">coaching intensity</label><select id="coaching_intensity" name="coaching_intensity"><option value="full" selected>full</option><option value="light">light</option><option value="quiet">quiet</option></select>
             <label for="user_message">Your message</label>

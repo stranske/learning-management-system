@@ -19,12 +19,14 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from lms.auth.login import SettingsDep
 from lms.db.session import get_session
 from lms.evidence.models import Attempt
 from lms.evidence.repository import create_attempt
 from lms.evidence.schemas import AttemptCreate, StructuredFeedback
 from lms.feedback.models import RubricScore
 from lms.feedback.repository import list_feedback_actions, list_feedback_records
+from lms.learners.identity import CurrentUserDep, LearnerIdDep, resolve_learner_id
 from lms.prompts.models import Prompt
 from lms.scheduling.service import (
     DEFAULT_DAILY_CAP,
@@ -43,7 +45,7 @@ FEEDBACK_PATH = "/app/learner/attempts/feedback"
 @router.get(ATTEMPTS_PATH, response_class=HTMLResponse)
 def attempt_flow_route(
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    learner_id: LearnerIdDep,
     prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
 ) -> str:
     """Return the activity attempt start page for a prompt."""
@@ -53,10 +55,20 @@ def attempt_flow_route(
 
 
 @router.post(ATTEMPTS_PATH, response_class=HTMLResponse)
-async def submit_attempt_route(request: Request, session: SessionDep) -> str:
+async def submit_attempt_route(
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    current_user: CurrentUserDep,
+) -> str:
     """Record an attempt and route the learner to scored feedback."""
     form = _read_form((await request.body()).decode())
-    learner_id = form.get("learner_id", "")
+    learner_id = resolve_learner_id(
+        session,
+        user=current_user,
+        settings=settings,
+        requested=form.get("learner_id") or None,
+    )
     prompt_id = form.get("prompt_id", "")
     try:
         payload = AttemptCreate(
@@ -75,7 +87,7 @@ async def submit_attempt_route(request: Request, session: SessionDep) -> str:
     except (ValidationError, ValueError):
         return _attempt_start_surface(
             session=session,
-            learner_id=learner_id or "learner-1",
+            learner_id=learner_id,
             prompt_id=prompt_id or None,
             error="Enter a response and a confidence rating between 1 and 5 before submitting.",
         )
@@ -95,7 +107,7 @@ async def submit_attempt_route(request: Request, session: SessionDep) -> str:
 @router.get(FEEDBACK_PATH, response_class=HTMLResponse)
 def attempt_feedback_route(
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    learner_id: LearnerIdDep,
     prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     attempt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
 ) -> str:

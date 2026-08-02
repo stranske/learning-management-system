@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#1f6feb">
+  <meta name="theme-color" content="#a85a34">
   <title>LMS Capability</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/static/ui/pico.min.css">
   <link rel="stylesheet" href="/static/ui/app.css">
+  <link rel="stylesheet" href="/static/ui/tokens.css">
+  <link rel="stylesheet" href="/static/ui/components.css">
+  <link rel="stylesheet" href="/static/ui/ds-reconcile.css">
 </head>
-<body>
+<body class="ds theme-paper">
   <header class="app-header">
     <nav aria-label="Application sections">
       <ul><li><strong>LMS</strong></li></ul>
@@ -27,7 +30,7 @@
         <p class="scope-note">Personal scope only. These reflect your current evidence only. They are a present snapshot, not a permanent certification or a comparison with anyone else.</p>
         <section aria-labelledby="targets-heading">
           <h2 id="targets-heading">Capability targets</h2>
-          <ul class='capability-target-list'><li class='capability-target'><a href='/app/learner/capability/targets/snapshot-id'><strong>Apply spacing in a study plan</strong></a><span class='target-status'>Status: active</span><span class='target-scope'>Scope: personal</span><span class='target-counts'>1 node(s), 0 competency(ies)</span></li></ul>
+          <section class="empty-state" aria-label="Empty state"><h2>No capability targets yet</h2><p>Set a personal capability target below to see your current evidence, gaps, and scheduled next steps.</p></section>
         </section>
         
         <section aria-labelledby="create-heading" class="create-target">
@@ -35,7 +38,7 @@
           <p>Targets are personal: they track your own current evidence, not an
             institution-wide standard.</p>
           <form method="post" action="/app/learner/capability/targets">
-            <input type="hidden" name="learner_id" value="learner-1">
+            <input type="hidden" name="learner_id" value="snapshot-id">
             <label for="title">Target title</label>
             <input type="text" id="title" name="title" required maxlength="255">
             <label for="description">Description (optional)</label>

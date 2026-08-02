@@ -17,12 +17,13 @@ from html import escape
 from typing import Annotated
 from urllib.parse import parse_qs, quote_plus
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from lms.auth.login import SettingsDep
 from lms.capability.repository import (
     create_capability_target,
     create_gap_analysis,
@@ -47,6 +48,7 @@ from lms.capability.schemas import (
 from lms.competencies.models import Competency
 from lms.db.session import get_session
 from lms.graphs.models import KnowledgeNode
+from lms.learners.identity import CurrentUserDep, LearnerIdDep, resolve_learner_id
 from lms.learners.models import LearningGoal
 from lms.ui.shell import empty_state, render_page
 
@@ -81,7 +83,7 @@ _CURRENT_EVIDENCE_NOTE = (
 @router.get(CAPABILITY_PATH, response_class=HTMLResponse)
 def capability_overview_route(
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    learner_id: LearnerIdDep,
 ) -> str:
     """Return the personal capability overview with the target-creation form."""
     return _overview_surface(session=session, learner_id=learner_id, error=None)
@@ -97,10 +99,20 @@ def capability_target_detail_route(target_id: str, session: SessionDep) -> str:
 
 
 @router.post(TARGETS_PATH, response_class=HTMLResponse)
-async def create_capability_target_action(request: Request, session: SessionDep) -> str:
+async def create_capability_target_action(
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    current_user: CurrentUserDep,
+) -> str:
     """Create a personal capability target from the overview form."""
     form = _parse_form((await request.body()).decode())
-    learner_id = _one(form, "learner_id", "learner-1")
+    learner_id = resolve_learner_id(
+        session,
+        user=current_user,
+        settings=settings,
+        requested=_one(form, "learner_id", "") or None,
+    )
     try:
         payload = CapabilityTargetCreate(
             learner_id=learner_id,

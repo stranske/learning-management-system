@@ -14,12 +14,14 @@ from html import escape
 from typing import Annotated, Literal
 from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from lms.auth.login import SettingsDep
 from lms.db.session import get_session
+from lms.learners.identity import CurrentUserDep, LearnerIdDep, resolve_learner_id
 from lms.llm.api import (
     LLMSessionCreate,
     LLMSessionRead,
@@ -33,8 +35,6 @@ from lms.ui.shell import empty_state, render_page
 
 router = APIRouter(tags=["learner-ui"])
 SessionDep = Annotated[Session, Depends(get_session)]
-
-_DEFAULT_LEARNER = "learner-1"
 
 _ModeChoice = Literal["study-coach", "practice"]
 _IntensityChoice = Literal["full", "light", "quiet"]
@@ -55,17 +55,27 @@ def _narrow_choice[ChoiceT: str](value: str, choices: tuple[ChoiceT, ...]) -> Ch
 
 @router.get("/app/learner/llm-study", response_class=HTMLResponse)
 def llm_study_route(
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = _DEFAULT_LEARNER,
+    learner_id: LearnerIdDep,
 ) -> str:
     """Return the LLM study surface with a fresh start form."""
     return _study_surface(learner_id=learner_id, result_html="")
 
 
 @router.post("/app/learner/llm-study/sessions", response_class=HTMLResponse)
-async def create_llm_study_session_route(request: Request, session: SessionDep) -> str:
+async def create_llm_study_session_route(
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    current_user: CurrentUserDep,
+) -> str:
     """Start one formative study/practice turn and render the result."""
     form = await _read_form(request)
-    learner_id = form.get("learner_id") or _DEFAULT_LEARNER
+    learner_id = resolve_learner_id(
+        session,
+        user=current_user,
+        settings=settings,
+        requested=form.get("learner_id") or None,
+    )
     mode = _narrow_choice(form.get("mode", "study-coach"), _MODE_CHOICES)
     coaching_intensity = _narrow_choice(form.get("coaching_intensity", "full"), _INTENSITY_CHOICES)
     if mode is None or coaching_intensity is None:
@@ -119,11 +129,20 @@ async def create_llm_study_session_route(request: Request, session: SessionDep) 
     response_class=HTMLResponse,
 )
 async def control_llm_study_trace_route(
-    session_id: str, request: Request, session: SessionDep
+    settings: SettingsDep,
+    current_user: CurrentUserDep,
+    session_id: str,
+    request: Request,
+    session: SessionDep,
 ) -> str:
     """Apply a learner keep/forget control and render the updated trace state."""
     form = await _read_form(request)
-    learner_id = form.get("learner_id") or _DEFAULT_LEARNER
+    learner_id = resolve_learner_id(
+        session,
+        user=current_user,
+        settings=settings,
+        requested=form.get("learner_id") or None,
+    )
     action = _narrow_choice(form.get("action", ""), _ACTION_CHOICES)
     if action is None:
         return _study_surface(
