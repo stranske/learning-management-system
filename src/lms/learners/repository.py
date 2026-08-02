@@ -48,8 +48,36 @@ def get_learner(session: Session, *, learner_id: str) -> Learner | None:
 
 
 def list_learners_for_user(session: Session, *, user_id: str) -> list[Learner]:
-    """Return learner profiles for an explicit user id."""
-    return list(session.scalars(select(Learner).where(Learner.user_id == user_id)))
+    """Return learner profiles for an explicit user id, oldest first."""
+    return list(
+        session.scalars(
+            select(Learner)
+            .where(Learner.user_id == user_id)
+            .order_by(Learner.created_at, Learner.id)
+        )
+    )
+
+
+def get_or_create_learner_for_user(
+    session: Session,
+    *,
+    user_id: str,
+    display_name: str,
+) -> tuple[Learner, bool]:
+    """Return the user's primary (oldest) learner, creating one on first need.
+
+    Returns ``(learner, created)`` so callers can commit only when a profile
+    was actually provisioned.
+    """
+    existing = list_learners_for_user(session, user_id=user_id)
+    if existing:
+        return existing[0], False
+    learner = create_learner_for_user(
+        session,
+        user_id=user_id,
+        display_name=display_name,
+    )
+    return learner, True
 
 
 def create_learning_goal(

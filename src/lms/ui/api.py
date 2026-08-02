@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from lms.auth.login import SettingsDep
 from lms.capability.models import CapabilityTarget, MaintenancePlan
 from lms.capability.repository import list_capability_targets, list_maintenance_plans
 from lms.cases.repository import add_decision_point, create_case, get_case, list_cases
@@ -45,6 +46,7 @@ from lms.graphs.repository import (
     list_knowledge_edges,
     list_knowledge_nodes,
 )
+from lms.learners.identity import CurrentUserDep, LearnerIdDep, resolve_learner_id
 from lms.learners.models import GOAL_STATUSES, LearnerReflection, LearningGoal
 from lms.learners.repository import (
     create_learning_goal,
@@ -93,7 +95,7 @@ def service_worker_route() -> Response:
 @router.get("/app/learner", response_class=HTMLResponse)
 def learner_app_route(
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    learner_id: LearnerIdDep,
 ) -> str:
     """Return the learner home dashboard."""
     return _dashboard_surface(session=session, learner_id=learner_id)
@@ -102,7 +104,7 @@ def learner_app_route(
 @router.get("/learn", response_class=HTMLResponse)
 def learn_surface_route(
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    learner_id: LearnerIdDep,
     prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
 ) -> str:
     """Return the legacy Learn route for compatibility."""
@@ -171,12 +173,23 @@ def _learn_surface(
 
 
 @router.post("/learn/attempts", response_class=HTMLResponse)
-async def submit_learn_attempt_route(request: Request, session: SessionDep) -> str:
+async def submit_learn_attempt_route(
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    current_user: CurrentUserDep,
+) -> str:
     """Accept the Learn surface form and record an attempt."""
     raw_form = parse_qs((await request.body()).decode(), keep_blank_values=True)
     form = {key: values[-1] for key, values in raw_form.items()}
+    learner_id = resolve_learner_id(
+        session,
+        user=current_user,
+        settings=settings,
+        requested=form.get("learner_id") or None,
+    )
     payload = AttemptCreate(
-        learner_id=form.get("learner_id", ""),
+        learner_id=learner_id,
         prompt_id=form.get("prompt_id", ""),
         response_text=form.get("response_text", ""),
         confidence_rating=_optional_int(form.get("confidence_rating")),
@@ -221,7 +234,7 @@ async def submit_learn_attempt_route(request: Request, session: SessionDep) -> s
 @router.get("/app/learner/reviews", response_class=HTMLResponse)
 def learner_reviews_app_route(
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    learner_id: LearnerIdDep,
     daily_cap: Annotated[int, Query(ge=1, le=100)] = DEFAULT_DAILY_CAP,
 ) -> str:
     """Return the canonical learner review route."""
@@ -231,7 +244,7 @@ def learner_reviews_app_route(
 @router.get("/app/learner/review", response_class=HTMLResponse)
 def learner_review_app_route(
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    learner_id: LearnerIdDep,
     daily_cap: Annotated[int, Query(ge=1, le=100)] = DEFAULT_DAILY_CAP,
 ) -> str:
     """Return the legacy learner review route for compatibility."""
@@ -241,7 +254,7 @@ def learner_review_app_route(
 @router.get("/review", response_class=HTMLResponse)
 def review_surface_route(
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    learner_id: LearnerIdDep,
     daily_cap: Annotated[int, Query(ge=1, le=100)] = DEFAULT_DAILY_CAP,
 ) -> str:
     """Return the legacy Review route for compatibility."""
@@ -431,7 +444,7 @@ def author_app_route() -> str:
 @router.get("/app/author/goals", response_class=HTMLResponse)
 def author_goals_route(
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    learner_id: LearnerIdDep,
     ownership_scope: Annotated[str, Query()] = "personal",
 ) -> str:
     """Return goal authoring forms and current goals."""
@@ -777,6 +790,7 @@ def _dashboard_surface(*, session: Session, learner_id: str) -> str:
             <p>Everything below reflects your own evidence and goals. Counts are
             informational, not scores.</p>
           </header>
+          {_onboarding_panel(goals=goals, evidence=evidence, review=review)}
           {_dashboard_quick_links()}
           <div class="dashboard-grid">
             {_next_actions_panel(actions)}
@@ -792,6 +806,31 @@ def _dashboard_surface(*, session: Session, learner_id: str) -> str:
         """,
         active_path="/app/learner",
     )
+
+
+def _onboarding_panel(
+    *,
+    goals: list[LearningGoal],
+    evidence: Sequence[EvidenceRecord],
+    review: ReviewQueueOverview,
+) -> str:
+    """Return a start-here panel when the learner has no content yet."""
+    if goals or evidence or review.items:
+        return ""
+    return """
+        <section class="panel onboarding" aria-labelledby="onboarding-heading">
+          <h2 id="onboarding-heading">Start here</h2>
+          <p>This is a fresh learning home. To begin the learning loop:</p>
+          <ol>
+            <li><a href="/app/author/knowledge">Create your first knowledge
+            node</a> for something you are learning.</li>
+            <li><a href="/app/author/prompts">Write a retrieval prompt</a>
+            for that node and publish it.</li>
+            <li><a href="/app/learner/attempts">Answer the prompt</a> — your
+            evidence, reviews, and mastery estimates grow from there.</li>
+          </ol>
+        </section>
+    """
 
 
 def _dashboard_quick_links() -> str:

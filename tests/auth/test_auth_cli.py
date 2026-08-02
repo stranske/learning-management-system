@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 import lms.__main__ as lms_main
 import lms.auth.models  # noqa: F401  # register Base.metadata for db_session
 from lms.auth.repository import create_local_user, get_user_by_username
+from lms.learners.repository import list_learners_for_user
 
 
 @pytest.fixture
@@ -65,6 +66,13 @@ def test_create_user_happy_path_prints_id(
     # Plaintext is never stored; the password was hashed.
     assert user.password_hash is not None
     assert "correct horse" not in user.password_hash
+
+    # First-use bootstrap (LMS-R1): create-user provisions the learner
+    # profile so the documented deploy flow lands on a usable home.
+    assert "learner=" in out
+    learners = list_learners_for_user(patched_session, user_id=user.id)
+    assert len(learners) == 1
+    assert learners[0].display_name == "Ada Lovelace"
 
 
 def test_create_user_duplicate_exits_nonzero(

@@ -585,6 +585,7 @@ def _dispatch_auth(args: argparse.Namespace, *, parser: argparse.ArgumentParser)
         get_user_by_username,
         set_password,
     )
+    from lms.learners.repository import get_or_create_learner_for_user
 
     if args.auth_command == "create-user":
         password = _resolve_password(args.password)
@@ -601,7 +602,12 @@ def _dispatch_auth(args: argparse.Namespace, *, parser: argparse.ArgumentParser)
                 )
             except ValueError as exc:
                 raise SystemExit(str(exc)) from exc
-            print(f"created user: id={user.id} username={user.username}")
+            learner, _created = get_or_create_learner_for_user(
+                session,
+                user_id=user.id,
+                display_name=args.display_name,
+            )
+            print(f"created user: id={user.id} username={user.username} " f"learner={learner.id}")
         return
     if args.auth_command == "set-password":
         password = _resolve_password(args.password)

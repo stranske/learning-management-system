@@ -45,7 +45,10 @@ credential to log in. There are no pre-seeded users.
    ```
 
 3. Enter a strong password when prompted. The hash is stored via Argon2; the
-   plaintext is never logged.
+   plaintext is never logged. The command also provisions your learner
+   profile (it prints both ids), so the first login lands on a usable
+   learner home. Accounts created before this behavior existed are
+   provisioned automatically on their first authenticated visit.
 
 You can also seed via a local one-shot script if you'd prefer not to use the
 Render shell — point `DATABASE_URL` at the Render Postgres connection string

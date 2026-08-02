@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#1f6feb">
+  <meta name="theme-color" content="#a85a34">
   <title>LMS Learn</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/static/ui/pico.min.css">
   <link rel="stylesheet" href="/static/ui/app.css">
+  <link rel="stylesheet" href="/static/ui/tokens.css">
+  <link rel="stylesheet" href="/static/ui/components.css">
+  <link rel="stylesheet" href="/static/ui/ds-reconcile.css">
 </head>
-<body>
+<body class="ds theme-paper">
   <header class="app-header">
     <nav aria-label="Application sections">
       <ul><li><strong>LMS</strong></li></ul>
@@ -28,7 +31,7 @@
             <p class="prompt-provenance">Provenance: human-authored; author author-1; reviewer reviewer-1.</p>
           </section>
           <form class="attempt-form" method="post" action="/learn/attempts">
-            <input type="hidden" name="learner_id" value="learner-1">
+            <input type="hidden" name="learner_id" value="snapshot-id">
             <input type="hidden" name="prompt_id" value="prompt-1">
             <label for="response_text">Response</label>
             <textarea id="response_text" name="response_text" rows="6"></textarea>
@@ -48,7 +51,7 @@
           </form>
           <section aria-labelledby="feedback-heading">
             <h2 id="feedback-heading">Feedback and next action</h2>
-            <p>Latest evidence: confidence 3/5; correctness pending scoring evidence.</p>
+            <p>Feedback appears after an attempt is recorded through the attempts API.</p>
           </section>
           <section aria-labelledby="sources-heading" class="source-panel">
             <h2 id="sources-heading">Source citations after attempt</h2>

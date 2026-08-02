@@ -7,7 +7,7 @@ from html import escape
 from typing import Annotated
 from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
@@ -35,6 +35,7 @@ from lms.feedback.repository import (
     reveal_model_answer,
     submit_revision_request,
 )
+from lms.learners.identity import LearnerIdDep
 from lms.ui.shell import empty_state, render_page
 
 router = APIRouter(tags=["learner-feedback-ui"])
@@ -44,7 +45,7 @@ SessionDep = Annotated[Session, Depends(get_session)]
 @router.get("/app/learner/feedback", response_class=HTMLResponse)
 def learner_feedback_list_route(
     session: SessionDep,
-    learner_id: Annotated[str, Query(min_length=1, max_length=36)] = "learner-1",
+    learner_id: LearnerIdDep,
 ) -> str:
     """Return feedback records for a learner."""
     records = list_feedback_records(session, learner_id=learner_id)
