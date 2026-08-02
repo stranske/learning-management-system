@@ -8,10 +8,10 @@ from html import escape
 from importlib.resources import files
 from json import JSONDecodeError, loads
 from typing import Annotated, Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote_plus
 
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -21,8 +21,8 @@ from lms.capability.repository import list_capability_targets, list_maintenance_
 from lms.cases.repository import add_decision_point, create_case, get_case, list_cases
 from lms.db.session import get_session
 from lms.evidence.models import Attempt, EvidenceRecord
-from lms.evidence.repository import create_attempt
 from lms.evidence.schemas import AttemptCreate, StructuredFeedback
+from lms.evidence.service import record_attempt
 from lms.feedback.models import FeedbackAction
 from lms.feedback.repository import (
     create_feedback_template,
@@ -57,8 +57,9 @@ from lms.learners.repository import (
 from lms.mastery.service import mastery_estimates_for_learner
 from lms.prompts.models import ANSWER_FORMS, COGNITIVE_ACTIONS, DEMAND_LEVELS, Prompt
 from lms.prompts.repository import create_prompt, list_prompts
-from lms.scheduling.models import ReviewPolicy, ReviewSchedule, SchedulerDecision
+from lms.scheduling.models import ReviewPolicy, ReviewQueueItem, ReviewSchedule, SchedulerDecision
 from lms.scheduling.repository import (
+    complete_review_queue_item,
     list_review_policies,
     list_review_schedules,
     list_scheduler_decisions,
@@ -200,8 +201,9 @@ async def submit_learn_attempt_route(
             next_action="Review feedback and continue practice.",
         ),
     )
-    attempt = create_attempt(session, **payload.model_dump())
+    recorded = record_attempt(session, **payload.model_dump())
     session.commit()
+    attempt = recorded.attempt
     session.refresh(attempt)
     prompt = session.get(Prompt, attempt.prompt_id)
     citations = _source_citation_items(prompt) if prompt is not None else []
@@ -261,6 +263,45 @@ def review_surface_route(
     return _review_surface(session=session, learner_id=learner_id, daily_cap=daily_cap)
 
 
+@router.post("/app/learner/reviews/{review_queue_item_id}/complete")
+async def complete_review_from_ui_route(
+    review_queue_item_id: str,
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    current_user: CurrentUserDep,
+) -> RedirectResponse:
+    """Complete a due review from the Review surface and return to the queue."""
+    raw_form = parse_qs((await request.body()).decode(), keep_blank_values=True)
+    form = {key: values[-1] for key, values in raw_form.items()}
+    learner_id = resolve_learner_id(
+        session,
+        user=current_user,
+        settings=settings,
+        requested=form.get("learner_id") or None,
+    )
+    item = session.get(ReviewQueueItem, review_queue_item_id)
+    if item is None or item.learner_id != learner_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Review queue item not found for this learner.",
+        )
+    try:
+        complete_review_queue_item(
+            session,
+            review_queue_item_id=review_queue_item_id,
+            actor_id=current_user.id,
+        )
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    session.commit()
+    return RedirectResponse(
+        url=f"/app/learner/reviews?learner_id={quote_plus(learner_id)}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 def _review_surface(*, session: Session, learner_id: str, daily_cap: int) -> str:
     """Return a mobile-friendly Review surface with scheduler reason codes."""
     overview = get_review_queue_overview(
@@ -279,7 +320,8 @@ def _review_surface(*, session: Session, learner_id: str, daily_cap: int) -> str
             f"<span>{escape(item.reason_explanation)}</span>"
             f"<small>Due {escape(_date_label(item.due_at))}; "
             f"node {escape(item.knowledge_node_id)}; priority {item.priority:.2f}</small>"
-            f"{_attempt_link(session, item.source_attempt_id, learner_id=item.learner_id)}"
+            f"{_attempt_link(session, item)}"
+            f"{_complete_review_form(item)}"
             "</li>"
         )
         for item in overview.items
@@ -383,15 +425,46 @@ def _review_policy_item(policy: ReviewPolicy) -> str:
     )
 
 
-def _attempt_link(session: Session, attempt_id: str | None, *, learner_id: str) -> str:
-    if attempt_id is None:
-        return ""
-    attempt = session.get(Attempt, attempt_id)
-    if attempt is None:
+def _attempt_link(session: Session, item: ReviewQueueItem) -> str:
+    """Link a queue item to the attempt surface for its prompt.
+
+    Items born from an attempt reuse that prompt; items without one (e.g.
+    new-learning or remediation) fall back to the node's first published
+    prompt so every actionable item has a path into the loop.
+    """
+    prompt_id: str | None = None
+    if item.source_attempt_id is not None:
+        attempt = session.get(Attempt, item.source_attempt_id)
+        if attempt is not None:
+            prompt_id = attempt.prompt_id
+    if prompt_id is None:
+        prompt_id = session.scalars(
+            select(Prompt.id)
+            .where(
+                Prompt.target_node_id == item.knowledge_node_id,
+                Prompt.status == "published",
+            )
+            .order_by(Prompt.created_at)
+            .limit(1)
+        ).first()
+    if prompt_id is None:
         return ""
     return (
-        f'<a href="/app/learner?learner_id={escape(learner_id)}'
-        f'&amp;prompt_id={escape(attempt.prompt_id)}">Open attempt</a>'
+        f'<a href="/app/learner/attempts?learner_id={escape(item.learner_id)}'
+        f'&amp;prompt_id={escape(prompt_id)}">Open attempt</a>'
+    )
+
+
+def _complete_review_form(item: ReviewQueueItem) -> str:
+    """Per-item completion control so the ramp can advance from the UI."""
+    if item.status != "pending":
+        return ""
+    return (
+        f'<form method="post" action="/app/learner/reviews/{escape(item.id)}/complete" '
+        'class="complete-review">'
+        f'<input type="hidden" name="learner_id" value="{escape(item.learner_id)}">'
+        '<button type="submit">Mark reviewed</button>'
+        "</form>"
     )
 
 

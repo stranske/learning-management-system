@@ -112,7 +112,10 @@ def test_review_surface_shows_schedule_and_decision_reason(
     assert "M5 spaced review" in html
     assert "daily_cap: 3" in html
     assert "Open attempt" in html
-    assert 'href="/app/learner?learner_id=learner-1&amp;prompt_id=prompt-review"' in html
+    # Audit LMS-R16: the queue used to link to /app/learner, which silently
+    # drops prompt_id — the attempt surface is the correct target.
+    assert 'href="/app/learner/attempts?learner_id=learner-1&amp;prompt_id=prompt-review"' in html
+    assert "Mark reviewed" in html
     assert "attempt_id=attempt-1" not in html
     assert 'data-action="pause-review" disabled' in html
     assert 'name="viewport"' in html

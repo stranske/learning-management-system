@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.evidence.models import Attempt
@@ -38,6 +39,12 @@ class RubricNotFoundError(RubricScoringError):
 
 class InvalidRubricScoringError(RubricScoringError):
     http_status = 422
+
+
+class DuplicateRubricScoreError(RubricScoringError):
+    """A second score for the same attempt+rubric (retry/double-submit guard)."""
+
+    http_status = 409
 
 
 def _evidence_scorer_type(scorer_type: str) -> str:
@@ -75,6 +82,21 @@ def score_attempt_with_rubric(
     if not criterion_scores:
         raise InvalidRubricScoringError(
             "criterion_scores must include at least one criterion score"
+        )
+    # Idempotency guard (audit LMS-R4): HTTP retries and double-submits used
+    # to create duplicate evidence, duplicate queue items, and inflated
+    # mastery signals. One rubric score per attempt+rubric; deliberate
+    # re-scoring goes through the revision-request flow instead.
+    existing_score = session.scalars(
+        select(RubricScore).where(
+            RubricScore.attempt_id == attempt_id,
+            RubricScore.rubric_id == rubric_id,
+        )
+    ).first()
+    if existing_score is not None:
+        raise DuplicateRubricScoreError(
+            "this attempt is already scored against this rubric; "
+            "request a revision to supersede the existing score"
         )
 
     normalized_scores = _normalize_criterion_scores(rubric, criterion_scores)
