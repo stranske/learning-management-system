@@ -9,12 +9,12 @@ from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
 from lms.evidence.repository import (
-    create_attempt,
     get_attempt,
     get_evidence_record,
     list_evidence_records,
 )
 from lms.evidence.schemas import AttemptCreate, AttemptRead, EvidenceRecordRead
+from lms.evidence.service import record_attempt
 
 router = APIRouter(tags=["evidence"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -23,11 +23,12 @@ SessionDep = Annotated[Session, Depends(get_session)]
 @router.post("/attempts", response_model=AttemptRead, status_code=status.HTTP_201_CREATED)
 def create_attempt_route(payload: AttemptCreate, session: SessionDep) -> AttemptRead:
     """Record a learner attempt."""
-    attempt = create_attempt(
+    recorded = record_attempt(
         session,
         **payload.model_dump(),
     )
     session.commit()
+    attempt = recorded.attempt
     session.refresh(attempt)
     return AttemptRead.model_validate(attempt)
 
