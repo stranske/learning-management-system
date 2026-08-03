@@ -948,7 +948,7 @@ def _dashboard_surface(*, session: Session, learner_id: str) -> str:
           {_dashboard_quick_links()}
           <div class="dashboard-grid">
             {_next_actions_panel(actions, zone=zone)}
-            {_reviews_panel(review)}
+            {_reviews_panel(review, titles=titles, zone=zone)}
             {_recent_evidence_panel(evidence, titles=titles, zone=zone)}
             {_goals_panel(goals, goal_progress)}
             {_mastery_panel(session, mastery)}
@@ -1053,7 +1053,9 @@ def _next_actions_panel(actions: Sequence[FeedbackAction], *, zone: ZoneInfo) ->
     )
 
 
-def _reviews_panel(review: ReviewQueueOverview) -> str:
+def _reviews_panel(
+    review: ReviewQueueOverview, *, titles: Mapping[str, str], zone: ZoneInfo
+) -> str:
     items = review.items
     if not items:
         return _panel(
@@ -1070,9 +1072,10 @@ def _reviews_panel(review: ReviewQueueOverview) -> str:
     for item in items:
         rendered.append(
             "<li class='panel-item'>"
-            f"<strong>{escape(item.reason_code)}</strong>"
+            f"<strong>{escape(_node_label(item.knowledge_node_id, titles))}</strong>"
             f"<span>{escape(item.reason_explanation)}</span>"
-            f"<small>node {escape(item.knowledge_node_id)}; priority {item.priority:.2f}</small>"
+            f"<small>{escape(item.reason_code)} · "
+            f"due {escape(_relative_day(item.due_at, zone))}</small>"
             "</li>"
         )
     intro = (

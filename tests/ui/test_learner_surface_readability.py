@@ -120,3 +120,16 @@ def test_design_system_styles_password_inputs() -> None:
     """The login password field must get the same treatment as username."""
     css = ui_api._STATIC_FILES.joinpath("components.css").read_text()  # type: ignore[attr-defined]
     assert "input[type=password]" in css
+
+
+def test_dashboard_review_panel_also_uses_titles() -> None:
+    """The dashboard's Due-reviews panel is a SEPARATE renderer from the review page.
+
+    Fixing the review page alone left the dashboard printing raw UUIDs — caught
+    by driving the real UI, not by the test suite. This pins both renderers.
+    """
+    import inspect
+
+    source = inspect.getsource(ui_api._reviews_panel)
+    assert "_node_label(" in source, "dashboard queue rows must resolve node titles"
+    assert "knowledge_node_id)}" not in source, "raw node id must not be rendered"
