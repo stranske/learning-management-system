@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -305,6 +306,14 @@ def main() -> None:
     create_user_parser.add_argument("--display-name", required=True)
     create_user_parser.add_argument("--email", default=None)
     create_user_parser.add_argument(
+        "--timezone",
+        default="UTC",
+        help=(
+            "IANA timezone for the learner profile (e.g. America/Chicago). "
+            "Review due dates render in this zone; defaults to UTC."
+        ),
+    )
+    create_user_parser.add_argument(
         "--password",
         nargs="?",
         const="__PROMPT__",
@@ -602,10 +611,15 @@ def _dispatch_auth(args: argparse.Namespace, *, parser: argparse.ArgumentParser)
                 )
             except ValueError as exc:
                 raise SystemExit(str(exc)) from exc
+            try:
+                ZoneInfo(args.timezone)
+            except (ZoneInfoNotFoundError, ValueError) as exc:
+                raise SystemExit(f"unknown timezone: {args.timezone}") from exc
             learner, _created = get_or_create_learner_for_user(
                 session,
                 user_id=user.id,
                 display_name=args.display_name,
+                timezone=args.timezone,
             )
             print(f"created user: id={user.id} username={user.username} " f"learner={learner.id}")
         return

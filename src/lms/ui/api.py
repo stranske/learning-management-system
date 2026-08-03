@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from html import escape
 from importlib.resources import files
 from json import JSONDecodeError, loads
 from typing import Annotated, Any
 from urllib.parse import parse_qs, quote_plus
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -16,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.auth.login import SettingsDep
+from lms.auth.models import utc_now
 from lms.capability.models import CapabilityTarget, MaintenancePlan
 from lms.capability.repository import list_capability_targets, list_maintenance_plans
 from lms.cases.repository import add_decision_point, create_case, get_case, list_cases
@@ -47,7 +49,7 @@ from lms.graphs.repository import (
     list_knowledge_nodes,
 )
 from lms.learners.identity import CurrentUserDep, LearnerIdDep, resolve_learner_id
-from lms.learners.models import GOAL_STATUSES, LearnerReflection, LearningGoal
+from lms.learners.models import GOAL_STATUSES, Learner, LearnerReflection, LearningGoal
 from lms.learners.repository import (
     create_learning_goal,
     goal_progress_for_learner,
@@ -312,14 +314,16 @@ def _review_surface(*, session: Session, learner_id: str, daily_cap: int) -> str
     schedules = list_review_schedules(session, learner_id=learner_id, limit=50)
     decisions = list_scheduler_decisions(session, learner_id=learner_id, limit=50)
     policies = list_review_policies(session, limit=50)
+    zone = _learner_zone(session, learner_id)
+    titles = _node_titles(session, [item.knowledge_node_id for item in overview.items])
     items = [
         (
             "<li class='queue-item'>"
-            f"<strong>{escape(item.reason_code)} - "
-            f"{escape(_queue_status_label(item.status, item.reason_code))}</strong>"
+            f"<strong>{escape(_node_label(item.knowledge_node_id, titles))}</strong>"
             f"<span>{escape(item.reason_explanation)}</span>"
-            f"<small>Due {escape(_date_label(item.due_at))}; "
-            f"node {escape(item.knowledge_node_id)}; priority {item.priority:.2f}</small>"
+            f"<small>{escape(item.reason_code)} · "
+            f"{escape(_queue_status_label(item.status, item.reason_code))} · "
+            f"due {escape(_relative_day(item.due_at, zone))}</small>"
             f"{_attempt_link(session, item)}"
             f"{_complete_review_form(item)}"
             "</li>"
@@ -478,6 +482,77 @@ def _queue_status_label(status: str, reason_code: str) -> str:
     if status == "pending":
         return "available"
     return status
+
+
+def _learner_zone(session: Session, learner_id: str) -> ZoneInfo:
+    """Return the learner's configured timezone, defaulting to UTC.
+
+    Scheduling stores UTC. Rendering UTC to a learner in a western timezone
+    made "due today" read as tomorrow's date, which is exactly the kind of
+    small wrongness that erodes trust in a daily tool.
+    """
+    learner = session.get(Learner, learner_id)
+    name = (learner.timezone if learner is not None else None) or "UTC"
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Treat naive datetimes as UTC (SQLite reads them back without tzinfo)."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _local_day(value: datetime | None, zone: ZoneInfo) -> str:
+    """Render a date in the learner's timezone, e.g. ``Sun 3 Aug 2026``."""
+    if value is None:
+        return "unknown"
+    return _as_utc(value).astimezone(zone).strftime("%a %-d %b %Y")
+
+
+def _relative_day(value: datetime | None, zone: ZoneInfo, *, now: datetime | None = None) -> str:
+    """Render a due date the way a person would say it."""
+    if value is None:
+        return "unknown"
+    reference = (now or utc_now()).astimezone(zone).date()
+    target = _as_utc(value).astimezone(zone).date()
+    delta = (target - reference).days
+    if delta == 0:
+        return "today"
+    if delta == 1:
+        return "tomorrow"
+    if delta == -1:
+        return "yesterday"
+    if delta < 0:
+        return f"{abs(delta)} days ago"
+    if delta <= 14:
+        return f"in {delta} days"
+    return _local_day(value, zone)
+
+
+def _node_titles(session: Session, node_ids: Sequence[str]) -> dict[str, str]:
+    """Map knowledge-node ids to titles for display.
+
+    Learner surfaces used to print bare UUIDs, which are unreadable and make
+    the queue impossible to skim. Ids with no matching node fall back to the
+    id so nothing silently disappears.
+    """
+    unique = {node_id for node_id in node_ids if node_id}
+    if not unique:
+        return {}
+    rows = session.execute(
+        select(KnowledgeNode.id, KnowledgeNode.title).where(KnowledgeNode.id.in_(unique))
+    ).all()
+    return {row[0]: row[1] for row in rows}
+
+
+def _node_label(node_id: str, titles: Mapping[str, str]) -> str:
+    """Return a node's title, falling back to a short id when unknown."""
+    title = titles.get(node_id)
+    if title:
+        return title
+    return f"node {node_id[:8]}" if node_id else "unknown topic"
 
 
 def _date_label(value: object) -> str:
@@ -852,6 +927,12 @@ def _dashboard_surface(*, session: Session, learner_id: str) -> str:
     targets = list_capability_targets(session, learner_id=learner_id)
     plans = list_maintenance_plans(session, learner_id=learner_id)
     reflections = list_reflections_for_learner(session, learner_id=learner_id, limit=5)
+    zone = _learner_zone(session, learner_id)
+    titles = _node_titles(
+        session,
+        [record.knowledge_node_id for record in evidence]
+        + [item.knowledge_node_id for item in review.items],
+    )
 
     return render_page(
         "Learner",
@@ -866,9 +947,9 @@ def _dashboard_surface(*, session: Session, learner_id: str) -> str:
           {_onboarding_panel(goals=goals, evidence=evidence, review=review)}
           {_dashboard_quick_links()}
           <div class="dashboard-grid">
-            {_next_actions_panel(actions)}
+            {_next_actions_panel(actions, zone=zone)}
             {_reviews_panel(review)}
-            {_recent_evidence_panel(evidence)}
+            {_recent_evidence_panel(evidence, titles=titles, zone=zone)}
             {_goals_panel(goals, goal_progress)}
             {_mastery_panel(session, mastery)}
             {_capability_panel(targets)}
@@ -926,7 +1007,7 @@ def _panel(*, panel_id: str, heading: str, intro: str, body: str) -> str:
     )
 
 
-def _next_actions_panel(actions: Sequence[FeedbackAction]) -> str:
+def _next_actions_panel(actions: Sequence[FeedbackAction], *, zone: ZoneInfo) -> str:
     if not actions:
         return _panel(
             panel_id="next-actions",
@@ -938,14 +1019,29 @@ def _next_actions_panel(actions: Sequence[FeedbackAction]) -> str:
                 "here after you get feedback on an attempt.",
             ),
         )
-    items = []
+    # Actions are generated per attempt, so a normal week produces dozens of
+    # byte-identical "Schedule a follow-up review" rows. Rendering them one by
+    # one buried the few distinct actions that actually needed attention, so
+    # identical (title, type, status) actions collapse into one counted row.
+    grouped: dict[tuple[str, str, str], list[FeedbackAction]] = {}
     for action in actions:
-        due = _due_suffix(action.due_at)
-        instructions = escape(action.instructions or "")
+        key = (action.title, action.action_type, action.status)
+        grouped.setdefault(key, []).append(action)
+
+    items = []
+    for (title, action_type, action_status), group in grouped.items():
+        count = len(group)
+        soonest = min(
+            (action.due_at for action in group if action.due_at is not None),
+            default=None,
+        )
+        due = f" · due {_relative_day(soonest, zone)}" if soonest is not None else ""
+        tally = f" <span class='tally'>×{count}</span>" if count > 1 else ""
+        instructions = escape(group[0].instructions or "")
         items.append(
             "<li class='panel-item'>"
-            f"<strong>{escape(action.title)}</strong>"
-            f"<span>{escape(action.action_type)} · {escape(action.status)}{due}</span>"
+            f"<strong>{escape(title)}</strong>{tally}"
+            f"<span>{escape(action_type)} · {escape(action_status)}{escape(due)}</span>"
             + (f"<small>{instructions}</small>" if instructions else "")
             + "</li>"
         )
@@ -991,7 +1087,9 @@ def _reviews_panel(review: ReviewQueueOverview) -> str:
     )
 
 
-def _recent_evidence_panel(evidence: list[EvidenceRecord]) -> str:
+def _recent_evidence_panel(
+    evidence: list[EvidenceRecord], *, titles: Mapping[str, str], zone: ZoneInfo
+) -> str:
     if not evidence:
         return _panel(
             panel_id="recent-evidence",
@@ -1007,10 +1105,10 @@ def _recent_evidence_panel(evidence: list[EvidenceRecord]) -> str:
     for record in evidence:
         items.append(
             "<li class='panel-item'>"
-            f"<strong>{escape(record.knowledge_node_id)}</strong>"
+            f"<strong>{escape(_node_label(record.knowledge_node_id, titles))}</strong>"
             f"<span>{escape(_evidence_outcome(record))}</span>"
             f"<small>{escape(_support_note(record))}observed "
-            f"{escape(_format_day(record.observed_at))}</small>"
+            f"{escape(_relative_day(record.observed_at, zone))}</small>"
             "</li>"
         )
     return _panel(

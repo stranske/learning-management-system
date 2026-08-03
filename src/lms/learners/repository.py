@@ -63,6 +63,7 @@ def get_or_create_learner_for_user(
     *,
     user_id: str,
     display_name: str,
+    timezone: str = "UTC",
 ) -> tuple[Learner, bool]:
     """Return the user's primary (oldest) learner, creating one on first need.
 
@@ -76,6 +77,7 @@ def get_or_create_learner_for_user(
         session,
         user_id=user_id,
         display_name=display_name,
+        timezone=timezone,
     )
     return learner, True
 
