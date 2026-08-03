@@ -161,7 +161,9 @@ def test_review_surface_handles_empty_and_blocked_states(
 
     assert blocked_response.status_code == 200
     assert "blocked-prerequisite" in blocked_response.text
-    assert "blocked-prerequisite - blocked" in blocked_response.text
+    # The queue item now leads with the topic title; the reason code and status
+    # moved to the metadata line (audit LMS-R19: raw ids were unreadable).
+    assert "blocked-prerequisite · blocked" in blocked_response.text
     assert "blocked-prerequisite - available" not in blocked_response.text
     assert blocked_empty_response.status_code == 200
     assert "All review items are blocked by prerequisites." in blocked_empty_response.text

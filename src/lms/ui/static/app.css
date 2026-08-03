@@ -126,6 +126,26 @@ h2 {
   display: block;
   color: #52606d;
 }
+/* Feedback lists use the same strong/span/small field stack as .panel-item.
+   Without an explicit block display these inline elements run together --
+   "Record learner attemptTopic 01 concerns..." -- which reads as a rendering
+   bug rather than two separate fields. */
+.feedback-records li,
+.feedback-actions li {
+  margin: 0.5rem 0;
+  overflow-wrap: anywhere;
+}
+.feedback-records li strong,
+.feedback-actions li strong {
+  display: block;
+}
+.feedback-records li span,
+.feedback-records li small,
+.feedback-actions li span,
+.feedback-actions li small {
+  display: block;
+  color: #52606d;
+}
 .note {
   color: #52606d;
   font-size: 0.85rem;
