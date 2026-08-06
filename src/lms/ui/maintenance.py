@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from lms.db.session import get_session
 from lms.learners.identity import LearnerIdDep
 from lms.maintenance.anchors import AnchorSpec, parse_reading
+from lms.maintenance.drafts import count_pending_drafts
 from lms.maintenance.models import MaintenanceItem
 from lms.maintenance.service import (
     count_active_items,
@@ -28,6 +29,7 @@ SessionDep = Annotated[Session, Depends(get_session)]
 MAINTENANCE_PATH = "/app/learner/maintenance"
 REVIEW_PATH = f"{MAINTENANCE_PATH}/review"
 DISPUTE_PATH = f"{MAINTENANCE_PATH}/dispute"
+DRAFTS_LINK = f"{MAINTENANCE_PATH}/drafts"
 
 
 @router.get(MAINTENANCE_PATH, response_class=HTMLResponse)
@@ -35,13 +37,20 @@ def maintenance_home_route(session: SessionDep, learner_id: LearnerIdDep) -> str
     """List what is due today."""
     due = list_due_items(session, learner_id=learner_id)
     total = count_active_items(session, learner_id=learner_id)
+    pending = count_pending_drafts(session, learner_id=learner_id)
+    drafts_link = (
+        f"<p class='note'><a href='{DRAFTS_LINK}'>{pending} draft(s) awaiting approval</a>"
+        " — nothing is scheduled until you approve it.</p>"
+        if pending
+        else ""
+    )
     if not due:
         body = empty_state(
             "Nothing due right now",
             f"You have {total} active item(s). They come back when their next review "
             "is due — nothing here means nothing needs attention today.",
         )
-        return _page("Maintenance", body)
+        return _page("Maintenance", drafts_link + body)
 
     rows = "".join(
         "<li class='panel-item'>"
@@ -53,7 +62,8 @@ def maintenance_home_route(session: SessionDep, learner_id: LearnerIdDep) -> str
         for entry in due
     )
     body = (
-        f"<p>{len(due)} of {total} item(s) due. Counts are informational, not an obligation.</p>"
+        drafts_link
+        + f"<p>{len(due)} of {total} item(s) due. Counts are informational, not an obligation.</p>"
         f"<ul class='panel-list'>{rows}</ul>"
     )
     return _page("Maintenance", body)
