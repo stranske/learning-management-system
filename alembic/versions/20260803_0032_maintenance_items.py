@@ -41,12 +41,8 @@ def upgrade() -> None:
         ),
         sa.Column("source_locator_hint", sa.String(length=300), nullable=True),
         sa.Column("subject_label", sa.String(length=200), nullable=True),
-        sa.Column(
-            "retention_tier", sa.String(length=16), nullable=False, server_default="warm"
-        ),
-        sa.Column(
-            "precision_mode", sa.String(length=16), nullable=False, server_default="band"
-        ),
+        sa.Column("retention_tier", sa.String(length=16), nullable=False, server_default="warm"),
+        sa.Column("precision_mode", sa.String(length=16), nullable=False, server_default="band"),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="draft"),
         sa.Column("payload", sa.JSON(), nullable=False),
         sa.Column("relevant_until", sa.DateTime(timezone=True), nullable=True),

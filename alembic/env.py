@@ -13,9 +13,9 @@ import lms.evidence.models  # noqa: F401
 import lms.feedback.models  # noqa: F401
 import lms.graphs.models  # noqa: F401
 import lms.learners.models  # noqa: F401
-import lms.maintenance.models  # noqa: F401
 import lms.llm.models  # noqa: F401
 import lms.llm.proposals  # noqa: F401
+import lms.maintenance.models  # noqa: F401
 import lms.prompts.models  # noqa: F401
 import lms.scheduling.models  # noqa: F401
 import lms.sources.models  # noqa: F401
