@@ -400,3 +400,21 @@ def test_tier_counts_feed_the_capacity_estimate(
     cold_heavy = estimate_capacity(BudgetSettings(), active_items=100, tier_counts={"cold": 100})
 
     assert cold_heavy.steady_state_capacity > hot_heavy.steady_state_capacity
+
+
+def test_retire_is_visually_separated_from_save(
+    env: tuple[TestClient, sessionmaker[Session], str],
+) -> None:
+    """A destructive action must not render identically to Save beside it.
+
+    Found by driving the page: "Save" and "Retire this item now" were both
+    full-width primary buttons, one click apart.
+    """
+    client, factory, _learner = env
+    item = _any_item(factory)
+
+    page = client.get(f"{ITEM}?item_id={item.id}").text
+
+    assert "danger-zone" in page
+    assert 'class="b-danger"' in page
+    assert "will not come back" in page, "the consequence must be stated"
