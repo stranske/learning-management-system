@@ -22,7 +22,7 @@ from lms.maintenance.anchors import (
 )
 from lms.maintenance.grading import IdeaGrader, KeyPoint, grade_idea_answer
 from lms.maintenance.models import GradeDispute, MaintenanceItem
-from lms.scheduling.card_state import advance_card_state, get_or_seed_card_state
+from lms.scheduling.card_state import advance_card_state, get_card_state, get_or_seed_card_state
 from lms.scheduling.models import SUBJECT_MAINTENANCE_ITEM, ReviewCardState
 
 # A graded answer maps onto the FSRS rating vocabulary. The thresholds are
@@ -219,5 +219,104 @@ __all__ = [
     "list_due_items",
     "record_dispute",
     "score_to_rating",
+    "retire_by_subject",
+    "retire_expired_items",
+    "set_item_tier",
     "submit_review",
+    "tier_counts",
 ]
+
+
+def retire_expired_items(
+    session: Session, *, learner_id: str, now: datetime | None = None
+) -> list[MaintenanceItem]:
+    """Retire active items whose relevance horizon has passed.
+
+    ``relevant_until`` already keeps stale items out of the due query, but
+    leaving them "active" made the counts lie: the owner would be told they
+    have 40 active items when a dozen stopped mattering months ago. Retiring
+    them makes the collection size honest, which matters because capacity
+    and intake estimates are computed from it.
+    """
+    reference = now or utc_now()
+    rows = session.scalars(
+        select(MaintenanceItem).where(
+            MaintenanceItem.learner_id == learner_id,
+            MaintenanceItem.status == "active",
+            MaintenanceItem.relevant_until.is_not(None),
+        )
+    ).all()
+    retired: list[MaintenanceItem] = []
+    for item in rows:
+        horizon = item.relevant_until
+        if horizon is None:
+            continue
+        if horizon.tzinfo is None:
+            horizon = horizon.replace(tzinfo=reference.tzinfo)
+        if horizon <= reference:
+            item.status = "retired"
+            retired.append(item)
+    if retired:
+        session.flush()
+    return retired
+
+
+def retire_by_subject(
+    session: Session, *, learner_id: str, subject_label: str
+) -> list[MaintenanceItem]:
+    """Retire every active item for one subject in a single step.
+
+    Exiting a manager should not mean deleting twenty items one at a time —
+    the whole subject stops being worth review at once.
+    """
+    rows = session.scalars(
+        select(MaintenanceItem).where(
+            MaintenanceItem.learner_id == learner_id,
+            MaintenanceItem.status == "active",
+            MaintenanceItem.subject_label == subject_label,
+        )
+    ).all()
+    for item in rows:
+        item.status = "retired"
+    if rows:
+        session.flush()
+    return list(rows)
+
+
+def set_item_tier(
+    session: Session,
+    *,
+    item: MaintenanceItem,
+    retention_tier: str,
+) -> MaintenanceItem:
+    """Change an item's retention tier and keep its live card in step.
+
+    The tier lives on the item, but scheduling reads it from the card state,
+    so changing one without the other would leave the item advertising a
+    tier it does not actually use.
+    """
+    item.retention_tier = retention_tier
+    card = get_card_state(
+        session,
+        learner_id=item.learner_id,
+        subject_id=item.id,
+        subject_type=SUBJECT_MAINTENANCE_ITEM,
+    )
+    if card is not None:
+        card.retention_tier = retention_tier
+    session.flush()
+    return item
+
+
+def tier_counts(session: Session, *, learner_id: str) -> dict[str, int]:
+    """Active item counts per retention tier, for capacity estimates."""
+    rows = session.scalars(
+        select(MaintenanceItem).where(
+            MaintenanceItem.learner_id == learner_id,
+            MaintenanceItem.status == "active",
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    for item in rows:
+        counts[item.retention_tier] = counts.get(item.retention_tier, 0) + 1
+    return counts

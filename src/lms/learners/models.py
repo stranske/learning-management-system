@@ -5,7 +5,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, String, Table, Text, func
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    String,
+    Table,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lms.auth.models import new_uuid, utc_now
@@ -57,6 +67,16 @@ class Learner(Base):
     display_name: Mapped[str] = mapped_column(String(200))
     timezone: Mapped[str] = mapped_column(String(80), default="UTC", nullable=False)
     locale: Mapped[str] = mapped_column(String(20), default="en-US", nullable=False)
+    # Review budget. The owner's "ten minutes a day" was a heuristic, not a
+    # constant: the app derives collection capacity and a sustainable intake
+    # rate from these, so the tradeoff is visible rather than discovered
+    # later as a backlog. See lms.maintenance.budget.
+    daily_minutes_target: Mapped[int] = mapped_column(
+        default=10, server_default=text("10"), nullable=False
+    )
+    daily_item_cap: Mapped[int] = mapped_column(
+        default=25, server_default=text("25"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
