@@ -124,6 +124,21 @@ class MaintenanceItem(Base):
     # ``reference_anchor`` items: see lms.maintenance.anchors.AnchorSpec
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
+    # Draft lifecycle. A drafted item is a PROPOSAL: it must be approved
+    # before it can ever be scheduled, because an unverified figure would
+    # otherwise be memorised as fact and reinforced for years. Unapproved
+    # drafts lapse rather than accumulating — a draft you never got to is
+    # evidence you did not want it, and redrafting from the source is cheap.
+    draft_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Which payload fields came from the SOURCE versus which the drafter
+    # inferred. The reviewer's job differs completely between the two: a
+    # transcribed number is checked against the quoted snippet in seconds,
+    # while an inferred band is a judgment that decides how this item grades
+    # for years. Mapping field name -> "source" | "inferred".
+    field_provenance: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
     # Relevance horizon. Short-dated market commentary stops being worth
     # reviewing; a long-run base rate does not. Items past their horizon
     # retire instead of quietly consuming the daily budget forever.
@@ -173,6 +188,37 @@ class GradeDispute(Base):
     machine_grade: Mapped[float | None] = mapped_column()
     learner_grade: Mapped[float | None] = mapped_column()
     comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False
+    )
+
+
+class DraftRejection(Base):
+    """A rejected draft, with the reason when the owner supplied one.
+
+    Kept after the item itself is discarded so rejection reasons can
+    condition future drafting — the owner asked for one-click reject plus
+    optional feedback that improves what gets proposed next.
+    """
+
+    __tablename__ = "draft_rejections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    learner_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("learners.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    item_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    subject_label: Mapped[str | None] = mapped_column(String(200))
+    source_locator_hint: Mapped[str | None] = mapped_column(String(300))
+    reason: Mapped[str | None] = mapped_column(Text)
+    # "rejected" when the owner said no; "expired" when it simply lapsed.
+    disposition: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="rejected", server_default="rejected", index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False
     )

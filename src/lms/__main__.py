@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from lms.auth.models import utc_now
 from lms.db.session import session_scope
 from lms.demo import (
     build_minimum_demo_smoke_summary,
@@ -616,7 +617,6 @@ def _dispatch_maintenance(args: argparse.Namespace, *, parser: argparse.Argument
 
     from lms.auth.repository import get_user_by_username
     from lms.learners.repository import list_learners_for_user
-    from lms.maintenance.models import MaintenanceItem
 
     if args.maintenance_command != "load-seed":
         parser.error("maintenance requires a subcommand")
@@ -635,15 +635,23 @@ def _dispatch_maintenance(args: argparse.Namespace, *, parser: argparse.Argument
             raise SystemExit(f"user {args.username} has no learner profile yet")
         learner_id = learners[0].id
 
-        created = 0
-        for spec in seed.all_items():
-            session.add(
-                MaintenanceItem(
-                    learner_id=learner_id,
-                    status="active" if args.activate else "draft",
-                    **spec,
-                )
+        from lms.maintenance.drafts import can_accept_drafts, prepare_draft
+
+        specs = seed.all_items()
+        if not args.activate and not can_accept_drafts(
+            session, learner_id=learner_id, wanted=len(specs)
+        ):
+            raise SystemExit(
+                "draft queue is full; approve or clear pending drafts before loading more"
             )
+        created = 0
+        for spec in specs:
+            item = prepare_draft(spec, learner_id=learner_id)
+            if args.activate:
+                item.status = "active"
+                item.draft_expires_at = None
+                item.approved_at = utc_now()
+            session.add(item)
             created += 1
         state = "active" if args.activate else "draft"
         print(f"loaded {created} {state} maintenance item(s) from {args.seed}")
