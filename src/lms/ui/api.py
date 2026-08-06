@@ -992,6 +992,7 @@ def _dashboard_quick_links() -> str:
         '<nav class="dashboard-links" aria-label="Dashboard quick links"><ul>'
         '<li><a href="/learn">Start or continue an attempt</a></li>'
         '<li><a href="/app/learner/review">Open the review queue</a></li>'
+        '<li><a href="/app/learner/maintenance">Keep knowledge reachable</a></li>'
         '<li><a href="#next-actions">See feedback actions</a></li>'
         '<li><a href="#capability">See capability targets</a></li>'
         "</ul></nav>"

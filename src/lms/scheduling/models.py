@@ -28,6 +28,10 @@ from lms.evidence.models import SUPPORT_LEVELS
 from lms.graphs.models import KNOWLEDGE_TYPES, OWNERSHIP_SCOPES
 from lms.scheduling.fsrs_engine import DEFAULT_RETENTION_TIER, RETENTION_TIERS
 
+SUBJECT_KNOWLEDGE_NODE: str = "knowledge_node"
+SUBJECT_MAINTENANCE_ITEM: str = "maintenance_item"
+CARD_SUBJECT_TYPES: tuple[str, ...] = (SUBJECT_KNOWLEDGE_NODE, SUBJECT_MAINTENANCE_ITEM)
+
 REASON_CODES: tuple[str, ...] = (
     "new-learning",
     "due-review",
@@ -385,10 +389,15 @@ class ReviewCardState(Base):
             f"retention_tier IN ({_sql_values(RETENTION_TIERS)})",
             name="review_card_retention_tier_valid",
         ),
+        CheckConstraint(
+            f"subject_type IN ({_sql_values(CARD_SUBJECT_TYPES)})",
+            name="review_card_subject_type_valid",
+        ),
         Index(
-            "ux_review_card_states_learner_node",
+            "ux_review_card_states_learner_subject",
             "learner_id",
-            "knowledge_node_id",
+            "subject_type",
+            "subject_id",
             unique=True,
         ),
         Index("ix_review_card_states_due", "learner_id", "due_at"),
@@ -401,7 +410,18 @@ class ReviewCardState(Base):
         nullable=False,
         index=True,
     )
-    knowledge_node_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    # Polymorphic subject. Memory state is not exclusive to concept-map nodes:
+    # the maintenance strand schedules source-anchored items that deliberately
+    # have no KnowledgeNode. ``subject_type`` says which family an id belongs
+    # to so one FSRS engine serves both.
+    subject_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=SUBJECT_KNOWLEDGE_NODE,
+        server_default=SUBJECT_KNOWLEDGE_NODE,
+        index=True,
+    )
+    subject_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     retention_tier: Mapped[str] = mapped_column(
         String(16),
         nullable=False,

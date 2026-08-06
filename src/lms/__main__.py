@@ -296,6 +296,25 @@ def main() -> None:
 
     # auth subcommands — bootstrap users for the deployed (AUTH_REQUIRED=true)
     # instance. See docs/architecture/auth.md.
+    maintenance_parser = subparsers.add_parser(
+        "maintenance", help="manage workplace knowledge-maintenance items"
+    )
+    maintenance_sub = maintenance_parser.add_subparsers(dest="maintenance_command")
+    load_seed_parser = maintenance_sub.add_parser(
+        "load-seed", help="load a bundled seed set of maintenance items"
+    )
+    load_seed_parser.add_argument(
+        "--seed", default="ipo_surge_2026", help="seed module name (default: ipo_surge_2026)"
+    )
+    load_seed_parser.add_argument(
+        "--username", required=True, help="owner of the items (their learner profile is used)"
+    )
+    load_seed_parser.add_argument(
+        "--activate",
+        action="store_true",
+        help="mark items active immediately instead of leaving them as drafts to approve",
+    )
+
     auth_parser = subparsers.add_parser("auth", help="manage local auth users")
     auth_sub = auth_parser.add_subparsers(dest="auth_command")
     create_user_parser = auth_sub.add_parser(
@@ -560,6 +579,10 @@ def main() -> None:
             return
         parser.error("demo requires a subcommand")
 
+    if args.command == "maintenance":
+        _dispatch_maintenance(args, parser=maintenance_parser)
+        return
+
     if args.command == "auth":
         _dispatch_auth(args, parser=auth_parser)
         return
@@ -585,6 +608,45 @@ def _resolve_password(value: str | None) -> str:
             raise SystemExit("password cannot be empty")
         return first
     return value
+
+
+def _dispatch_maintenance(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> None:
+    """Dispatch ``lms maintenance ...`` subcommands."""
+    import importlib
+
+    from lms.auth.repository import get_user_by_username
+    from lms.learners.repository import list_learners_for_user
+    from lms.maintenance.models import MaintenanceItem
+
+    if args.maintenance_command != "load-seed":
+        parser.error("maintenance requires a subcommand")
+
+    try:
+        seed = importlib.import_module(f"lms.maintenance.seeds.{args.seed}")
+    except ModuleNotFoundError as exc:
+        raise SystemExit(f"unknown seed: {args.seed}") from exc
+
+    with session_scope() as session:
+        user = get_user_by_username(session, args.username)
+        if user is None:
+            raise SystemExit(f"user not found: {args.username}")
+        learners = list_learners_for_user(session, user_id=user.id)
+        if not learners:
+            raise SystemExit(f"user {args.username} has no learner profile yet")
+        learner_id = learners[0].id
+
+        created = 0
+        for spec in seed.all_items():
+            session.add(
+                MaintenanceItem(
+                    learner_id=learner_id,
+                    status="active" if args.activate else "draft",
+                    **spec,
+                )
+            )
+            created += 1
+        state = "active" if args.activate else "draft"
+        print(f"loaded {created} {state} maintenance item(s) from {args.seed}")
 
 
 def _dispatch_auth(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> None:
