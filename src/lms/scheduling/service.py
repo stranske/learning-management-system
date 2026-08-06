@@ -743,7 +743,7 @@ def schedule_from_attempt(
     card = get_or_seed_card_state(
         session,
         learner_id=attempt.learner_id,
-        knowledge_node_id=evidence_record.knowledge_node_id,
+        subject_id=evidence_record.knowledge_node_id,
         prior_successes=prior_successes,
         retention_tier=retention_tier,
         now=decision_now,

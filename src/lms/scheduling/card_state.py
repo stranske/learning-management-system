@@ -9,17 +9,22 @@ from sqlalchemy.orm import Session
 
 from lms.auth.models import utc_now
 from lms.scheduling import fsrs_engine
-from lms.scheduling.models import ReviewCardState
+from lms.scheduling.models import SUBJECT_KNOWLEDGE_NODE, ReviewCardState
 
 
 def get_card_state(
-    session: Session, *, learner_id: str, knowledge_node_id: str
+    session: Session,
+    *,
+    learner_id: str,
+    subject_id: str,
+    subject_type: str = SUBJECT_KNOWLEDGE_NODE,
 ) -> ReviewCardState | None:
-    """Return the stored memory state for one learner/node pair."""
+    """Return the stored memory state for one learner/subject pair."""
     return session.scalars(
         select(ReviewCardState).where(
             ReviewCardState.learner_id == learner_id,
-            ReviewCardState.knowledge_node_id == knowledge_node_id,
+            ReviewCardState.subject_type == subject_type,
+            ReviewCardState.subject_id == subject_id,
         )
     ).first()
 
@@ -28,7 +33,8 @@ def get_or_seed_card_state(
     session: Session,
     *,
     learner_id: str,
-    knowledge_node_id: str,
+    subject_id: str,
+    subject_type: str = SUBJECT_KNOWLEDGE_NODE,
     prior_successes: int = 0,
     retention_tier: str | None = None,
     now: datetime | None = None,
@@ -40,7 +46,9 @@ def get_or_seed_card_state(
     reset to zero, so the migration does not silently re-teach everything the
     learner already knows.
     """
-    existing = get_card_state(session, learner_id=learner_id, knowledge_node_id=knowledge_node_id)
+    existing = get_card_state(
+        session, learner_id=learner_id, subject_id=subject_id, subject_type=subject_type
+    )
     if existing is not None:
         if retention_tier is not None and existing.retention_tier != retention_tier:
             existing.retention_tier = retention_tier
@@ -55,7 +63,8 @@ def get_or_seed_card_state(
     )
     state = ReviewCardState(
         learner_id=learner_id,
-        knowledge_node_id=knowledge_node_id,
+        subject_type=subject_type,
+        subject_id=subject_id,
         retention_tier=retention_tier or fsrs_engine.DEFAULT_RETENTION_TIER,
         card_state=card_state,
         stability=card_state.get("stability"),
