@@ -399,10 +399,15 @@ def item_settings_route(
           </label>
           <button type="submit">Save</button>
         </form>
-        <form method="post" action="{ITEM_PATH}/retire">
-          <input type="hidden" name="item_id" value="{escape(item.id)}">
-          <button type="submit">Retire this item now</button>
-        </form>
+        <section class="danger-zone" aria-labelledby="retire-heading">
+          <h3 id="retire-heading">Stop reviewing this</h3>
+          <p class="note">Retiring takes the item out of the loop for good. Its review
+          history is kept, but it will not come back.</p>
+          <form method="post" action="{ITEM_PATH}/retire">
+            <input type="hidden" name="item_id" value="{escape(item.id)}">
+            <button type="submit" class="b-danger">Retire this item now</button>
+          </form>
+        </section>
         <p class="back-link"><a href="{MAINTENANCE_PATH}">Back to maintenance</a></p>
         """,
     )
