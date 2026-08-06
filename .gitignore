@@ -22,3 +22,7 @@ workloop-state.md
 
 .coverage
 coverage.xml
+
+# Fleet run telemetry written to CWD by codex workers; must not be committed
+# (autofix sweeps dirty files, so this lands in PRs without a guard).
+langsmith-fleet-worker-attempt.json
