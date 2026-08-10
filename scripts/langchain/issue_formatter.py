@@ -58,7 +58,13 @@ def _issue_format_validator() -> Any:
         raise RuntimeError(f"Cannot load canonical issue-format validator: {validator_path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        # Do not leave a half-initialized validator behind: callers retry this
+        # loader after transient consumer-sync failures.
+        sys.modules.pop(spec.name, None)
+        raise
     return module
 
 
@@ -170,13 +176,16 @@ CHECKBOX_REGEX = re.compile(r"^\[([ xX])\]\s*(.*)$")
 VERIFY_HINT_REGEX = re.compile(r"\(verify:\s*([^\n)]+)\)", re.IGNORECASE)
 SAFE_VERIFY_COMMAND_RE = re.compile(
     r"^(?:"
-    r"(?:python(?:3)?\s+-m\s+)?pytest\b"
+    r"(?:"
+    r"python(?:3)?\s+-m\s+(?:pytest|unittest)\b"
     r"|node\s+--test\b"
     r"|(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|vitest|jest|playwright)\b"
-    r"|(?:make|just|cargo|go|dotnet)\s+(?:test|check)\b"
-    r"|gh\s+(?:workflow\s+run|run)\b"
-    r"|curl\s+\S+"
-    r")",
+    r"|(?:make|just|cargo)\s+(?:test|check)\b"
+    r"|go\s+test\b|dotnet\s+test\b"
+    r"|gh\s+(?:workflow\s+run|run)\s+[^\s;&|`$<>\n\r]+"
+    r")(?:[ \t]+[^ \t;&|`$<>\n\r]+)*"
+    r"|curl(?:\s+-[ILsSfk]+)*(?:\s+https?://[^\s;&|`$<>\n\r]+)"
+    r")\Z",
     re.IGNORECASE,
 )
 SHELL_METACHARACTERS_RE = re.compile(r"[;&|`$<>\n\r]")
@@ -464,7 +473,7 @@ _DETAILS_TAG_RE = re.compile(r"</?details\b[^>]*>", re.IGNORECASE)
 # being wrapped again.
 _ORIGINAL_ISSUE_INNER_RE = re.compile(
     r"<details\b[^>]*>\s*<summary>Original Issue</summary>\s*"
-    r"(?P<fence>`{3,})text\n(?P<inner>.*?)\n(?P=fence)\s*</details>",
+    r"(?P<fence>`{3,}|~{3,})text\n(?P<inner>.*?)\n(?P=fence)\s*</details>",
     re.DOTALL | re.IGNORECASE,
 )
 
@@ -477,10 +486,38 @@ def _strip_original_issue_blocks(text: str) -> str:
         kept.append(text[cursor : match.start()])
         depth = 1
         end = match.end()
+        fence: tuple[str, int] | None = None
         for tag in _DETAILS_TAG_RE.finditer(text, match.end()):
+            # Literal HTML in the verbatim Original-Issue fence is content, not
+            # structural markup.  Only count tags outside Markdown fences.
+            # Include the tag itself while deciding whether this line is a
+            # marker-only closing fence.  A same-line ``</details>`` is
+            # fenced content, so it must keep the fence open rather than be
+            # counted as structural markup.
+            before = text[end : tag.end()]
+            for line in before.splitlines():
+                fence_match = re.match(r"\s{0,3}(`{3,}|~{3,})", line)
+                if not fence_match:
+                    continue
+                marker = fence_match.group(1)
+                if fence is None:
+                    fence = (marker[0], len(marker))
+                elif (
+                    marker[0] == fence[0]
+                    and len(marker) >= fence[1]
+                    and re.fullmatch(
+                        rf"\s{{0,3}}(?:`{{{fence[1]},}}|~{{{fence[1]},}})\s*",
+                        line,
+                    )
+                ):
+                    # Closing fences are marker-only; language tags / trailing
+                    # text must not toggle the fence state.
+                    fence = None
+            end = tag.end()
+            if fence is not None:
+                continue
             depth += -1 if tag.group(0).startswith("</") else 1
             if depth == 0:
-                end = tag.end()
                 break
         else:
             # Leave malformed markup intact rather than silently discarding it.
@@ -830,12 +867,15 @@ def main() -> None:
 
     if args.json:
         payload = {
-            "formatted_body": result["formatted_body"],
+            "formatted_body": result.get("formatted_body"),
             "provider_used": result.get("provider_used"),
             "used_llm": result.get("used_llm", False),
             "labels": build_label_transition(),
             "needs_refinement": result.get("needs_refinement", False),
+            "validation_audit": result.get("validation_audit"),
         }
+        if result.get("error"):
+            payload["error"] = result["error"]
         if result.get("guard_blocked"):
             payload["guard_blocked"] = True
             payload["guard_reason"] = result.get("guard_reason") or ""
