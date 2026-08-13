@@ -340,7 +340,7 @@ rpds-py==0.30.0
     # via
     #   jsonschema
     #   referencing
-ruff==0.16.2
+ruff==0.16.3
     # via lms (pyproject.toml)
 send2trash==2.1.0
     # via jupyter-server
