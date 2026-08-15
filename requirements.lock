@@ -222,7 +222,7 @@ mistune==3.3.4
     # via
     #   lms (pyproject.toml)
     #   nbconvert
-mypy==2.3.0
+mypy==2.3.1
     # via lms (pyproject.toml)
 mypy-extensions==1.1.0
     # via
