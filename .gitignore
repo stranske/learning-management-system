@@ -26,3 +26,6 @@ coverage.xml
 # Fleet run telemetry written to CWD by codex workers; must not be committed
 # (autofix sweeps dirty files, so this lands in PRs without a guard).
 langsmith-fleet-worker-attempt.json
+
+# Ignore only the disposable root install; .github/scripts/node_modules is vendored.
+/node_modules/
