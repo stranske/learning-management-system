@@ -1,5 +1,7 @@
 {
-  "coverage": 80.0,
-  "updated": "2025-12-30",
-  "notes": "Initial baseline - adjust based on project maturity"
+  "updated": "2026-08-26",
+  "notes": "RAISED 80 -> 87 on 2026-08-26. Measured 87.48%, so the previous value carried 7.5 points of slack -- the 80 was an initial-baseline placeholder dated 2025-12-30 with the note 'adjust based on project maturity'. A baseline far below reality cannot fail and therefore reports nothing. Set at floored measured current, leaving the jitter tolerance in warn_drop rather than in the floor. A ratchet: raise it as coverage rises, never lower it to make a run pass. Keyed `line`, which takes precedence over `coverage` in both coverage_trend.py and coverage_guard.py.",
+  "line": 87.0,
+  "warn_drop": 1.0,
+  "recovery_days": 3
 }
