@@ -69,7 +69,11 @@ jobs:
     with:
       python-versions: '["3.12", "3.13"]'
       # PR Gate is optimized for fast feedback. Full coverage enforcement runs on main.
-      coverage: false
+      # Coverage measurement was OFF on the Gate while ci.yml has had `coverage: true` all
+      # along, and this repo's own ci.yml payload measures 87.48% over 10,805 statements. The
+      # Gate's `false` was never a decision: it traces to the M0-001 scaffolding commit that
+      # created this workflow, so it is template default rather than judgement.
+      coverage: true
       format_check: false  # Using ruff for formatting
       # Keep PR feedback fast by skipping heavy integration suites here.
       # Full test coverage remains enforced on main branch CI.
@@ -77,7 +81,15 @@ jobs:
       pytest_args: "-n auto --dist load --ignore=tests/integration --ignore=tests/integrations"
       working-directory: "."
       artifact-prefix: "gate-"
-      enable-soft-gate: false
+      # Report-only. coverage_trend.py runs with --soft and always exits 0, so this cannot
+      # fail a PR. Sequenced AFTER the repaired reporter reached this repo (verified: main's
+      # tools/coverage_trend.py carries BASELINE_KEYS and _resolve_baseline) -- before that,
+      # an absent baseline rendered as 0.00% and every run showed a large fake improvement.
+      # Matches ci.yml's 80 so the two surfaces cannot disagree about the same repo; without
+      # it the Gate silently falls back to the reusable workflow's default of 70. Measured
+      # 87.48%, so this reports a pass rather than arriving red.
+      coverage-min: '80'
+      enable-soft-gate: true
     secrets: inherit
 
   compose-smoke:
