@@ -25,7 +25,7 @@ everywhere, beats N one-off PRs — and it's why this is a design-system rollout
 **Rule:** a "no data yet" surface ALWAYS shows a title, a one-line reason, and a **next-action CTA**.
 NEVER a bare prompt sitting above already-rendered content, and NEVER an internal filename/path.
 - **web:** `.ds .empty-state` (`.es-icon/.es-title/.es-desc/.es-cta`).
-- **Streamlit:** render a title, one-line reason, and optional CTA via a shared empty-state helper.
+- **Streamlit:** render a title, one-line reason, and next-action CTA via a shared empty-state helper.
 - **Fixes:** TMP #5628 (Run-analysis CTA above results), PA #2021 (Results "Outputs.xlsx not found"),
   Manager-Database #1214 (empty default date / "Recent Activity"), LMS #351 (root `/` JSON 404).
 
@@ -85,7 +85,7 @@ The CSS components above cover the web apps (Pension-Data, trip-planner, LMS). S
 apps need a repo-local adapter for the same presentation patterns — ship it alongside the CSS in
 each Streamlit repo's import path:
 - light/understated theme injection (P1); pairs with `.streamlit/config.toml`.
-- empty-state helper with title, description, and optional CTA (P2)
+- empty-state helper with title, description, and next-action CTA (P2)
 - notice/error helpers with validation translation (P3)
 - dev-note logging and diagnostics expander (P4)
 - availability badge helper (P5)
@@ -93,6 +93,7 @@ each Streamlit repo's import path:
 Graduate the CSS kit into `Workflows/templates/consumer-repo/design-system/` so maint-68 syncs it fleet-wide.
 
 ## Rollout sequence
+
 1. **Graduate** `tokens.css` + `components.css` (with the new patterns) into the Workflows consumer-repo design-system; let the existing sync (maint-68) distribute it.
 2. **Apply per app, highest-ROI first** — close each open finding by adopting its pattern (not a bespoke fix), one small PR per app with the pattern's named test gate:
    - TMP #5628 → P2 (closest to a clean pass)
