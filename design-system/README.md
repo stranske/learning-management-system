@@ -38,7 +38,6 @@ That's the "default with per-app customization" model: the base is canonical; an
 |---|---|
 | `tokens.css` | Variables — themes + density. **Source of truth for the look.** |
 | `components.css` | Component styles, token-driven and theme-agnostic. |
-| `ds_streamlit.py` | Streamlit-native helpers for the same presentation patterns. |
 
 ## Theme → app mapping (proposed)
 
