@@ -17,7 +17,7 @@ everywhere, beats N one-off PRs — and it's why this is a design-system rollout
 
 **Rule:** never ship a default dark theme; default to `theme-air` (Ink & Air). Dark is opt-in only.
 - **web:** load `tokens.css` + `components.css`; root element `class="ds theme-air"` (`theme-paper` for friendlier apps).
-- **Streamlit:** `.streamlit/config.toml` `[theme] base="light"` + the shared `ds_streamlit.inject_theme()` (maps the `theme-air` tokens to Streamlit's theme). *Already prototyped for TMP.*
+- **Streamlit:** `.streamlit/config.toml` `[theme] base="light"` plus a repo-local Streamlit theme adapter that maps `theme-air` tokens. *Already prototyped for TMP.*
 - **Fixes:** default-dark on Trend_Model_Project / Portable-Alpha / Manager-Database / Inv-Man-Intake.
 
 ### P2 — Empty state = title + reason + next action
@@ -25,7 +25,7 @@ everywhere, beats N one-off PRs — and it's why this is a design-system rollout
 **Rule:** a "no data yet" surface ALWAYS shows a title, a one-line reason, and a **next-action CTA**.
 NEVER a bare prompt sitting above already-rendered content, and NEVER an internal filename/path.
 - **web:** `.ds .empty-state` (`.es-icon/.es-title/.es-desc/.es-cta`).
-- **Streamlit:** `ds_streamlit.empty_state(title, desc, cta_label, on_click)`.
+- **Streamlit:** render a title, one-line reason, and next-action CTA via a shared empty-state helper.
 - **Fixes:** TMP #5628 (Run-analysis CTA above results), PA #2021 (Results "Outputs.xlsx not found"),
   Manager-Database #1214 (empty default date / "Recent Activity"), LMS #351 (root `/` JSON 404).
 
@@ -34,8 +34,7 @@ NEVER a bare prompt sitting above already-rendered content, and NEVER an interna
 **Rule:** NEVER surface a raw exception, pydantic/validation dump, internal field name, or stack to a
 user. Translate at the boundary to a plain message + a recovery action.
 - **web:** `.ds .notice--error` (`.ic` + `.body strong` headline + `.body .act` remediation).
-- **Streamlit:** `ds_streamlit.error(message, remediation)` backed by `translate_error(exc)` (maps
-  known fields, e.g. `financing_mode` → "Financing mode is required").
+- **Streamlit:** show a plain message plus remediation via a shared error helper that translates known validation fields.
 - **Fixes:** PA #2021 (raw `ModelConfig financing_mode` / margin pydantic errors), Inv-Man-Intake (item_id),
   the broad "raw error" class across the fleet.
 
@@ -44,7 +43,7 @@ user. Translate at the boundary to a plain message + a recovery action.
 **Rule:** auth-bypass / trace-sink / observability / "dev mode" notices NEVER render in the main
 content. Use logging, or at most a collapsed "Diagnostics" expander.
 - **web:** n/a in the main flow; use a `<details>`/debug panel.
-- **Streamlit:** `ds_streamlit.dev_note(msg)` → `logging` (not `st.warning`/`st.write`); diagnostics behind `st.expander("Diagnostics")`.
+- **Streamlit:** route dev notices to logging (not `st.warning`/`st.write`); diagnostics behind `st.expander("Diagnostics")`.
 - **Fixes:** Manager-Database #1215 (auth-bypass `st.warning`), Inv-Man-Intake #630 (trace-sink banner).
 
 ### P5 — Feature-availability markers (no silent dead-ends)
@@ -52,7 +51,7 @@ content. Use logging, or at most a collapsed "Diagnostics" expander.
 **Rule:** a tab/control that isn't applicable in the current mode states so up front (a badge/label),
 rather than opening into a silent empty/disabled surface.
 - **web:** `.ds .badge` on the tab/control (e.g. "multi-period only", "needs setup").
-- **Streamlit:** `ds_streamlit.availability_badge(label)` in the tab title / disabled control caption; use `plain=False` only in trusted HTML containers.
+- **Streamlit:** show an availability badge in the tab title or disabled control caption.
 - **Fixes:** TMP #5629 (4/6 Results tabs empty — fixed by labelling, the canonical example), PA #2026
   (upload-only pages with no sample path → mark/offer the sample).
 
@@ -82,18 +81,20 @@ rather than opening into a silent empty/disabled surface.
 
 ## Streamlit design kit (most of the fleet is Streamlit)
 
-The CSS components above cover the web apps (Pension-Data, trip-planner, LMS). The four Streamlit
-Tier-A apps need a Streamlit-native equivalent — ship a shared `ds_streamlit.py` alongside the CSS:
-- `inject_theme()` — applies the `theme-air` palette (P1); pairs with `.streamlit/config.toml`.
-- `empty_state(title, desc, cta_label=None, on_click=None)` (P2)
-- `notice(kind, title, body, action=None)` and `error(message, remediation=None)` + `translate_error(exc)` (P3)
-- `dev_note(msg)` → logging; `diagnostics_expander()` (P4)
-- `availability_badge(label)` (P5)
-- `humanize_id(raw, mapping)` (P6)
-Graduate this kit + the CSS into `Workflows/templates/consumer-repo/design-system/` so maint-68 syncs it fleet-wide.
+The CSS components above cover the web apps (Pension-Data, trip-planner, LMS). Streamlit Tier-A
+apps need a repo-local adapter for the same presentation patterns — ship it alongside the CSS in
+each Streamlit repo's import path:
+- light/understated theme injection (P1); pairs with `.streamlit/config.toml`.
+- empty-state helper with title, description, and next-action CTA (P2)
+- notice/error helpers with validation translation (P3)
+- dev-note logging and diagnostics expander (P4)
+- availability badge helper (P5)
+- human-readable ID mapping helper (P6)
+Graduate the CSS kit into `Workflows/templates/consumer-repo/design-system/` so maint-68 syncs it fleet-wide.
 
 ## Rollout sequence
-1. **Graduate** `tokens.css` + `components.css` (with the new patterns) + `ds_streamlit.py` into the Workflows consumer-repo design-system; let the existing sync (maint-68) distribute it.
+
+1. **Graduate** `tokens.css` + `components.css` (with the new patterns) into the Workflows consumer-repo design-system; let the existing sync (maint-68) distribute it.
 2. **Apply per app, highest-ROI first** — close each open finding by adopting its pattern (not a bespoke fix), one small PR per app with the pattern's named test gate:
    - TMP #5628 → P2 (closest to a clean pass)
    - Manager-Database #1214 → P2, #1215 → P4
