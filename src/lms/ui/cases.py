@@ -440,9 +440,16 @@ def _submission_type(value: str | None) -> WorkProductSubmissionType:
 
 
 def _form_error(exc: ValidationError | ValueError) -> str:
-    if isinstance(exc, ValueError):
-        return str(exc)
-    return "Enter a work product body or artifact reference before submitting."
+    """Render a submission failure for the learner.
+
+    `ValidationError` is checked FIRST because pydantic derives it from `ValueError`: an
+    `isinstance(exc, ValueError)` test matches both, so it returned the raw pydantic text — field
+    names, types, the offending input and a pydantic.dev URL — straight onto the page, and the
+    sentence below was unreachable.
+    """
+    if isinstance(exc, ValidationError):
+        return "Enter a work product body or artifact reference before submitting."
+    return str(exc)
 
 
 def _notice_block(notice: str | None) -> str:
