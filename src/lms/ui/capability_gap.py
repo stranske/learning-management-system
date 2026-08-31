@@ -297,7 +297,9 @@ def _action_error(*, session: Session, target_id: str, exc: ValidationError | Va
     target = _target_payload(session, target_id)
     if target is None:
         return _not_found_page()
-    detail = str(exc) if isinstance(exc, ValueError) else "Check the form and try again."
+    # `ValidationError` first: pydantic derives it from `ValueError`, so testing for
+    # `ValueError` matched both and put raw pydantic field/type detail on the page.
+    detail = "Check the form and try again." if isinstance(exc, ValidationError) else str(exc)
     return _detail_surface_with_error(session=session, target=target, error=detail)
 
 
