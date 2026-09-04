@@ -14,7 +14,7 @@ from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
 from lms.db.base import Base
 from lms.db.session import get_session
-from lms.evidence.models import Attempt
+from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.models import FeedbackRecord
 from lms.learners.models import Learner
 from lms.main import create_app
@@ -73,7 +73,20 @@ def _deployed_client() -> Generator[tuple[TestClient, Session], None, None]:
         observed_evidence="Foreign evidence",
         source_feedback={},
     )
-    session.add_all([foreign_attempt, owner_attempt, owner_feedback, foreign_feedback])
+    foreign_evidence = EvidenceRecord(
+        learner_id=other_learner.id,
+        knowledge_node_id="private-node",
+        validity_scope="private evidence scope",
+    )
+    session.add_all(
+        [
+            foreign_attempt,
+            owner_attempt,
+            owner_feedback,
+            foreign_feedback,
+            foreign_evidence,
+        ]
+    )
     session.commit()
 
     def override_session() -> Generator[Session, None, None]:
@@ -89,6 +102,7 @@ def _deployed_client() -> Generator[tuple[TestClient, Session], None, None]:
             client.other_learner_id = other_learner.id  # type: ignore[attr-defined]
             client.foreign_attempt_id = foreign_attempt.id  # type: ignore[attr-defined]
             client.owner_attempt_id = owner_attempt.id  # type: ignore[attr-defined]
+            client.foreign_evidence_id = foreign_evidence.id  # type: ignore[attr-defined]
             yield client, session
     finally:
         app.dependency_overrides.clear()
@@ -102,9 +116,11 @@ def test_authenticated_user_cannot_fetch_another_learners_attempt() -> None:
     fixture = _deployed_client()
     client, _ = next(fixture)
     try:
-        response = client.get(f"/attempts/{client.foreign_attempt_id}")  # type: ignore[attr-defined]
-        assert response.status_code in {403, 404}
-        assert "private response text" not in response.text
+        foreign = client.get(f"/attempts/{client.foreign_attempt_id}")  # type: ignore[attr-defined]
+        missing = client.get("/attempts/not-a-real-attempt")
+        assert foreign.status_code == missing.status_code == 404
+        assert foreign.json() == missing.json() == {"detail": "Attempt not found."}
+        assert "private response text" not in foreign.text
     finally:
         with suppress(StopIteration):
             next(fixture)
@@ -118,6 +134,23 @@ def test_authenticated_user_can_fetch_own_attempt() -> None:
         response = client.get(f"/attempts/{client.owner_attempt_id}")  # type: ignore[attr-defined]
         assert response.status_code == 200
         assert response.json()["response_text"] == "owner response text"
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_authenticated_user_cannot_probe_another_learners_evidence() -> None:
+    """Foreign and nonexistent evidence ids have the same deployed response."""
+    fixture = _deployed_client()
+    client, _ = next(fixture)
+    try:
+        foreign = client.get(  # type: ignore[attr-defined]
+            f"/evidence-records/{client.foreign_evidence_id}"
+        )
+        missing = client.get("/evidence-records/not-a-real-evidence-record")
+        assert foreign.status_code == missing.status_code == 404
+        assert foreign.json() == missing.json() == {"detail": "Evidence record not found."}
+        assert "private evidence scope" not in foreign.text
     finally:
         with suppress(StopIteration):
             next(fixture)
@@ -188,10 +221,7 @@ def test_create_feedback_rejects_cross_learner_attempt_reference() -> None:
                 },
             )
             assert response.status_code == 422
-            assert (
-                response.json()["detail"]
-                == "Referenced attempt belongs to a different learner."
-            )
+            assert response.json()["detail"] == "Referenced attempt belongs to a different learner."
     finally:
         app.dependency_overrides.clear()
         session.close()

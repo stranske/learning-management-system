@@ -11,7 +11,9 @@ from lms.auth.login import SettingsDep
 from lms.db.session import get_session
 from lms.evidence.repository import (
     get_attempt,
+    get_attempt_for_user,
     get_evidence_record,
+    get_evidence_record_for_user,
     list_evidence_records,
 )
 from lms.evidence.schemas import AttemptCreate, AttemptRead, EvidenceRecordRead
@@ -55,12 +57,13 @@ def get_attempt_route(
     settings: SettingsDep,
 ) -> AttemptRead:
     """Return a learner attempt."""
-    attempt = get_attempt(session, attempt_id)
+    attempt = (
+        get_attempt_for_user(session, attempt_id=attempt_id, user_id=current_user.id)
+        if settings.auth_required
+        else get_attempt(session, attempt_id)
+    )
     if attempt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attempt not found.")
-    require_learner_ownership(
-        session, user=current_user, settings=settings, learner_id=attempt.learner_id
-    )
     return AttemptRead.model_validate(attempt)
 
 
@@ -101,12 +104,17 @@ def get_evidence_record_route(
     settings: SettingsDep,
 ) -> EvidenceRecordRead:
     """Return one verbose evidence record."""
-    record = get_evidence_record(session, evidence_record_id)
+    record = (
+        get_evidence_record_for_user(
+            session,
+            evidence_record_id=evidence_record_id,
+            user_id=current_user.id,
+        )
+        if settings.auth_required
+        else get_evidence_record(session, evidence_record_id)
+    )
     if record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Evidence record not found."
         )
-    require_learner_ownership(
-        session, user=current_user, settings=settings, learner_id=record.learner_id
-    )
     return EvidenceRecordRead.model_validate(record)

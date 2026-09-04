@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.evidence.models import Attempt, EvidenceRecord
+from lms.learners.models import Learner
 
 
 def _has_scoring_signal(evidence: dict[str, Any]) -> bool:
@@ -129,6 +130,16 @@ def get_attempt(session: Session, attempt_id: str) -> Attempt | None:
     return session.get(Attempt, attempt_id)
 
 
+def get_attempt_for_user(session: Session, *, attempt_id: str, user_id: str) -> Attempt | None:
+    """Return an attempt only when its learner belongs to the user."""
+    statement = (
+        select(Attempt)
+        .join(Learner, Attempt.learner_id == Learner.id)
+        .where(Attempt.id == attempt_id, Learner.user_id == user_id)
+    )
+    return session.scalar(statement)
+
+
 def create_evidence_record(
     session: Session,
     *,
@@ -213,6 +224,18 @@ def create_evidence_record(
 def get_evidence_record(session: Session, evidence_record_id: str) -> EvidenceRecord | None:
     """Return one evidence record by id."""
     return session.get(EvidenceRecord, evidence_record_id)
+
+
+def get_evidence_record_for_user(
+    session: Session, *, evidence_record_id: str, user_id: str
+) -> EvidenceRecord | None:
+    """Return evidence only when its learner belongs to the user."""
+    statement = (
+        select(EvidenceRecord)
+        .join(Learner, EvidenceRecord.learner_id == Learner.id)
+        .where(EvidenceRecord.id == evidence_record_id, Learner.user_id == user_id)
+    )
+    return session.scalar(statement)
 
 
 def list_evidence_records(
