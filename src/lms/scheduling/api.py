@@ -7,8 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from lms.auth.dependencies import get_current_user
-from lms.auth.login import SettingsDep
+from lms.auth.login import SettingsDep, require_authenticated_user
 from lms.auth.models import User
 from lms.db.session import get_session
 from lms.learners.identity import require_learner_ownership, resolve_learner_id
@@ -40,7 +39,7 @@ from lms.scheduling.service import DEFAULT_DAILY_CAP, SchedulerSettings, get_rev
 
 router = APIRouter(tags=["scheduling"])
 SessionDep = Annotated[Session, Depends(get_session)]
-CurrentUserDep = Annotated[User, Depends(get_current_user)]
+CurrentUserDep = Annotated[User, Depends(require_authenticated_user)]
 
 
 @router.get(

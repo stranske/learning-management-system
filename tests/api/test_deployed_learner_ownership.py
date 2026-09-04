@@ -49,6 +49,16 @@ def _deployed_client() -> Generator[tuple[TestClient, Session], None, None]:
             "next_action": "Keep private",
         },
     )
+    owner_attempt = Attempt(
+        learner_id=owner_learner.id,
+        prompt_id="owner-prompt",
+        response_text="owner response text",
+        feedback={
+            "goal": "Owner goal",
+            "observed_evidence": "Owner evidence",
+            "next_action": "Keep learning",
+        },
+    )
     owner_feedback = FeedbackRecord(
         learner_id=owner_learner.id,
         feedback_level="coaching",
@@ -63,7 +73,7 @@ def _deployed_client() -> Generator[tuple[TestClient, Session], None, None]:
         observed_evidence="Foreign evidence",
         source_feedback={},
     )
-    session.add_all([foreign_attempt, owner_feedback, foreign_feedback])
+    session.add_all([foreign_attempt, owner_attempt, owner_feedback, foreign_feedback])
     session.commit()
 
     def override_session() -> Generator[Session, None, None]:
@@ -78,6 +88,7 @@ def _deployed_client() -> Generator[tuple[TestClient, Session], None, None]:
             client.owner_learner_id = owner_learner.id  # type: ignore[attr-defined]
             client.other_learner_id = other_learner.id  # type: ignore[attr-defined]
             client.foreign_attempt_id = foreign_attempt.id  # type: ignore[attr-defined]
+            client.owner_attempt_id = owner_attempt.id  # type: ignore[attr-defined]
             yield client, session
     finally:
         app.dependency_overrides.clear()
@@ -94,6 +105,19 @@ def test_authenticated_user_cannot_fetch_another_learners_attempt() -> None:
         response = client.get(f"/attempts/{client.foreign_attempt_id}")  # type: ignore[attr-defined]
         assert response.status_code in {403, 404}
         assert "private response text" not in response.text
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_authenticated_user_can_fetch_own_attempt() -> None:
+    """Deployed ownership checks preserve legitimate learner access."""
+    fixture = _deployed_client()
+    client, _ = next(fixture)
+    try:
+        response = client.get(f"/attempts/{client.owner_attempt_id}")  # type: ignore[attr-defined]
+        assert response.status_code == 200
+        assert response.json()["response_text"] == "owner response text"
     finally:
         with suppress(StopIteration):
             next(fixture)

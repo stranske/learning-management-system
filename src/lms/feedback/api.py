@@ -110,31 +110,26 @@ def create_feedback_route(
     require_learner_ownership(
         session, user=current_user, settings=settings, learner_id=payload.learner_id
     )
-    if data.get("attempt_id") is not None and session.get(Attempt, data["attempt_id"]) is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Referenced attempt not found.",
-        )
     if data.get("attempt_id") is not None:
         attempt = session.get(Attempt, data["attempt_id"])
-        if attempt is not None:
-            require_learner_ownership(
-                session, user=current_user, settings=settings, learner_id=attempt.learner_id
+        if attempt is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Referenced attempt not found.",
             )
-    if (
-        data.get("evidence_record_id") is not None
-        and session.get(EvidenceRecord, data["evidence_record_id"]) is None
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Referenced evidence record not found.",
+        require_learner_ownership(
+            session, user=current_user, settings=settings, learner_id=attempt.learner_id
         )
     if data.get("evidence_record_id") is not None:
         evidence = session.get(EvidenceRecord, data["evidence_record_id"])
-        if evidence is not None:
-            require_learner_ownership(
-                session, user=current_user, settings=settings, learner_id=evidence.learner_id
+        if evidence is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Referenced evidence record not found.",
             )
+        require_learner_ownership(
+            session, user=current_user, settings=settings, learner_id=evidence.learner_id
+        )
     record = create_feedback_record(session, **data)
     session.commit()
     session.refresh(record)
