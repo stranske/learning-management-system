@@ -180,6 +180,35 @@ def test_publish_prompt_records_reviewing_actor_and_approval_timestamp(
     assert audit.after_summary["approval_timestamp"].startswith(body["approval_timestamp"])
 
 
+def test_delete_source_reference_cannot_orphan_published_prompt(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """A published prompt must retain the source citation approved by its reviewer."""
+    client, session = api_client
+    ids = _seed_prompt_dependencies(session)
+    created = client.post("/prompts", json=_prompt_payload(ids))
+    assert created.status_code == 201, created.text
+    prompt_id = cast(str, created.json()["id"])
+    published = client.post(
+        f"/prompts/{prompt_id}/publish",
+        json={"reviewing_actor": "reviewer:bob"},
+    )
+    assert published.status_code == 200, published.text
+
+    response = client.delete(
+        f"/source-references/{ids['source_id']}",
+        params={"actor_id": "user:alice"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Source reference is linked to a prompt."
+    fetched_prompt = client.get(f"/prompts/{prompt_id}")
+    assert fetched_prompt.status_code == 200, fetched_prompt.text
+    assert fetched_prompt.json()["status"] == "published"
+    assert fetched_prompt.json()["source_reference_ids"] == [ids["source_id"]]
+    assert client.get(f"/source-references/{ids['source_id']}").status_code == 200
+
+
 def test_post_prompts_returns_source_reference_ids_and_provenance(
     api_client: tuple[TestClient, Session],
 ) -> None:

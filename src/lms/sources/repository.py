@@ -28,6 +28,10 @@ UrlFetcher = Callable[[str], "str | bytes"]
 NoteResolver = Callable[[SourceReference], "str | bytes | None"]
 
 
+class SourceReferenceInUseError(ValueError):
+    """Raised when deleting a source would sever a prompt's provenance."""
+
+
 @dataclass(frozen=True)
 class DriftScanSummary:
     """Summary of one drift-scan pass.
@@ -183,6 +187,8 @@ def delete_source_reference(
     source_subsystem: str = "api",
 ) -> None:
     """Delete a source reference and record the authoring audit event."""
+    if reference.prompts:
+        raise SourceReferenceInUseError("Source reference is linked to a prompt.")
     before = _reference_summary(reference)
     entity_id = reference.id
     session.delete(reference)

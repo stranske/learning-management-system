@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
 from lms.sources.repository import (
+    SourceReferenceInUseError,
     create_source_reference,
     delete_source_reference,
     get_source_reference,
@@ -134,6 +135,10 @@ def delete_source_reference_route(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Source reference not found."
         )
-    delete_source_reference(session, reference, actor_id=actor_id)
-    session.commit()
+    try:
+        delete_source_reference(session, reference, actor_id=actor_id)
+        session.commit()
+    except SourceReferenceInUseError as exc:
+        session.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
