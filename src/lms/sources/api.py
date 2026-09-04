@@ -140,5 +140,8 @@ def delete_source_reference_route(
         session.commit()
     except SourceReferenceInUseError as exc:
         session.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)

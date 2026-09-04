@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lms.audit.repository import record_audit_event
+from lms.prompts.models import prompt_source_references
 from lms.sources.models import SourceReference
 
 DEFAULT_HASH_ALGORITHM = "sha256"
@@ -187,12 +189,20 @@ def delete_source_reference(
     source_subsystem: str = "api",
 ) -> None:
     """Delete a source reference and record the authoring audit event."""
-    if reference.prompts:
+    linked_prompt_id = session.scalar(
+        select(prompt_source_references.c.prompt_id)
+        .where(prompt_source_references.c.source_reference_id == reference.id)
+        .limit(1)
+    )
+    if linked_prompt_id is not None:
         raise SourceReferenceInUseError("Source reference is linked to a prompt.")
     before = _reference_summary(reference)
     entity_id = reference.id
     session.delete(reference)
-    session.flush()
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        raise SourceReferenceInUseError("Source reference is still in use.") from exc
     record_audit_event(
         session,
         actor_id=actor_id,

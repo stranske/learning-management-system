@@ -76,4 +76,5 @@ class SourceReference(Base):
         "Prompt",
         secondary="prompt_source_references",
         back_populates="source_references",
+        passive_deletes=True,
     )
