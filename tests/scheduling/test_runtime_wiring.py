@@ -116,7 +116,7 @@ def test_rubric_scoring_keeps_score_when_scheduler_fails(
     def fail_schedule(*_args: object, **_kwargs: object) -> None:
         raise ValueError("scheduler unavailable")
 
-    monkeypatch.setattr(scoring_module, "schedule_from_attempt", fail_schedule)
+    monkeypatch.setattr(scoring_module, "schedule_for_evidence", fail_schedule)
 
     score = score_attempt_with_rubric(
         db_session,
