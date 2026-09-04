@@ -68,4 +68,5 @@ def test_every_applicable_design_system_module_has_an_importer() -> None:
 
 def test_other_runtime_adapters_stay_out_of_the_lms_import_graph() -> None:
     """Runtime-specific adapters must not create unused dependencies in the web service."""
-    assert _collect_src_import_targets().isdisjoint(OTHER_RUNTIME_ADAPTERS)
+    unexpected = sorted(_collect_src_import_targets() & OTHER_RUNTIME_ADAPTERS)
+    assert not unexpected, "non-LMS runtime adapters imported under src/: " + ", ".join(unexpected)
