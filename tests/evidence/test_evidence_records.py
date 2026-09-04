@@ -9,9 +9,16 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from lms.auth.models import User
 from lms.evidence.api import list_evidence_records_route
 from lms.evidence.repository import create_attempt, create_evidence_record, list_evidence_records
 from lms.evidence.schemas import AttemptCreate, AttemptEvidenceCreate, EvidenceRecordRead
+from lms.settings import Settings
+
+
+def _local_route_dependencies() -> tuple[User, Settings]:
+    """Supply the explicit dependencies required by direct route tests."""
+    return cast(User, None), Settings()
 
 
 def _attempt_payload() -> dict[str, object]:
@@ -125,8 +132,11 @@ def test_observed_and_inferred_evidence_are_distinct(db_session: Session) -> Non
     )
     db_session.commit()
 
+    current_user, settings = _local_route_dependencies()
     records = list_evidence_records_route(
         db_session,
+        current_user,
+        settings,
         learner_id="learner-1",
         knowledge_node_id="node-1",
     )
