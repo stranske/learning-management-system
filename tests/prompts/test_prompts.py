@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from lms.audit.models import AuditLog
+from lms.auth.models import User
 from lms.db.base import Base
 from lms.db.session import get_session
 from lms.graphs.repository import create_knowledge_node
@@ -178,6 +179,86 @@ def test_publish_prompt_records_reviewing_actor_and_approval_timestamp(
     assert audit.actor_id == "reviewer:bob"
     assert audit.after_summary is not None
     assert audit.after_summary["approval_timestamp"].startswith(body["approval_timestamp"])
+
+
+def test_delete_source_reference_cannot_orphan_published_prompt(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """A published prompt must retain the source citation approved by its reviewer."""
+    client, session = api_client
+    ids = _seed_prompt_dependencies(session)
+    created = client.post("/prompts", json=_prompt_payload(ids))
+    assert created.status_code == 201, created.text
+    prompt_id = cast(str, created.json()["id"])
+    published = client.post(
+        f"/prompts/{prompt_id}/publish",
+        json={"reviewing_actor": "reviewer:bob"},
+    )
+    assert published.status_code == 200, published.text
+
+    response = client.delete(
+        f"/source-references/{ids['source_id']}",
+        params={"actor_id": "user:alice"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Source reference is linked to a prompt."
+    fetched_prompt = client.get(f"/prompts/{prompt_id}")
+    assert fetched_prompt.status_code == 200, fetched_prompt.text
+    assert fetched_prompt.json()["status"] == "published"
+    assert fetched_prompt.json()["source_reference_ids"] == [ids["source_id"]]
+    assert client.get(f"/source-references/{ids['source_id']}").status_code == 200
+    assert (
+        session.query(AuditLog)
+        .filter_by(entity_type="SourceReference", entity_id=ids["source_id"], action="delete")
+        .count()
+        == 0
+    )
+
+
+def test_database_restrict_remains_the_source_delete_race_fallback(
+    api_client: tuple[TestClient, Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ORM cleanup must not bypass the database constraint if a prompt link races the guard."""
+    client, session = api_client
+    session.connection().exec_driver_sql("PRAGMA foreign_keys=ON")
+    session.add(
+        User(
+            id="user-alice",
+            email="alice@example.test",
+            username="alice",
+            display_name="Alice",
+        )
+    )
+    session.commit()
+    ids = _seed_prompt_dependencies(session)
+    created = client.post("/prompts", json=_prompt_payload(ids))
+    assert created.status_code == 201, created.text
+
+    original_scalar = Session.scalar
+    prompt_link_check_missed = False
+
+    def miss_prompt_link_once(
+        request_session: Session, statement: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        nonlocal prompt_link_check_missed
+        if not prompt_link_check_missed and "prompt_source_references" in str(statement):
+            prompt_link_check_missed = True
+            return None
+        return original_scalar(request_session, statement, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "scalar", miss_prompt_link_once)
+    response = client.delete(f"/source-references/{ids['source_id']}")
+    monkeypatch.undo()
+
+    assert prompt_link_check_missed
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Source reference is still in use."
+    assert client.get(f"/source-references/{ids['source_id']}").status_code == 200
+    assert client.get(f"/prompts/{created.json()['id']}").json()["source_reference_ids"] == [
+        ids["source_id"]
+    ]
 
 
 def test_post_prompts_returns_source_reference_ids_and_provenance(
