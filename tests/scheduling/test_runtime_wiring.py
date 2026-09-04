@@ -251,9 +251,9 @@ def _rubric(db_session: Session) -> tuple[str, str, str]:
 
 
 @pytest.fixture
-def scheduling_api_client() -> Generator[
-    tuple[TestClient, sessionmaker[Session], User], None, None
-]:
+def scheduling_api_client() -> (
+    Generator[tuple[TestClient, sessionmaker[Session], User], None, None]
+):
     """Provide a FastAPI client with a stable authenticated test user."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -339,9 +339,9 @@ def _queue_item_for_user(
 
 
 @pytest.fixture
-def deployed_scheduling_api_client() -> Generator[
-    tuple[TestClient, sessionmaker[Session], User], None, None
-]:
+def deployed_scheduling_api_client() -> (
+    Generator[tuple[TestClient, sessionmaker[Session], User], None, None]
+):
     """Provide a deployed-mode client that enforces learner ownership."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -446,12 +446,8 @@ def test_deployed_scheduler_decisions_resolve_owner_and_reject_foreign_learner(
     other_user = User(id="user-other", username="other", display_name="Other")
     with session_factory() as session:
         session.add(other_user)
-        session.add(
-            Learner(id="learner-owned", user_id=current_user.id, display_name="Owned")
-        )
-        session.add(
-            Learner(id="learner-other", user_id=other_user.id, display_name="Other")
-        )
+        session.add(Learner(id="learner-owned", user_id=current_user.id, display_name="Owned"))
+        session.add(Learner(id="learner-other", user_id=other_user.id, display_name="Other"))
         session.commit()
         owned_attempt, owned_evidence = _make_attempt(
             session,

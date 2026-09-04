@@ -72,9 +72,9 @@ def require_learner_ownership(
 ) -> str:
     """Refuse a deployed request for a learner owned by somebody else.
 
-    Object-id routes call this after loading a record, while collection routes
-    use :func:`resolve_learner_id`.  Keeping both shapes here prevents routers
-    from reimplementing subtly different ownership checks.
+    Callers that already have a learner id use this helper, while collection
+    routes use :func:`resolve_learner_id`. Keeping both shapes here prevents
+    routers from reimplementing subtly different ownership checks.
     """
     if not settings.auth_required:
         return learner_id
@@ -82,7 +82,9 @@ def require_learner_ownership(
     if learner is None or learner.user_id != user.id:
         # A 404 prevents an authenticated caller from using this seam to
         # enumerate another learner's profile or protected resource.
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner resource not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Learner resource not found."
+        )
     return learner_id
 
 
