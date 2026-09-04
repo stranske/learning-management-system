@@ -66,9 +66,7 @@ def list_review_queue_route(
     ] = DEFAULT_DAILY_CAP,
 ) -> ReviewQueueResponse:
     """Return review queue items with reason codes, explanations, and backlog context."""
-    require_learner_ownership(
-        session, user=current_user, settings=settings, learner_id=learner_id
-    )
+    require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
     if status == "pending":
         overview = get_review_queue_overview(
             session,

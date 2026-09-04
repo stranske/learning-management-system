@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import lms.feedback.scoring as scoring_module
-from lms.auth.dependencies import get_current_user
+from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
 from lms.db.base import Base
 from lms.db.session import get_session
@@ -248,9 +248,9 @@ def _rubric(db_session: Session) -> tuple[str, str, str]:
 
 
 @pytest.fixture
-def scheduling_api_client() -> (
-    Generator[tuple[TestClient, sessionmaker[Session], User], None, None]
-):
+def scheduling_api_client() -> Generator[
+    tuple[TestClient, sessionmaker[Session], User], None, None
+]:
     """Provide a FastAPI client with a stable authenticated test user."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -282,7 +282,7 @@ def scheduling_api_client() -> (
 
     app = create_app()
     app.dependency_overrides[get_session] = override_get_session
-    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[require_authenticated_user] = override_current_user
     try:
         with TestClient(app) as client:
             yield client, session_factory, current_user
