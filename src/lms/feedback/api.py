@@ -7,6 +7,7 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from lms.auth.login import SettingsDep
 from lms.db.session import get_session
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.repository import (
@@ -91,20 +92,35 @@ from lms.feedback.schemas import (
     SourceCitationRead,
 )
 from lms.feedback.scoring import RubricScoringError, score_attempt_with_rubric
+from lms.learners.identity import CurrentUserDep, require_learner_ownership, resolve_learner_id
 
 router = APIRouter(tags=["feedback"])
 SessionDep = Annotated[Session, Depends(get_session)]
 
 
 @router.post("/feedback", response_model=FeedbackRecordRead, status_code=status.HTTP_201_CREATED)
-def create_feedback_route(payload: FeedbackRecordCreate, session: SessionDep) -> FeedbackRecordRead:
+def create_feedback_route(
+    payload: FeedbackRecordCreate,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
+) -> FeedbackRecordRead:
     """Create a durable feedback record."""
     data = payload.model_dump()
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=payload.learner_id
+    )
     if data.get("attempt_id") is not None and session.get(Attempt, data["attempt_id"]) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Referenced attempt not found.",
         )
+    if data.get("attempt_id") is not None:
+        attempt = session.get(Attempt, data["attempt_id"])
+        if attempt is not None:
+            require_learner_ownership(
+                session, user=current_user, settings=settings, learner_id=attempt.learner_id
+            )
     if (
         data.get("evidence_record_id") is not None
         and session.get(EvidenceRecord, data["evidence_record_id"]) is None
@@ -113,6 +129,12 @@ def create_feedback_route(payload: FeedbackRecordCreate, session: SessionDep) ->
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Referenced evidence record not found.",
         )
+    if data.get("evidence_record_id") is not None:
+        evidence = session.get(EvidenceRecord, data["evidence_record_id"])
+        if evidence is not None:
+            require_learner_ownership(
+                session, user=current_user, settings=settings, learner_id=evidence.learner_id
+            )
     record = create_feedback_record(session, **data)
     session.commit()
     session.refresh(record)
@@ -122,6 +144,8 @@ def create_feedback_route(payload: FeedbackRecordCreate, session: SessionDep) ->
 @router.get("/feedback", response_model=list[FeedbackRecordRead])
 def list_feedback_route(
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
     learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     attempt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
@@ -129,9 +153,14 @@ def list_feedback_route(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[FeedbackRecordRead]:
     """Return feedback records with learner, attempt, prompt, and level filters."""
+    scoped_learner_id = (
+        resolve_learner_id(session, user=current_user, settings=settings, requested=learner_id)
+        if settings.auth_required
+        else learner_id
+    )
     records = list_feedback_records(
         session,
-        learner_id=learner_id,
+        learner_id=scoped_learner_id,
         attempt_id=attempt_id,
         prompt_id=prompt_id,
         feedback_level=feedback_level,
@@ -141,11 +170,19 @@ def list_feedback_route(
 
 
 @router.get("/feedback/{feedback_record_id}", response_model=FeedbackRecordRead)
-def get_feedback_route(feedback_record_id: str, session: SessionDep) -> FeedbackRecordRead:
+def get_feedback_route(
+    feedback_record_id: str,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
+) -> FeedbackRecordRead:
     """Return one feedback record."""
     record = get_feedback_record(session, feedback_record_id)
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found.")
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=record.learner_id
+    )
     return FeedbackRecordRead.model_validate(record)
 
 
@@ -155,10 +192,16 @@ def get_feedback_route(feedback_record_id: str, session: SessionDep) -> Feedback
     status_code=status.HTTP_201_CREATED,
 )
 def create_feedback_action_route(
-    payload: FeedbackActionCreate, session: SessionDep
+    payload: FeedbackActionCreate,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> FeedbackActionRead:
     """Create a feedback next action."""
     data = payload.model_dump()
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=payload.learner_id
+    )
     parent_record = None
     if data.get("feedback_record_id") is not None:
         parent_record = get_feedback_record(session, data["feedback_record_id"])
@@ -167,6 +210,9 @@ def create_feedback_action_route(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Referenced feedback record not found.",
             )
+        require_learner_ownership(
+            session, user=current_user, settings=settings, learner_id=parent_record.learner_id
+        )
     action = create_feedback_action(session, **data)
     if parent_record is not None:
         parent_record.next_action_ids = [*(parent_record.next_action_ids or []), action.id]
@@ -179,6 +225,8 @@ def create_feedback_action_route(
 @router.get("/feedback-actions", response_model=list[FeedbackActionRead])
 def list_feedback_actions_route(
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
     learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     attempt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
@@ -188,9 +236,14 @@ def list_feedback_actions_route(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[FeedbackActionRead]:
     """Return feedback actions with learner-loop filters."""
+    scoped_learner_id = (
+        resolve_learner_id(session, user=current_user, settings=settings, requested=learner_id)
+        if settings.auth_required
+        else learner_id
+    )
     actions = list_feedback_actions(
         session,
-        learner_id=learner_id,
+        learner_id=scoped_learner_id,
         attempt_id=attempt_id,
         prompt_id=prompt_id,
         feedback_record_id=feedback_record_id,
@@ -202,13 +255,21 @@ def list_feedback_actions_route(
 
 
 @router.get("/feedback-actions/{feedback_action_id}", response_model=FeedbackActionRead)
-def get_feedback_action_route(feedback_action_id: str, session: SessionDep) -> FeedbackActionRead:
+def get_feedback_action_route(
+    feedback_action_id: str,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
+) -> FeedbackActionRead:
     """Return one feedback action."""
     action = get_feedback_action(session, feedback_action_id)
     if action is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Feedback action not found."
         )
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=action.learner_id
+    )
     return FeedbackActionRead.model_validate(action)
 
 
@@ -218,10 +279,16 @@ def get_feedback_action_route(feedback_action_id: str, session: SessionDep) -> F
     status_code=status.HTTP_201_CREATED,
 )
 def create_revision_request_route(
-    payload: RevisionRequestCreate, session: SessionDep
+    payload: RevisionRequestCreate,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> RevisionRequestRead:
     """Open a revision request from a feedback record and/or revision action."""
     data = payload.model_dump()
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=payload.learner_id
+    )
     if (
         data.get("feedback_record_id") is not None
         and get_feedback_record(session, data["feedback_record_id"]) is None
@@ -230,6 +297,12 @@ def create_revision_request_route(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Referenced feedback record not found.",
         )
+    if data.get("feedback_record_id") is not None:
+        record = get_feedback_record(session, data["feedback_record_id"])
+        if record is not None:
+            require_learner_ownership(
+                session, user=current_user, settings=settings, learner_id=record.learner_id
+            )
     if (
         data.get("feedback_action_id") is not None
         and get_feedback_action(session, data["feedback_action_id"]) is None
@@ -238,6 +311,12 @@ def create_revision_request_route(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Referenced feedback action not found.",
         )
+    if data.get("feedback_action_id") is not None:
+        action = get_feedback_action(session, data["feedback_action_id"])
+        if action is not None:
+            require_learner_ownership(
+                session, user=current_user, settings=settings, learner_id=action.learner_id
+            )
     try:
         request = create_revision_request(session, **data)
         session.commit()
@@ -253,6 +332,8 @@ def create_revision_request_route(
 @router.get("/revision-requests", response_model=list[RevisionRequestRead])
 def list_revision_requests_route(
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
     learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     feedback_record_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     prompt_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
@@ -260,9 +341,14 @@ def list_revision_requests_route(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[RevisionRequestRead]:
     """Return revision requests with learner, feedback, prompt, and status filters."""
+    scoped_learner_id = (
+        resolve_learner_id(session, user=current_user, settings=settings, requested=learner_id)
+        if settings.auth_required
+        else learner_id
+    )
     requests = list_revision_requests(
         session,
-        learner_id=learner_id,
+        learner_id=scoped_learner_id,
         feedback_record_id=feedback_record_id,
         prompt_id=prompt_id,
         status=revision_status,
@@ -273,7 +359,10 @@ def list_revision_requests_route(
 
 @router.get("/revision-requests/{revision_request_id}", response_model=RevisionRequestRead)
 def get_revision_request_route(
-    revision_request_id: str, session: SessionDep
+    revision_request_id: str,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> RevisionRequestRead:
     """Return one revision request."""
     request = get_revision_request(session, revision_request_id)
@@ -281,6 +370,9 @@ def get_revision_request_route(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Revision request not found."
         )
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=request.learner_id
+    )
     return RevisionRequestRead.model_validate(request)
 
 
@@ -289,6 +381,8 @@ def submit_revision_request_route(
     revision_request_id: str,
     payload: RevisionRequestSubmit,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> RevisionRequestRead:
     """Submit a revised response and record a standard attempt for the request."""
     request = get_revision_request(session, revision_request_id)
@@ -296,6 +390,9 @@ def submit_revision_request_route(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Revision request not found."
         )
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=request.learner_id
+    )
     try:
         submit_revision_request(session, request, **payload.model_dump())
         session.commit()
@@ -313,6 +410,8 @@ def resolve_revision_request_route(
     revision_request_id: str,
     payload: RevisionRequestResolve,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> RevisionRequestRead:
     """Accept or close a revision request and stage deferred scheduling metadata."""
     request = get_revision_request(session, revision_request_id)
@@ -320,6 +419,9 @@ def resolve_revision_request_route(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Revision request not found."
         )
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=request.learner_id
+    )
     try:
         resolve_revision_request(session, request, **payload.model_dump())
         session.commit()
@@ -337,11 +439,18 @@ def resolve_revision_request_route(
     response_model=list[RevisionRequestRead],
 )
 def list_feedback_revision_requests_route(
-    feedback_record_id: str, session: SessionDep
+    feedback_record_id: str,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> list[RevisionRequestRead]:
     """Return revision requests for a feedback record so completion is visible from feedback."""
-    if get_feedback_record(session, feedback_record_id) is None:
+    record = get_feedback_record(session, feedback_record_id)
+    if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found.")
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=record.learner_id
+    )
     requests = list_revision_requests(session, feedback_record_id=feedback_record_id)
     return [RevisionRequestRead.model_validate(request) for request in requests]
 
@@ -520,11 +629,16 @@ def reveal_hint_route(
     hint_id: str,
     payload: HintRevealRequest,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> HintRevealRead:
     """Record a hint reveal and mark attempt/evidence support usage."""
     hint = get_hint(session, hint_id)
     if hint is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hint not found.")
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=payload.learner_id
+    )
     try:
         reveal = reveal_hint(session, hint, **payload.model_dump())
         session.commit()
@@ -591,11 +705,16 @@ def reveal_model_answer_route(
     model_answer_id: str,
     payload: ModelAnswerRevealRequest,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> ModelAnswerRevealRead:
     """Reveal a model answer only after an attempt or explicit instructor/test mode."""
     answer = get_model_answer(session, model_answer_id)
     if answer is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model answer not found.")
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=payload.learner_id
+    )
     try:
         reveal = reveal_model_answer(session, answer, **payload.model_dump())
         session.commit()
