@@ -8,10 +8,17 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from lms.auth.models import User
 from lms.evidence.api import create_attempt_route
 from lms.evidence.repository import create_attempt, get_attempt, list_evidence_records
 from lms.evidence.schemas import AttemptCreate, AttemptRead
 from lms.scheduling.fsrs_adapter import evidence_to_fsrs_rating
+from lms.settings import Settings
+
+
+def _local_route_dependencies() -> tuple[User, Settings]:
+    """Supply the explicit dependencies required by direct route tests."""
+    return cast(User, None), Settings(auth_required=False)
 
 
 def _attempt_payload() -> dict[str, object]:
@@ -89,7 +96,8 @@ def test_post_attempt_route_returns_stable_linked_attempt_id(db_session: Session
     """POST route handler returns id linked to learner and prompt ids."""
     payload = AttemptCreate.model_validate(_attempt_payload())
 
-    created = create_attempt_route(payload, db_session)
+    current_user, settings = _local_route_dependencies()
+    created = create_attempt_route(payload, db_session, current_user, settings)
 
     assert isinstance(created, AttemptRead)
     assert created.id
@@ -114,7 +122,8 @@ def test_post_attempt_with_scoring_creates_evidence_record(db_session: Session) 
     }
 
     attempt_payload = AttemptCreate.model_validate(payload)
-    created = create_attempt_route(attempt_payload, db_session)
+    current_user, settings = _local_route_dependencies()
+    created = create_attempt_route(attempt_payload, db_session, current_user, settings)
 
     records = list_evidence_records(
         db_session,
@@ -140,7 +149,8 @@ def test_post_attempt_scoring_none_fields_fall_back_to_attempt_context(
     }
 
     attempt_payload = AttemptCreate.model_validate(payload)
-    create_attempt_route(attempt_payload, db_session)
+    current_user, settings = _local_route_dependencies()
+    create_attempt_route(attempt_payload, db_session, current_user, settings)
 
     records = list_evidence_records(
         db_session,
@@ -163,7 +173,8 @@ def test_post_attempt_derives_normalized_score_from_raw_and_max_score(db_session
     }
 
     attempt_payload = AttemptCreate.model_validate(payload)
-    create_attempt_route(attempt_payload, db_session)
+    current_user, settings = _local_route_dependencies()
+    create_attempt_route(attempt_payload, db_session, current_user, settings)
 
     records = list_evidence_records(
         db_session,
@@ -186,7 +197,8 @@ def test_post_attempt_with_zero_normalized_score_is_persisted_and_used(db_sessio
     }
 
     attempt_payload = AttemptCreate.model_validate(payload)
-    create_attempt_route(attempt_payload, db_session)
+    current_user, settings = _local_route_dependencies()
+    create_attempt_route(attempt_payload, db_session, current_user, settings)
 
     records = list_evidence_records(
         db_session,
@@ -212,7 +224,8 @@ def test_post_attempt_with_evidence_without_scoring_does_not_create_record(
     }
 
     attempt_payload = AttemptCreate.model_validate(payload)
-    create_attempt_route(attempt_payload, db_session)
+    current_user, settings = _local_route_dependencies()
+    create_attempt_route(attempt_payload, db_session, current_user, settings)
 
     records = list_evidence_records(
         db_session,

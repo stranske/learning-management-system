@@ -7,9 +7,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from lms.auth.dependencies import get_current_user
+from lms.auth.login import SettingsDep, require_authenticated_user
 from lms.auth.models import User
 from lms.db.session import get_session
+from lms.learners.identity import require_learner_ownership, resolve_learner_id
 from lms.learners.models import Learner
 from lms.scheduling.models import ReviewQueueItem
 from lms.scheduling.repository import (
@@ -38,7 +39,7 @@ from lms.scheduling.service import DEFAULT_DAILY_CAP, SchedulerSettings, get_rev
 
 router = APIRouter(tags=["scheduling"])
 SessionDep = Annotated[Session, Depends(get_session)]
-CurrentUserDep = Annotated[User, Depends(get_current_user)]
+CurrentUserDep = Annotated[User, Depends(require_authenticated_user)]
 
 
 @router.get(
@@ -48,6 +49,8 @@ CurrentUserDep = Annotated[User, Depends(get_current_user)]
 def list_review_queue_route(
     learner_id: str,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
     status: Annotated[
         QueueStatus | None,
         Query(description="Filter by queue item status (default: pending)."),
@@ -63,6 +66,7 @@ def list_review_queue_route(
     ] = DEFAULT_DAILY_CAP,
 ) -> ReviewQueueResponse:
     """Return review queue items with reason codes, explanations, and backlog context."""
+    require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
     if status == "pending":
         overview = get_review_queue_overview(
             session,
@@ -211,6 +215,8 @@ def list_review_policies_route(
 @router.get("/review-schedules", response_model=list[ReviewScheduleRead])
 def list_review_schedules_route(
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
     learner_id: Annotated[str | None, Query(description="Filter by learner id.")] = None,
     knowledge_node_id: Annotated[
         str | None,
@@ -223,11 +229,16 @@ def list_review_schedules_route(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[ReviewScheduleRead]:
     """Return durable review schedule records."""
+    scoped_learner_id = (
+        resolve_learner_id(session, user=current_user, settings=settings, requested=learner_id)
+        if settings.auth_required
+        else learner_id
+    )
     return [
         ReviewScheduleRead.model_validate(schedule)
         for schedule in list_review_schedules(
             session,
-            learner_id=learner_id,
+            learner_id=scoped_learner_id,
             knowledge_node_id=knowledge_node_id,
             schedule_state=schedule_state,
             limit=limit,
@@ -238,6 +249,8 @@ def list_review_schedules_route(
 @router.get("/scheduler-decisions", response_model=list[SchedulerDecisionRead])
 def list_scheduler_decisions_route(
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
     learner_id: Annotated[str | None, Query(description="Filter by learner id.")] = None,
     knowledge_node_id: Annotated[
         str | None,
@@ -250,11 +263,16 @@ def list_scheduler_decisions_route(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[SchedulerDecisionRead]:
     """Return explainable scheduler decisions."""
+    scoped_learner_id = (
+        resolve_learner_id(session, user=current_user, settings=settings, requested=learner_id)
+        if settings.auth_required
+        else learner_id
+    )
     return [
         SchedulerDecisionRead.model_validate(decision)
         for decision in list_scheduler_decisions(
             session,
-            learner_id=learner_id,
+            learner_id=scoped_learner_id,
             knowledge_node_id=knowledge_node_id,
             reason_code=reason_code,
             limit=limit,
