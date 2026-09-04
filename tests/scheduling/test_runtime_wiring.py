@@ -23,8 +23,11 @@ from lms.graphs.repository import create_knowledge_node
 from lms.learners.models import Learner
 from lms.main import create_app
 from lms.scheduling import service as scheduling_service
-from lms.scheduling.models import ReviewQueueItem, ReviewSchedule
+from lms.scheduling.models import ReviewQueueItem, ReviewSchedule, SchedulerDecision
 from lms.scheduling.repository import complete_review_queue_item, create_review_queue_item
+from lms.scheduling.service import schedule_from_attempt
+from lms.settings import Settings, get_settings
+from tests.scheduling.test_review_queue import _make_attempt
 
 
 def _aware(value: datetime) -> datetime:
@@ -333,3 +336,147 @@ def _queue_item_for_user(
         )
         session.commit()
         return item.id
+
+
+@pytest.fixture
+def deployed_scheduling_api_client() -> Generator[
+    tuple[TestClient, sessionmaker[Session], User], None, None
+]:
+    """Provide a deployed-mode client that enforces learner ownership."""
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
+    current_user = User(id="user-current", username="current", display_name="Current")
+    with session_factory() as session:
+        session.add(current_user)
+        session.commit()
+
+    def override_get_session() -> Generator[Session, None, None]:
+        request_session = session_factory()
+        try:
+            yield request_session
+        finally:
+            request_session.close()
+
+    def override_current_user() -> User:
+        return current_user
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[require_authenticated_user] = override_current_user
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
+    try:
+        with TestClient(app) as client:
+            yield client, session_factory, current_user
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+def test_deployed_review_queue_allows_owner_and_rejects_foreign_learner(
+    deployed_scheduling_api_client: tuple[TestClient, sessionmaker[Session], User],
+) -> None:
+    """Deployed mode scopes review-queue reads to the signed-in user's learners."""
+    client, session_factory, current_user = deployed_scheduling_api_client
+    owned_item_id = _queue_item_for_user(
+        session_factory,
+        current_user,
+        learner_id="learner-owned",
+        reason_code="due-review",
+    )
+    other_user = User(id="user-other", username="other", display_name="Other")
+    _queue_item_for_user(
+        session_factory,
+        other_user,
+        learner_id="learner-other",
+        reason_code="due-review",
+    )
+
+    owned = client.get("/learners/learner-owned/review-queue")
+    assert owned.status_code == 200
+    assert owned.json()["items"][0]["id"] == owned_item_id
+
+    foreign = client.get("/learners/learner-other/review-queue")
+    assert foreign.status_code in {403, 404}
+
+
+def test_deployed_review_schedules_resolve_owner_and_reject_foreign_learner(
+    deployed_scheduling_api_client: tuple[TestClient, sessionmaker[Session], User],
+) -> None:
+    """Deployed mode scopes review-schedule reads to the signed-in user's learners."""
+    client, session_factory, current_user = deployed_scheduling_api_client
+    _queue_item_for_user(
+        session_factory,
+        current_user,
+        learner_id="learner-owned",
+        reason_code="due-review",
+    )
+    other_user = User(id="user-other", username="other", display_name="Other")
+    _queue_item_for_user(
+        session_factory,
+        other_user,
+        learner_id="learner-other",
+        reason_code="due-review",
+    )
+
+    owned = client.get("/review-schedules", params={"learner_id": "learner-owned"})
+    assert owned.status_code == 200
+    assert {row["learner_id"] for row in owned.json()} == {"learner-owned"}
+
+    foreign = client.get("/review-schedules", params={"learner_id": "learner-other"})
+    assert foreign.status_code in {403, 404}
+
+
+def test_deployed_scheduler_decisions_resolve_owner_and_reject_foreign_learner(
+    deployed_scheduling_api_client: tuple[TestClient, sessionmaker[Session], User],
+) -> None:
+    """Deployed mode scopes scheduler-decision reads to the signed-in user's learners."""
+    client, session_factory, current_user = deployed_scheduling_api_client
+    other_user = User(id="user-other", username="other", display_name="Other")
+    with session_factory() as session:
+        session.add(other_user)
+        session.add(
+            Learner(id="learner-owned", user_id=current_user.id, display_name="Owned")
+        )
+        session.add(
+            Learner(id="learner-other", user_id=other_user.id, display_name="Other")
+        )
+        session.commit()
+        owned_attempt, owned_evidence = _make_attempt(
+            session,
+            learner_id="learner-owned",
+            knowledge_node_id="node-owned",
+            correctness=False,
+            normalized_score=0.1,
+        )
+        schedule_from_attempt(session, attempt=owned_attempt, evidence_record=owned_evidence)
+        other_attempt, other_evidence = _make_attempt(
+            session,
+            learner_id="learner-other",
+            knowledge_node_id="node-other",
+            correctness=False,
+            normalized_score=0.1,
+        )
+        schedule_from_attempt(session, attempt=other_attempt, evidence_record=other_evidence)
+        session.commit()
+        owned_decision_id = session.scalar(
+            select(SchedulerDecision).where(SchedulerDecision.learner_id == "learner-owned")
+        ).id
+
+    owned = client.get("/scheduler-decisions", params={"learner_id": "learner-owned"})
+    assert owned.status_code == 200
+    assert {row["id"] for row in owned.json()} == {owned_decision_id}
+
+    foreign = client.get("/scheduler-decisions", params={"learner_id": "learner-other"})
+    assert foreign.status_code in {403, 404}

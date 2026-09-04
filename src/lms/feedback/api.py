@@ -120,6 +120,11 @@ def create_feedback_route(
         require_learner_ownership(
             session, user=current_user, settings=settings, learner_id=attempt.learner_id
         )
+        if settings.auth_required and attempt.learner_id != payload.learner_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Referenced attempt belongs to a different learner.",
+            )
     if data.get("evidence_record_id") is not None:
         evidence = session.get(EvidenceRecord, data["evidence_record_id"])
         if evidence is None:
@@ -130,6 +135,11 @@ def create_feedback_route(
         require_learner_ownership(
             session, user=current_user, settings=settings, learner_id=evidence.learner_id
         )
+        if settings.auth_required and evidence.learner_id != payload.learner_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Referenced evidence record belongs to a different learner.",
+            )
     record = create_feedback_record(session, **data)
     session.commit()
     session.refresh(record)

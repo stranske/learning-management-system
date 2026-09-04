@@ -136,3 +136,64 @@ def test_authenticated_user_cannot_list_another_learners_feedback() -> None:
     finally:
         with suppress(StopIteration):
             next(fixture)
+
+
+def test_create_feedback_rejects_cross_learner_attempt_reference() -> None:
+    """A user who owns multiple learners cannot cross-link attempt references."""
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    session = session_factory()
+    owner = User(username="owner", display_name="Owner", is_local=False)
+    session.add(owner)
+    session.flush()
+    first_learner = Learner(user_id=owner.id, display_name="First learner")
+    second_learner = Learner(user_id=owner.id, display_name="Second learner")
+    session.add_all([first_learner, second_learner])
+    session.flush()
+    second_attempt = Attempt(
+        learner_id=second_learner.id,
+        prompt_id="second-prompt",
+        response_text="second learner response",
+        feedback={
+            "goal": "Second goal",
+            "observed_evidence": "Second evidence",
+            "next_action": "Continue",
+        },
+    )
+    session.add(second_attempt)
+    session.commit()
+
+    def override_session() -> Generator[Session, None, None]:
+        yield session
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
+    app.dependency_overrides[require_authenticated_user] = lambda: owner
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/feedback",
+                json={
+                    "learner_id": first_learner.id,
+                    "attempt_id": second_attempt.id,
+                    "goal": "First goal",
+                    "observed_evidence": "First evidence",
+                },
+            )
+            assert response.status_code == 422
+            assert (
+                response.json()["detail"]
+                == "Referenced attempt belongs to a different learner."
+            )
+    finally:
+        app.dependency_overrides.clear()
+        session.close()
+        Base.metadata.drop_all(engine)
+        engine.dispose()

@@ -18,7 +18,7 @@ from lms.settings import Settings
 
 def _local_route_dependencies() -> tuple[User, Settings]:
     """Supply the explicit dependencies required by direct route tests."""
-    return cast(User, None), Settings()
+    return cast(User, None), Settings(auth_required=False)
 
 
 def _attempt_payload() -> dict[str, object]:
