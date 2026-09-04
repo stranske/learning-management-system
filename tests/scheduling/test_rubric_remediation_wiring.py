@@ -76,5 +76,6 @@ def test_rubric_score_fires_configured_remediation_trigger(db_session: Session) 
         item for item in items if item.decision_log.get("signal") == "remediation-trigger"
     ]
     assert len(trigger_items) == 1
+    assert trigger_items[0].reason_code == "remediation"
     assert trigger_items[0].knowledge_node_id == node.id
     assert trigger_items[0].decision_log["inputs"]["trigger_id"] == trigger.id

@@ -131,7 +131,7 @@ def score_attempt_with_rubric(
         schedule_for_evidence(session, attempt=attempt, evidence_record=evidence)
     except Exception:
         logger.exception(
-            "failed to schedule review queue item for rubric score",
+            "failed to schedule review or apply remediation triggers for rubric score",
             extra={
                 "attempt_id": attempt.id,
                 "evidence_record_id": evidence.id,
