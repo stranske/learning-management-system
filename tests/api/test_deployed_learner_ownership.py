@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import suppress
+from typing import Any
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -348,6 +349,177 @@ def test_authenticated_user_cannot_read_another_learners_inspect_calibration() -
             assert bucket["confidence_rating"] == 4
             assert bucket["count"] == 1
             assert bucket["observed_accuracy"] == 0.7
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def _rubric_payload(session: Session, attempt_id: str) -> dict[str, Any]:
+    """Build a usable rubric so ownership tests exercise real grading data."""
+    from lms.feedback.repository import create_rubric
+    from lms.graphs.repository import create_knowledge_node
+
+    node = create_knowledge_node(
+        session,
+        title="Ownership grading",
+        knowledge_type="conceptual",
+        scope="personal",
+        actor_id="user:owner",
+        status="published",
+    )
+    rubric = create_rubric(
+        session,
+        title="Ownership rubric",
+        ownership_scope="personal",
+        authoring_actor="user:owner",
+        knowledge_node_id=node.id,
+        criteria=[{"criterion_order": 1, "description": "Uses evidence", "max_points": 2}],
+    )
+    session.commit()
+    return {
+        "rubric_id": rubric.id,
+        "attempt_id": attempt_id,
+        "scorer_type": "human",
+        "criterion_scores": [{"criterion_id": rubric.criteria[0].id, "points": 1}],
+    }
+
+
+def _seed_rubric_score(session: Session, attempt_id: str) -> str:
+    """Persist a real score outside HTTP to seed either user's private data."""
+    from lms.feedback.scoring import score_attempt_with_rubric
+
+    payload = _rubric_payload(session, attempt_id)
+    score = score_attempt_with_rubric(session, **payload)
+    session.commit()
+    return score.id
+
+
+def test_authenticated_user_cannot_list_another_learners_rubric_scores() -> None:
+    """Every list shape protects foreign scores while retaining actual owned rows."""
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        foreign_id = _seed_rubric_score(session, client.foreign_attempt_id)  # type: ignore[attr-defined]
+        own_id = _seed_rubric_score(session, client.owner_attempt_id)  # type: ignore[attr-defined]
+        foreign = client.get(
+            "/rubric-scores", params={"attempt_id": client.foreign_attempt_id}  # type: ignore[attr-defined]
+        )
+        missing = client.get("/rubric-scores", params={"attempt_id": "missing-attempt"})
+        assert foreign.status_code == missing.status_code == 404
+        assert foreign.json() == missing.json()
+        foreign_learner = client.get(
+            "/rubric-scores", params={"learner_id": client.other_learner_id}  # type: ignore[attr-defined]
+        )
+        assert foreign_learner.status_code in {403, 404}
+        mixed_filter = client.get(
+            "/rubric-scores",
+            params={
+                "attempt_id": client.owner_attempt_id,  # type: ignore[attr-defined]
+                "learner_id": client.other_learner_id,  # type: ignore[attr-defined]
+            },
+        )
+        assert mixed_filter.status_code in {403, 404}
+        from lms.feedback.models import RubricScore
+
+        foreign_score = session.get(RubricScore, foreign_id)
+        assert foreign_score is not None
+        for params in (
+            {},
+            {"learner_id": client.owner_learner_id},  # type: ignore[attr-defined]
+            {"attempt_id": client.owner_attempt_id},  # type: ignore[attr-defined]
+            {
+                "attempt_id": client.owner_attempt_id,  # type: ignore[attr-defined]
+                "learner_id": client.owner_learner_id,  # type: ignore[attr-defined]
+            },
+            {"limit": 1},
+        ):
+            own = client.get("/rubric-scores", params=params)
+            assert own.status_code == 200
+            assert [score["id"] for score in own.json()] == [own_id]
+        rubric_only = client.get("/rubric-scores", params={"rubric_id": foreign_score.rubric_id})
+        assert rubric_only.status_code == 200
+        assert rubric_only.json() == []
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_authenticated_user_cannot_post_rubric_score_for_foreign_attempt() -> None:
+    """Reject foreign grading before any score, evidence, or feedback write."""
+    from lms.feedback.models import RubricScore
+
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        payload = _rubric_payload(session, client.foreign_attempt_id)  # type: ignore[attr-defined]
+        models = (RubricScore, EvidenceRecord, FeedbackRecord)
+        counts = [session.query(model).count() for model in models]
+        foreign = client.post("/rubric-scores", json=payload)
+        missing = client.post("/rubric-scores", json={**payload, "attempt_id": "missing-attempt"})
+        assert foreign.status_code == missing.status_code == 404
+        assert foreign.json() == missing.json()
+        assert [session.query(model).count() for model in models] == counts
+        own = client.post(
+            "/rubric-scores",
+            json={**payload, "attempt_id": client.owner_attempt_id},  # type: ignore[attr-defined]
+        )
+        assert own.status_code == 201, own.text
+        assert own.json()["learner_id"] == client.owner_learner_id  # type: ignore[attr-defined]
+        assert own.json()["normalized_score"] == 0.5
+        assert own.json()["evidence_record_id"]
+        assert own.json()["feedback_record_id"]
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_authenticated_user_cannot_get_another_learners_rubric_score() -> None:
+    """Foreign score IDs match missing IDs; owned direct reads still return grades."""
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        foreign_id = _seed_rubric_score(session, client.foreign_attempt_id)  # type: ignore[attr-defined]
+        own_id = _seed_rubric_score(session, client.owner_attempt_id)  # type: ignore[attr-defined]
+        foreign = client.get(f"/rubric-scores/{foreign_id}")
+        missing = client.get("/rubric-scores/missing-score")
+        assert foreign.status_code == missing.status_code == 404
+        assert foreign.json() == missing.json()
+        own = client.get(f"/rubric-scores/{own_id}")
+        assert own.status_code == 200
+        assert own.json()["id"] == own_id
+        assert own.json()["normalized_score"] == 0.5
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_rubric_attempt_filter_supports_a_second_owned_learner() -> None:
+    """An owned attempt selects its learner instead of silently using the default."""
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        primary = session.get(Learner, client.owner_learner_id)  # type: ignore[attr-defined]
+        assert primary is not None
+        second = Learner(user_id=primary.user_id, display_name="Second owned learner")
+        session.add(second)
+        session.flush()
+        attempt = Attempt(
+            learner_id=second.id, prompt_id="second-prompt", response_text="Second", feedback={}
+        )
+        session.add(attempt)
+        session.commit()
+        score_id = _seed_rubric_score(session, attempt.id)
+        for params in ({"attempt_id": attempt.id}, {"learner_id": second.id}):
+            response = client.get("/rubric-scores", params=params)
+            assert response.status_code == 200
+            assert [score["id"] for score in response.json()] == [score_id]
+        mismatched = client.get(
+            "/rubric-scores", params={"attempt_id": attempt.id, "learner_id": primary.id}
+        )
+        assert mismatched.status_code == 200
+        assert mismatched.json() == []
+        own = client.get(f"/rubric-scores/{score_id}")
+        assert own.status_code == 200
     finally:
         with suppress(StopIteration):
             next(fixture)
