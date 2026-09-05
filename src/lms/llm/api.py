@@ -188,10 +188,10 @@ def _default_client() -> LLMClient:
         config=config,
         providers=providers,
         budget=DailyBudgetTracker(
-            # Honor the operator-configured caps (LLM_DAILY_CAP_MICRO_USD and any
-            # per-mode overrides) rather than a hardcoded ceiling, so the daily
-            # kill-switch actually reflects env configuration. Falls back to the
-            # LLMConfig default ($0.20/day global) when nothing is set.
+            # Honor LLM_DAILY_CAP_MICRO_USD (preferred) or LLM_DAILY_BUDGET_USD
+            # instead of a hardcoded ceiling. Per-mode caps come from config,
+            # not environment overrides. Without a global override, the
+            # LLMConfig default is $0.20/day.
             mode_caps_micro_usd=config.per_mode_daily_cap_micro_usd,
             global_cap_micro_usd=config.global_daily_cap_micro_usd,
         ),
