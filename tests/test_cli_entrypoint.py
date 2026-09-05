@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,6 +13,10 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import lms.__main__ as lms_main
 from lms.importers.csv_graph import CsvGraphImportError
+from lms.llm.client import LLMClient
+from lms.llm.config import DEFAULT_MODE_MODELS
+from lms.llm.eval_sets import EvalSetEntry, ReplayOutcome, replay_eval_set
+from lms.llm.exceptions import BudgetExceeded
 from lms.sources.repository import DriftScanSummary
 
 
@@ -190,8 +196,22 @@ def test_import_graph_exits_with_message_on_import_error(monkeypatch: Any, tmp_p
         lms_main.main()
 
 
-def test_authoring_assist_propose_calls_service_and_prints_summary(
-    monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("api_key", [None, "test-key-unused"])
+@pytest.mark.parametrize(
+    "policy_env, expected_cap, override_model",
+    [
+        ({"LLM_DAILY_CAP_MICRO_USD": "12345", "LLM_DAILY_BUDGET_USD": "9"}, 12345, True),
+        ({"LLM_DAILY_BUDGET_USD": "0.025"}, 25000, True),
+        ({}, 200000, False),
+    ],
+)
+def test_authoring_assist_uses_environment_llm_config(
+    monkeypatch: Any,
+    capsys: pytest.CaptureFixture[str],
+    api_key: str | None,
+    policy_env: dict[str, str],
+    expected_cap: int,
+    override_model: bool,
 ) -> None:
     """authoring-assist propose routes through propose_authoring_drafts and prints ids."""
 
@@ -211,9 +231,30 @@ def test_authoring_assist_propose_calls_service_and_prints_summary(
         knowledge_edge = None
         prompt = _FakePrompt()
 
+    for key in ("LLM_DAILY_CAP_MICRO_USD", "LLM_DAILY_BUDGET_USD", "LLM_MODEL_AUTHORING_ASSIST"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in policy_env.items():
+        monkeypatch.setenv(key, value)
+    if override_model:
+        monkeypatch.setenv("LLM_MODEL_AUTHORING_ASSIST", "operator-authoring-model")
+    monkeypatch.setenv("LLM_DEFAULT_PROVIDER", "anthropic")
+    monkeypatch.setattr(
+        lms_main, "get_settings", lambda: SimpleNamespace(anthropic_api_key=api_key)
+    )
+    expected_model = (
+        "operator-authoring-model"
+        if override_model
+        else ("claude-haiku-4-5" if api_key else "fake-authoring-model")
+    )
     calls: list[dict[str, object]] = []
 
-    def fake_propose(session: object, *, client: object, **kwargs: object) -> _FakeResult:
+    def fake_propose(session: object, *, client: LLMClient, **kwargs: object) -> _FakeResult:
+        assert client.config.model_for("authoring-assist") == expected_model
+        assert client.config.default_provider == ("anthropic" if api_key else "fake")
+        assert client.config.global_daily_cap_micro_usd == expected_cap
+        assert client.budget.global_cap_micro_usd == expected_cap
+        with pytest.raises(BudgetExceeded):
+            client.budget.preflight("authoring-assist", expected_cap + 1)
         calls.append(kwargs)
         return _FakeResult()
 
@@ -340,3 +381,82 @@ def test_source_references_scan_drift_prints_per_reason_breakdown(
     assert "unsupported_kindle=1" in out
     assert "network_skipped=3" in out
     assert calls[0]["actor_id"] == "user:bob"
+
+
+@pytest.mark.parametrize(
+    "policy_env, expected_cap, expected_model",
+    [
+        (
+            {"LLM_DAILY_CAP_MICRO_USD": "0", "LLM_MODEL_STUDY_COACH": "operator-coach"},
+            0,
+            "operator-coach",
+        ),
+        (
+            {"LLM_DAILY_BUDGET_USD": "0.025", "LLM_MODEL_STUDY_COACH": "operator-coach"},
+            25000,
+            "operator-coach",
+        ),
+        ({}, 200000, DEFAULT_MODE_MODELS["study-coach"]),
+    ],
+)
+def test_replay_eval_uses_environment_llm_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    policy_env: dict[str, str],
+    expected_cap: int,
+    expected_model: str,
+) -> None:
+    for key in ("LLM_DAILY_CAP_MICRO_USD", "LLM_DAILY_BUDGET_USD", "LLM_MODEL_STUDY_COACH"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in policy_env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("LLM_DEFAULT_PROVIDER", "anthropic")
+    monkeypatch.setattr(lms_main, "get_settings", lambda: SimpleNamespace(anthropic_api_key=None))
+
+    def refuse_production_session() -> None:
+        pytest.fail("Replay opened a production database session")
+
+    monkeypatch.setattr(lms_main, "session_scope", refuse_production_session)
+    observed: list[ReplayOutcome] = []
+
+    def capture_replay(
+        client: LLMClient, entries: tuple[EvalSetEntry, ...]
+    ) -> tuple[ReplayOutcome, ...]:
+        assert client.config.default_provider == "fake"
+        assert client.config.model_for("study-coach") == expected_model
+        assert client.config.global_daily_cap_micro_usd == expected_cap
+        assert client.budget.global_cap_micro_usd == expected_cap
+        outcomes = replay_eval_set(client, entries)
+        assert client.budget.spent_micro_usd() == 0
+        assert client.budget.spent_micro_usd("study-coach") == 0
+        observed.extend(outcomes)
+        return outcomes
+
+    monkeypatch.setattr(lms_main, "replay_eval_set", capture_replay)
+    path = tmp_path / "eval.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "entry_id": "policy-check",
+                "scenario": "direct-explanation",
+                "mode": "study-coach",
+                "trace_class": "evidence-grade",
+                "prompt": "Here is a concise explanation",
+                "expected_labels": ["gives_direct_explanation"],
+            }
+        )
+        + "\n"
+    )
+    monkeypatch.setattr("sys.argv", ["lms", "llm", "replay-eval", str(path)])
+
+    lms_main.main()
+
+    assert len(observed) == 1
+    response = observed[0].response
+    assert response.provider_response.model == expected_model
+    assert response.provider_response.cost_micro_usd > 0
+    assert response.session.is_replay is True
+    assert response.session.external_export_allowed is False
+    assert response.session.id is None  # transient ORM record, never persisted
+    assert "replayed: 1 entries, 1 passed" in capsys.readouterr().out
