@@ -795,9 +795,10 @@ def list_rubric_scores_route(
                     status_code=status.HTTP_404_NOT_FOUND, detail="Attempt not found."
                 )
             scoped_learner_id = learner_id or attempt.learner_id
-        scoped_learner_id = resolve_learner_id(
-            session, user=current_user, settings=settings, requested=scoped_learner_id
-        )
+        if attempt_id is None or learner_id is not None:
+            scoped_learner_id = resolve_learner_id(
+                session, user=current_user, settings=settings, requested=scoped_learner_id
+            )
     scores = list_rubric_scores(
         session,
         rubric_id=rubric_id,

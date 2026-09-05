@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import suppress
+from typing import Any
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -410,6 +411,14 @@ def test_authenticated_user_cannot_list_another_learners_rubric_scores() -> None
             "/rubric-scores", params={"learner_id": client.other_learner_id}  # type: ignore[attr-defined]
         )
         assert foreign_learner.status_code in {403, 404}
+        mixed_filter = client.get(
+            "/rubric-scores",
+            params={
+                "attempt_id": client.owner_attempt_id,  # type: ignore[attr-defined]
+                "learner_id": client.other_learner_id,  # type: ignore[attr-defined]
+            },
+        )
+        assert mixed_filter.status_code in {403, 404}
         from lms.feedback.models import RubricScore
 
         foreign_score = session.get(RubricScore, foreign_id)
@@ -418,6 +427,10 @@ def test_authenticated_user_cannot_list_another_learners_rubric_scores() -> None
             {},
             {"learner_id": client.owner_learner_id},  # type: ignore[attr-defined]
             {"attempt_id": client.owner_attempt_id},  # type: ignore[attr-defined]
+            {
+                "attempt_id": client.owner_attempt_id,  # type: ignore[attr-defined]
+                "learner_id": client.owner_learner_id,  # type: ignore[attr-defined]
+            },
             {"limit": 1},
         ):
             own = client.get("/rubric-scores", params=params)
