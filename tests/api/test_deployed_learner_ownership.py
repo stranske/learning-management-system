@@ -227,3 +227,44 @@ def test_create_feedback_rejects_cross_learner_attempt_reference() -> None:
         session.close()
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+def test_authenticated_user_cannot_read_another_learners_mastery_estimates() -> None:
+    """Mastery reads hide foreign evidence and preserve the owner's estimates."""
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        owner_learner_id = client.owner_learner_id  # type: ignore[attr-defined]
+        other_learner_id = client.other_learner_id  # type: ignore[attr-defined]
+        session.add_all(
+            [
+                EvidenceRecord(
+                    learner_id=owner_learner_id,
+                    knowledge_node_id="owner-mastery-node",
+                    normalized_score=0.7,
+                ),
+                EvidenceRecord(
+                    learner_id=other_learner_id,
+                    knowledge_node_id="foreign-mastery-node",
+                    normalized_score=0.9,
+                ),
+            ]
+        )
+        session.commit()
+
+        foreign = client.get(f"/learners/{other_learner_id}/mastery-estimates")
+        missing = client.get("/learners/not-a-real-learner/mastery-estimates")
+        assert foreign.status_code == missing.status_code == 404
+        assert foreign.json() == missing.json() == {"detail": "Learner resource not found."}
+        assert "foreign-mastery-node" not in foreign.text
+
+        own = client.get(f"/learners/{owner_learner_id}/mastery-estimates")
+        assert own.status_code == 200
+        [estimate] = own.json()
+        assert estimate["learner_id"] == owner_learner_id
+        assert estimate["knowledge_node_id"] == "owner-mastery-node"
+        assert estimate["evidence_count"] == 1
+        assert estimate["current_estimate"] == 0.7
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
