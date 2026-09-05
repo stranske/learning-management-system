@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from lms.auth.login import SettingsDep
 from lms.auth.models import User
-from lms.capability.models import CapabilityEstimate, CapabilityTarget, GapAnalysis
+from lms.capability.models import CapabilityEstimate, CapabilityTarget, GapAnalysis, MaintenancePlan
 from lms.capability.repository import (
     archive_capability_target,
     create_capability_target,
@@ -55,6 +55,26 @@ router = APIRouter(prefix="/capability", tags=["capability"])
 SessionDep = Annotated[Session, Depends(get_session)]
 
 
+def _owned_resource[T: CapabilityTarget | CapabilityEstimate | GapAnalysis | MaintenancePlan](
+    session: Session,
+    resource: T | None,
+    user: User,
+    settings: Settings,
+    *,
+    label: str = "Learner resource",
+) -> T:
+    """Return an owned record, masking missing and foreign deployed resources."""
+    if resource is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Learner resource not found." if settings.auth_required else f"{label} not found."
+            ),
+        )
+    require_learner_ownership(session, user=user, settings=settings, learner_id=resource.learner_id)
+    return resource
+
+
 def _require_resource_ownership(
     session: Session,
     resource: CapabilityTarget | CapabilityEstimate | GapAnalysis | None,
@@ -62,11 +82,7 @@ def _require_resource_ownership(
     settings: Settings,
 ) -> str:
     """Authorize a referenced record before deriving or filtering private data."""
-    if resource is None:
-        raise HTTPException(status_code=404, detail="Learner resource not found.")
-    return require_learner_ownership(
-        session, user=user, settings=settings, learner_id=resource.learner_id
-    )
+    return _owned_resource(session, resource, user, settings).learner_id
 
 
 def _scoped_learner_id(
@@ -141,7 +157,7 @@ def list_capability_targets_route(
     session: SessionDep,
     current_user: CurrentUserDep,
     settings: SettingsDep,
-    learner_id: Annotated[str | None, Query(max_length=36)] = None,
+    learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     target_status: Annotated[
         CapabilityTargetStatus | None,
         Query(alias="status", description="Filter by capability target status."),
@@ -167,18 +183,12 @@ def get_capability_target_route(
     settings: SettingsDep,
 ) -> dict[str, object]:
     """Return one capability target by id."""
-    target = get_capability_target(session, target_id)
-    if target is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Learner resource not found."
-                if settings.auth_required
-                else "Capability target not found."
-            ),
-        )
-    require_learner_ownership(
-        session, user=current_user, settings=settings, learner_id=target.learner_id
+    target = _owned_resource(
+        session,
+        get_capability_target(session, target_id),
+        current_user,
+        settings,
+        label="Capability target",
     )
     return serialize_capability_target(target)
 
@@ -192,18 +202,12 @@ def update_capability_target_route(
     settings: SettingsDep,
 ) -> dict[str, object]:
     """Update a personal capability target."""
-    target = get_capability_target(session, target_id)
-    if target is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Learner resource not found."
-                if settings.auth_required
-                else "Capability target not found."
-            ),
-        )
-    require_learner_ownership(
-        session, user=current_user, settings=settings, learner_id=target.learner_id
+    target = _owned_resource(
+        session,
+        get_capability_target(session, target_id),
+        current_user,
+        settings,
+        label="Capability target",
     )
     try:
         updated = update_capability_target(
@@ -229,18 +233,12 @@ def archive_capability_target_route(
     settings: SettingsDep,
 ) -> dict[str, object]:
     """Archive a capability target without deleting it."""
-    target = get_capability_target(session, target_id)
-    if target is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Learner resource not found."
-                if settings.auth_required
-                else "Capability target not found."
-            ),
-        )
-    require_learner_ownership(
-        session, user=current_user, settings=settings, learner_id=target.learner_id
+    target = _owned_resource(
+        session,
+        get_capability_target(session, target_id),
+        current_user,
+        settings,
+        label="Capability target",
     )
     archived = archive_capability_target(session, target)
     session.commit()
@@ -280,8 +278,8 @@ def list_capability_estimates_route(
     session: SessionDep,
     current_user: CurrentUserDep,
     settings: SettingsDep,
-    learner_id: Annotated[str | None, Query(max_length=36)] = None,
-    target_id: Annotated[str | None, Query(max_length=36)] = None,
+    learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    target_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[dict[str, object]]:
     """List persisted capability estimates."""
@@ -305,18 +303,12 @@ def get_capability_estimate_route(
     settings: SettingsDep,
 ) -> dict[str, object]:
     """Return one persisted capability estimate by id."""
-    estimate = get_capability_estimate(session, estimate_id)
-    if estimate is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Learner resource not found."
-                if settings.auth_required
-                else "Capability estimate not found."
-            ),
-        )
-    require_learner_ownership(
-        session, user=current_user, settings=settings, learner_id=estimate.learner_id
+    estimate = _owned_resource(
+        session,
+        get_capability_estimate(session, estimate_id),
+        current_user,
+        settings,
+        label="Capability estimate",
     )
     return serialize_capability_estimate(estimate)
 
@@ -355,9 +347,9 @@ def list_gap_analyses_route(
     session: SessionDep,
     current_user: CurrentUserDep,
     settings: SettingsDep,
-    learner_id: Annotated[str | None, Query(max_length=36)] = None,
-    target_id: Annotated[str | None, Query(max_length=36)] = None,
-    estimate_id: Annotated[str | None, Query(max_length=36)] = None,
+    learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    target_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    estimate_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[dict[str, object]]:
     """List persisted gap analyses."""
@@ -382,18 +374,12 @@ def get_gap_analysis_route(
     settings: SettingsDep,
 ) -> dict[str, object]:
     """Return one persisted gap analysis by id."""
-    analysis = get_gap_analysis(session, analysis_id)
-    if analysis is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Learner resource not found."
-                if settings.auth_required
-                else "Gap analysis not found."
-            ),
-        )
-    require_learner_ownership(
-        session, user=current_user, settings=settings, learner_id=analysis.learner_id
+    analysis = _owned_resource(
+        session,
+        get_gap_analysis(session, analysis_id),
+        current_user,
+        settings,
+        label="Gap analysis",
     )
     return serialize_gap_analysis(analysis)
 
@@ -432,9 +418,9 @@ def list_maintenance_plans_route(
     session: SessionDep,
     current_user: CurrentUserDep,
     settings: SettingsDep,
-    learner_id: Annotated[str | None, Query(max_length=36)] = None,
-    target_id: Annotated[str | None, Query(max_length=36)] = None,
-    gap_analysis_id: Annotated[str | None, Query(max_length=36)] = None,
+    learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    target_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    gap_analysis_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     plan_status: Annotated[
         MaintenancePlanStatus | None,
         Query(alias="status", description="Filter by maintenance plan status."),
@@ -469,17 +455,11 @@ def get_maintenance_plan_route(
     settings: SettingsDep,
 ) -> dict[str, object]:
     """Return one persisted maintenance plan by id."""
-    plan = get_maintenance_plan(session, plan_id)
-    if plan is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Learner resource not found."
-                if settings.auth_required
-                else "Maintenance plan not found."
-            ),
-        )
-    require_learner_ownership(
-        session, user=current_user, settings=settings, learner_id=plan.learner_id
+    plan = _owned_resource(
+        session,
+        get_maintenance_plan(session, plan_id),
+        current_user,
+        settings,
+        label="Maintenance plan",
     )
     return serialize_maintenance_plan(plan)

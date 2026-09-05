@@ -627,8 +627,8 @@ def test_authenticated_user_cannot_write_foreign_capability_records() -> None:
         )
         counts = [session.query(model).count() for model in models]
         target_payload = {
-            "learner_id": client.other_learner_id,
-            "title": "Intrusion",  # type: ignore[attr-defined]
+            "learner_id": client.other_learner_id,  # type: ignore[attr-defined]
+            "title": "Intrusion",
             "target_node_ids": [foreign["node"]],
         }
         denied = client.post("/capability/targets", json=target_payload)
@@ -666,10 +666,10 @@ def test_authenticated_user_cannot_write_foreign_capability_records() -> None:
             "/capability/targets",
             json={
                 **target_payload,
-                "learner_id": client.owner_learner_id,
+                "learner_id": client.owner_learner_id,  # type: ignore[attr-defined]
                 "target_node_ids": [own["node"]],
             },
-        )  # type: ignore[attr-defined]
+        )
         assert created.status_code == 201, created.text
         target_id = created.json()["id"]
         parent_id = target_id
@@ -733,6 +733,26 @@ def test_capability_parent_filters_support_owned_learners_and_reject_foreign_ids
             params={"target_id": own["targets"], "estimate_id": foreign["estimates"]},
         )
         assert mixed.status_code == 404
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_capability_collections_reject_empty_id_filters() -> None:
+    """An explicitly empty identity filter must not become an omitted filter."""
+    fixture = _deployed_client()
+    client, _ = next(fixture)
+    try:
+        for route, fields in (
+            ("targets", ("learner_id",)),
+            ("estimates", ("learner_id", "target_id")),
+            ("gap-analyses", ("learner_id", "target_id", "estimate_id")),
+            ("maintenance-plans", ("learner_id", "target_id", "gap_analysis_id")),
+        ):
+            for field in fields:
+                response = client.get(f"/capability/{route}", params={field: ""})
+                assert response.status_code == 422, (route, field, response.text)
+                assert response.json()["detail"][0]["loc"] == ["query", field]
     finally:
         with suppress(StopIteration):
             next(fixture)
