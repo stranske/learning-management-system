@@ -268,3 +268,86 @@ def test_authenticated_user_cannot_read_another_learners_mastery_estimates() -> 
     finally:
         with suppress(StopIteration):
             next(fixture)
+
+
+def test_authenticated_user_cannot_read_another_learners_inspect_overview() -> None:
+    """Inspect rejects foreign IDs while retaining the owner's actual evidence."""
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        owner_id = client.owner_learner_id  # type: ignore[attr-defined]
+        foreign_id = client.other_learner_id  # type: ignore[attr-defined]
+        record = EvidenceRecord(
+            learner_id=owner_id,
+            knowledge_node_id="owner-inspect-node",
+            normalized_score=0.7,
+        )
+        session.add(record)
+        session.commit()
+
+        for scope in ("personal", "institutional"):
+            params = {"ownership_scope": scope}
+            foreign = client.get(f"/inspect/learners/{foreign_id}/overview", params=params)
+            missing = client.get("/inspect/learners/not-a-real-learner/overview", params=params)
+            assert foreign.status_code == missing.status_code == 404
+            assert foreign.json() == missing.json() == {"detail": "Learner resource not found."}
+            assert "private-node" not in foreign.text
+
+            own = client.get(f"/inspect/learners/{owner_id}/overview", params=params)
+            assert own.status_code == 200
+            assert own.json()["learner_id"] == owner_id
+            assert own.json()["ownership_scope"] == scope
+            [evidence] = own.json()["recent_evidence"]
+            assert evidence["id"] == record.id
+            assert evidence["knowledge_node_id"] == "owner-inspect-node"
+            assert evidence["normalized_score"] == 0.7
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_authenticated_user_cannot_read_another_learners_inspect_calibration() -> None:
+    """Calibration authorizes the learner before aggregating or filtering evidence."""
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        owner_id = client.owner_learner_id  # type: ignore[attr-defined]
+        foreign_id = client.other_learner_id  # type: ignore[attr-defined]
+        session.add_all(
+            [
+                EvidenceRecord(
+                    learner_id=owner_id,
+                    knowledge_node_id="owner-calibration-node",
+                    normalized_score=0.7,
+                    confidence_rating=4,
+                ),
+                EvidenceRecord(
+                    learner_id=foreign_id,
+                    knowledge_node_id="foreign-calibration-node",
+                    normalized_score=0.1,
+                    confidence_rating=5,
+                ),
+            ]
+        )
+        session.commit()
+
+        for params in ({}, {"knowledge_node_id": "owner-calibration-node"}):
+            foreign = client.get(f"/inspect/learners/{foreign_id}/calibration", params=params)
+            missing = client.get("/inspect/learners/not-a-real-learner/calibration", params=params)
+            assert foreign.status_code == missing.status_code == 404
+            assert foreign.json() == missing.json() == {"detail": "Learner resource not found."}
+
+            own = client.get(f"/inspect/learners/{owner_id}/calibration", params=params)
+            assert own.status_code == 200
+            payload = own.json()
+            assert payload["learner_id"] == owner_id
+            assert payload["knowledge_node_id"] == params.get("knowledge_node_id")
+            assert payload["sample_size"] == 1
+            assert payload["overconfident"] is False
+            [bucket] = payload["buckets"]
+            assert bucket["confidence_rating"] == 4
+            assert bucket["count"] == 1
+            assert bucket["observed_accuracy"] == 0.7
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
