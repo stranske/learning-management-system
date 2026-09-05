@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -10,7 +11,7 @@ import pytest
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
 from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig, load_llm_config_from_env
-from lms.llm.exceptions import LLMError
+from lms.llm.exceptions import BudgetExceeded, LLMError
 from lms.llm.providers import AnthropicProvider, FakeProvider, build_default_providers
 
 # ---------------------------------------------------------------------------
@@ -291,3 +292,56 @@ def test_default_api_client_honors_mode_model_env_override(
 
     assert client.config.mode_models["study-coach"] == "fake-env-coach"
     assert client.config.mode_models["practice"] == "fake-learning-policy"
+
+
+@pytest.mark.parametrize("api_key", [None, "test-api-factory-key"])
+@pytest.mark.parametrize(
+    ("micro_cap", "usd_cap", "expected_cap"),
+    [(None, None, 200_000), (None, "0.375", 375_000), ("12345", "0.375", 12345), ("0", "0.375", 0)],
+)
+def test_default_api_client_applies_runtime_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    api_key: str | None,
+    micro_cap: str | None,
+    usd_cap: str | None,
+    expected_cap: int,
+) -> None:
+    from lms.llm import api as llm_api
+
+    llm_api._default_client.cache_clear()
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    monkeypatch.setattr(llm_api, "get_settings", lambda: SimpleNamespace(anthropic_api_key=api_key))
+    for mode in DEFAULT_MODE_MODELS:
+        monkeypatch.delenv(f"LLM_MODEL_{mode.upper().replace('-', '_')}", raising=False)
+    for name, value in (
+        ("LLM_DAILY_CAP_MICRO_USD", micro_cap),
+        ("LLM_DAILY_BUDGET_USD", usd_cap),
+    ):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    # Credential-driven provider choice wins over a contradictory env default.
+    monkeypatch.setenv("LLM_DEFAULT_PROVIDER", "fake" if api_key else "anthropic")
+    monkeypatch.setenv("LLM_MODEL_STUDY_COACH", "api-override-coach")
+
+    client = llm_api._default_client()
+
+    expected_provider = "anthropic" if api_key else "fake"
+    expected_default = "claude-haiku-4-5" if api_key else "fake-learning-policy"
+    assert client.config.default_provider == expected_provider
+    assert isinstance(client.providers["fake"], FakeProvider)
+    assert ("anthropic" in client.providers) == bool(api_key)
+    if api_key:
+        assert isinstance(client.providers["anthropic"], AnthropicProvider)
+    assert client.config.model_for("study-coach") == "api-override-coach"
+    for mode in ("practice", "transfer", "authoring-assist"):
+        assert client.config.model_for(mode) == expected_default
+    assert client.config.global_daily_cap_micro_usd == expected_cap
+    assert client.budget.global_cap_micro_usd == expected_cap
+    # Exercise the constructed tracker at the boundary without provider traffic.
+    reservation = client.budget.reserve("study-coach", expected_cap)
+    with pytest.raises(BudgetExceeded, match="global daily cap"):
+        client.budget.reserve("practice", 1)
+    client.budget.release(reservation)

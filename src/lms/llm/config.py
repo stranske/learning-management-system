@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 
 from lms.llm.models import LLM_MODES
@@ -91,4 +91,21 @@ def load_llm_config_from_env(
         mode_models=mode_models,
         global_daily_cap_micro_usd=cap,
         default_provider=provider,
+    )
+
+
+def load_runtime_llm_config(
+    *,
+    default_provider: str,
+    defaults: Mapping[str, str] = DEFAULT_MODE_MODELS,
+) -> LLMConfig:
+    """Resolve environment policy while retaining the initialized provider choice.
+
+    Web and CLI callers select a real or fake provider from available credentials
+    before resolving model and budget overrides. Keep that choice so a missing
+    API key still permits offline use.
+    """
+    return replace(
+        load_llm_config_from_env(defaults=defaults),
+        default_provider=default_provider,
     )

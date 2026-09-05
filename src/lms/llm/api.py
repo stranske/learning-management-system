@@ -17,7 +17,7 @@ from lms.feedback.models import FeedbackRecord
 from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
-from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig, load_llm_config_from_env
+from lms.llm.config import DEFAULT_MODE_MODELS, load_runtime_llm_config
 from lms.llm.exceptions import SourceConstraintViolation
 from lms.llm.interaction_policy import (
     InteractionContext,
@@ -180,25 +180,20 @@ def _default_client() -> LLMClient:
     default_model = (
         "claude-haiku-4-5" if default_provider == "anthropic" else "fake-learning-policy"
     )
-    env_config = load_llm_config_from_env(
-        defaults=dict.fromkeys(DEFAULT_MODE_MODELS, default_model)
-    )
-    config = LLMConfig(
-        mode_models=env_config.mode_models,
-        global_daily_cap_micro_usd=env_config.global_daily_cap_micro_usd,
+    config = load_runtime_llm_config(
         default_provider=default_provider,
-        default_timeout_seconds=env_config.default_timeout_seconds,
+        defaults=dict.fromkeys(DEFAULT_MODE_MODELS, default_model),
     )
     return LLMClient(
         config=config,
         providers=providers,
         budget=DailyBudgetTracker(
-            # Honor the operator-configured caps (LLM_DAILY_CAP_MICRO_USD and any
-            # per-mode overrides) rather than a hardcoded ceiling, so the daily
-            # kill-switch actually reflects env configuration. Falls back to the
-            # LLMConfig default ($0.20/day global) when nothing is set.
-            mode_caps_micro_usd=env_config.per_mode_daily_cap_micro_usd,
-            global_cap_micro_usd=env_config.global_daily_cap_micro_usd,
+            # Honor LLM_DAILY_CAP_MICRO_USD (preferred) or LLM_DAILY_BUDGET_USD
+            # instead of a hardcoded ceiling. Per-mode caps come from config,
+            # not environment overrides. Without a global override, the
+            # LLMConfig default is $0.20/day.
+            mode_caps_micro_usd=config.per_mode_daily_cap_micro_usd,
+            global_cap_micro_usd=config.global_daily_cap_micro_usd,
         ),
     )
 

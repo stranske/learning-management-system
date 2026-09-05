@@ -23,7 +23,7 @@ from lms.importers.markdown import import_markdown_notes
 from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
-from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig
+from lms.llm.config import DEFAULT_MODE_MODELS, load_runtime_llm_config
 from lms.llm.eval_sets import EvalSetError, load_eval_set, replay_eval_set
 from lms.llm.providers import build_default_providers
 from lms.research_registry import ResearchRegistryError, load_registry
@@ -406,14 +406,17 @@ def main() -> None:
             authoring_model = (
                 "claude-haiku-4-5" if default_provider == "anthropic" else "fake-authoring-model"
             )
+            config = load_runtime_llm_config(
+                default_provider=default_provider,
+                defaults={**DEFAULT_MODE_MODELS, "authoring-assist": authoring_model},
+            )
             client = LLMClient(
-                config=LLMConfig(
-                    mode_models={**DEFAULT_MODE_MODELS, "authoring-assist": authoring_model},
-                    global_daily_cap_micro_usd=1_000_000,
-                    default_provider=default_provider,
-                ),
+                config=config,
                 providers=providers,
-                budget=DailyBudgetTracker(mode_caps_micro_usd={}, global_cap_micro_usd=1_000_000),
+                budget=DailyBudgetTracker(
+                    mode_caps_micro_usd=config.per_mode_daily_cap_micro_usd,
+                    global_cap_micro_usd=config.global_daily_cap_micro_usd,
+                ),
             )
             draft = ProposalDraft(
                 related_node_title=args.related_node_title,
@@ -467,14 +470,14 @@ def main() -> None:
             # without one, the fake provider keeps replays runnable offline.
             api_key = get_settings().anthropic_api_key
             providers, default_provider = build_default_providers(anthropic_api_key=api_key)
+            config = load_runtime_llm_config(default_provider=default_provider)
             client = LLMClient(
-                config=LLMConfig(
-                    mode_models=dict(DEFAULT_MODE_MODELS),
-                    global_daily_cap_micro_usd=1_000_000,
-                    default_provider=default_provider,
-                ),
+                config=config,
                 providers=providers,
-                budget=DailyBudgetTracker(mode_caps_micro_usd={}, global_cap_micro_usd=1_000_000),
+                budget=DailyBudgetTracker(
+                    mode_caps_micro_usd=config.per_mode_daily_cap_micro_usd,
+                    global_cap_micro_usd=config.global_daily_cap_micro_usd,
+                ),
             )
             outcomes = replay_eval_set(client, entries)
             passed = sum(1 for outcome in outcomes if outcome.passed)
