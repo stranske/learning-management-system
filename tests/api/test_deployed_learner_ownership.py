@@ -523,3 +523,216 @@ def test_rubric_attempt_filter_supports_a_second_owned_learner() -> None:
     finally:
         with suppress(StopIteration):
             next(fixture)
+
+
+def _seed_capability_chain(session: Session, learner_id: str) -> dict[str, str]:
+    """Persist real target-derived records, including scheduler side effects."""
+    from lms.capability.repository import (
+        create_capability_target,
+        create_gap_analysis,
+        create_maintenance_plan,
+        recompute_capability_estimate,
+    )
+    from lms.graphs.repository import create_knowledge_node
+
+    node = create_knowledge_node(
+        session,
+        title="Private capability",
+        knowledge_type="conceptual",
+        scope="personal",
+        actor_id=learner_id,
+        status="published",
+    )
+    target = create_capability_target(
+        session, learner_id=learner_id, title="Private target", target_node_ids=[node.id]
+    )
+    estimate = recompute_capability_estimate(session, target_id=target.id)
+    analysis = create_gap_analysis(session, estimate_id=estimate.id)
+    plan = create_maintenance_plan(session, gap_analysis_id=analysis.id)
+    session.commit()
+    return {
+        "targets": target.id,
+        "estimates": estimate.id,
+        "gap-analyses": analysis.id,
+        "maintenance-plans": plan.id,
+        "node": node.id,
+    }
+
+
+def test_authenticated_user_cannot_list_another_learners_capability_estimates() -> None:
+    """All collections reject foreign learner filters and scope omitted filters."""
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        own = _seed_capability_chain(session, client.owner_learner_id)  # type: ignore[attr-defined]
+        foreign = _seed_capability_chain(session, client.other_learner_id)  # type: ignore[attr-defined]
+        for route in ("estimates", "targets", "gap-analyses", "maintenance-plans"):
+            response = client.get(f"/capability/{route}", params={"learner_id": client.other_learner_id})  # type: ignore[attr-defined]
+            missing = client.get(f"/capability/{route}", params={"learner_id": "missing-learner"})
+            assert response.status_code == missing.status_code == 403
+            assert response.json() == missing.json()
+            for params in ({}, {"limit": 1}, {"learner_id": client.owner_learner_id}):  # type: ignore[attr-defined]
+                allowed = client.get(f"/capability/{route}", params=params)
+                assert allowed.status_code == 200, allowed.text
+                assert [item["id"] for item in allowed.json()] == [own[route]]
+                assert foreign[route] not in allowed.text
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_authenticated_user_cannot_get_foreign_capability_estimate_by_id() -> None:
+    """Every direct ID read hides foreign records with the missing-ID response."""
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        own = _seed_capability_chain(session, client.owner_learner_id)  # type: ignore[attr-defined]
+        foreign = _seed_capability_chain(session, client.other_learner_id)  # type: ignore[attr-defined]
+        for route in ("estimates", "targets", "gap-analyses", "maintenance-plans"):
+            denied = client.get(f"/capability/{route}/{foreign[route]}")
+            missing = client.get(f"/capability/{route}/missing-record")
+            assert denied.status_code == missing.status_code == 404
+            assert denied.json() == missing.json() == {"detail": "Learner resource not found."}
+            allowed = client.get(f"/capability/{route}/{own[route]}")
+            assert allowed.status_code == 200, allowed.text
+            assert allowed.json()["id"] == own[route]
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_authenticated_user_cannot_write_foreign_capability_records() -> None:
+    """Deny target edits and derived writes before records or schedules change."""
+    from lms.capability.models import (
+        CapabilityEstimate,
+        CapabilityTarget,
+        GapAnalysis,
+        MaintenancePlan,
+    )
+    from lms.scheduling.models import ReviewQueueItem, ReviewSchedule, SchedulerDecision
+
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        own = _seed_capability_chain(session, client.owner_learner_id)  # type: ignore[attr-defined]
+        foreign = _seed_capability_chain(session, client.other_learner_id)  # type: ignore[attr-defined]
+        models = (
+            CapabilityTarget,
+            CapabilityEstimate,
+            GapAnalysis,
+            MaintenancePlan,
+            ReviewSchedule,
+            ReviewQueueItem,
+            SchedulerDecision,
+        )
+        counts = [session.query(model).count() for model in models]
+        target_payload = {
+            "learner_id": client.other_learner_id,
+            "title": "Intrusion",  # type: ignore[attr-defined]
+            "target_node_ids": [foreign["node"]],
+        }
+        denied = client.post("/capability/targets", json=target_payload)
+        missing = client.post(
+            "/capability/targets", json={**target_payload, "learner_id": "missing"}
+        )
+        assert denied.status_code == missing.status_code == 404
+        assert denied.json() == missing.json()
+        for route, field, parent in (
+            ("estimates", "target_id", "targets"),
+            ("gap-analyses", "estimate_id", "estimates"),
+            ("maintenance-plans", "gap_analysis_id", "gap-analyses"),
+        ):
+            denied = client.post(f"/capability/{route}", json={field: foreign[parent]})
+            missing = client.post(f"/capability/{route}", json={field: "missing"})
+            assert denied.status_code == missing.status_code == 404
+            assert denied.json() == missing.json()
+        for method, suffix, payload in (
+            ("PATCH", "", {"title": "Intrusion"}),
+            ("POST", "/archive", None),
+        ):
+            denied = client.request(
+                method, f"/capability/targets/{foreign['targets']}{suffix}", json=payload
+            )
+            missing = client.request(method, f"/capability/targets/missing{suffix}", json=payload)
+            assert denied.status_code == missing.status_code == 404
+            assert denied.json() == missing.json()
+        session.expire_all()
+        target = session.get(CapabilityTarget, foreign["targets"])
+        assert target is not None and target.title == "Private target" and target.status == "active"
+        assert [session.query(model).count() for model in models] == counts
+
+        # The owner can still create the complete planning chain and edit/archive it.
+        created = client.post(
+            "/capability/targets",
+            json={
+                **target_payload,
+                "learner_id": client.owner_learner_id,
+                "target_node_ids": [own["node"]],
+            },
+        )  # type: ignore[attr-defined]
+        assert created.status_code == 201, created.text
+        target_id = created.json()["id"]
+        parent_id = target_id
+        for route, field in (
+            ("estimates", "target_id"),
+            ("gap-analyses", "estimate_id"),
+            ("maintenance-plans", "gap_analysis_id"),
+        ):
+            created = client.post(f"/capability/{route}", json={field: parent_id})
+            assert created.status_code == 201, created.text
+            assert created.json()["learner_id"] == client.owner_learner_id  # type: ignore[attr-defined]
+            parent_id = created.json()["id"]
+        updated = client.patch(f"/capability/targets/{target_id}", json={"title": "Allowed"})
+        assert updated.status_code == 200 and updated.json()["title"] == "Allowed"
+        archived = client.post(f"/capability/targets/{target_id}/archive")
+        assert archived.status_code == 200 and archived.json()["status"] == "archived"
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_capability_parent_filters_support_owned_learners_and_reject_foreign_ids() -> None:
+    """Parent-only filters preserve second profiles, without leaking foreign IDs."""
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        primary = session.get(Learner, client.owner_learner_id)  # type: ignore[attr-defined]
+        assert primary is not None
+        second = Learner(user_id=primary.user_id, display_name="Second profile")
+        session.add(second)
+        session.commit()
+        own = _seed_capability_chain(session, second.id)
+        foreign = _seed_capability_chain(session, client.other_learner_id)  # type: ignore[attr-defined]
+        filters = (
+            ("estimates", "target_id", "targets"),
+            ("gap-analyses", "target_id", "targets"),
+            ("gap-analyses", "estimate_id", "estimates"),
+            ("maintenance-plans", "target_id", "targets"),
+            ("maintenance-plans", "gap_analysis_id", "gap-analyses"),
+        )
+        for route, field, parent in filters:
+            for params in ({field: own[parent]}, {field: own[parent], "learner_id": second.id}):
+                allowed = client.get(f"/capability/{route}", params=params)
+                assert allowed.status_code == 200, allowed.text
+                assert [item["id"] for item in allowed.json()] == [own[route]]
+            for learner_filter in ({}, {"learner_id": primary.id}):
+                denied = client.get(
+                    f"/capability/{route}", params={field: foreign[parent], **learner_filter}
+                )
+                missing = client.get(
+                    f"/capability/{route}", params={field: "missing", **learner_filter}
+                )
+                assert denied.status_code == missing.status_code == 404
+                assert denied.json() == missing.json()
+            mismatched = client.get(
+                f"/capability/{route}", params={field: own[parent], "learner_id": primary.id}
+            )
+            assert mismatched.status_code == 200 and mismatched.json() == []
+        mixed = client.get(
+            "/capability/gap-analyses",
+            params={"target_id": own["targets"], "estimate_id": foreign["estimates"]},
+        )
+        assert mixed.status_code == 404
+    finally:
+        with suppress(StopIteration):
+            next(fixture)

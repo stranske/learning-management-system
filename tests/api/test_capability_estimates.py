@@ -17,6 +17,7 @@ from lms.capability.schemas import CapabilityEstimateRecompute
 from lms.evidence.repository import create_evidence_record
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.repository import create_learner_for_user
+from lms.settings import Settings
 
 
 def test_recompute_capability_estimate_for_personal_target(db_session: Session) -> None:
@@ -60,6 +61,8 @@ def test_recompute_capability_estimate_for_personal_target(db_session: Session) 
         recompute_capability_estimate_route(
             payload=CapabilityEstimateRecompute(target_id=target.id),
             session=db_session,
+            current_user=user,
+            settings=Settings(auth_required=False),
         ),
     )
     assert payload["target_id"] == target.id
@@ -68,11 +71,18 @@ def test_recompute_capability_estimate_for_personal_target(db_session: Session) 
     assert payload["commentary_redaction_class"] == "learner-facing-inferred-mastery"
     assert "Current evidence suggests" in payload["commentary"]
 
-    list_payload = list_capability_estimates_route(session=db_session, target_id=target.id)
+    list_payload = list_capability_estimates_route(
+        session=db_session,
+        current_user=user,
+        settings=Settings(auth_required=False),
+        target_id=target.id,
+    )
     assert [item["id"] for item in list_payload] == [payload["id"]]
 
     detail_payload = get_capability_estimate_route(
         estimate_id=str(payload["id"]),
         session=db_session,
+        current_user=user,
+        settings=Settings(auth_required=False),
     )
     assert detail_payload["id"] == payload["id"]
