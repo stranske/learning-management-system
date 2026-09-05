@@ -1,21 +1,90 @@
-"""Tests for database settings, sessions, and baseline migrations."""
+"""Tests for database settings, sessions, and baseline migrations.
+
+Run the real Postgres migration gate locally (or after starting compose in CI)::
+
+    docker compose up -d db
+    DATABASE_URL=postgresql+psycopg://lms:lms@localhost:5432/lms \
+        uv run --extra dev pytest --no-cov \
+        tests/test_database_baseline.py::test_alembic_upgrade_head_on_postgres
+
+The database user needs CREATE SCHEMA permission. The test upgrades a unique,
+empty schema and drops only that schema afterward; existing tables are untouched.
+Without a Postgres DATABASE_URL it skips, so the normal SQLite suite stays local.
+Capture the pytest output as the migration-gate evidence in compose CI.
+"""
 
 from __future__ import annotations
 
+import os
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+import pytest
+from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import inspect, text
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from lms.db import session as db_session_module
 from lms.db.base import Base
 from lms.db.session import get_session, make_engine, session_scope
 from lms.db.version_table import ensure_version_table_width
-from lms.settings import Settings
+from lms.settings import Settings, get_settings
+
+
+def test_alembic_upgrade_head_on_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise all migrations and Postgres's enforced version-column width."""
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        pytest.skip("Set DATABASE_URL to a Postgres database to run the migration gate")
+    url = make_url(Settings(database_url=database_url).database_url)
+    if url.get_backend_name() != "postgresql":
+        pytest.skip("The Postgres migration gate requires a Postgres DATABASE_URL")
+
+    schema = f"lms_migration_test_{uuid4().hex}"
+    admin_engine = create_engine(url)
+    options = f"{url.query.get('options', '')} -csearch_path={schema}".strip()
+    isolated_url = url.update_query_dict({"options": options})
+    engine = create_engine(isolated_url)
+    repo_root = Path(__file__).resolve().parents[1]
+    config = Config(str(repo_root / "alembic.ini"))
+    config.set_main_option("script_location", str(repo_root / "alembic"))
+    scripts = ScriptDirectory.from_config(config)
+
+    try:
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        monkeypatch.setenv("DATABASE_URL", isolated_url.render_as_string(hide_password=False))
+        get_settings.cache_clear()
+
+        # Do not pre-create/widen alembic_version here: removing the env.py
+        # ensure_version_table_width call must fail on a >32-character revision.
+        assert any(len(revision.revision) > 32 for revision in scripts.walk_revisions())
+        command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            inspector = inspect(connection)
+            assert inspector.has_table("alembic_version")
+            columns = {
+                column["name"]: column for column in inspector.get_columns("alembic_version")
+            }
+            assert columns["version_num"]["type"].length == 255
+            versions = set(
+                connection.execute(text("SELECT version_num FROM alembic_version")).scalars()
+            )
+            assert versions == set(scripts.get_heads())
+    finally:
+        get_settings.cache_clear()
+        engine.dispose()
+        try:
+            with admin_engine.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        finally:
+            admin_engine.dispose()
 
 
 def test_settings_reads_database_url() -> None:
