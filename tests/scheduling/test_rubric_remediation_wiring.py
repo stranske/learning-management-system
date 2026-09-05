@@ -92,6 +92,8 @@ def test_rubric_score_fires_configured_remediation_trigger(
         evidence = session.get(EvidenceRecord, evidence_id)
         assert evidence is not None
         assert evidence.attempt_id == attempt_id
+        assert evidence.learner_id == learner_id
+        assert evidence.knowledge_node_id == node_id
         assert evidence.scoring_method == "rubric-scored"
         assert evidence.correctness is False
         items = list(
