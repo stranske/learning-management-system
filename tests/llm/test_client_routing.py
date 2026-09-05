@@ -106,6 +106,46 @@ def test_load_llm_config_from_env_uses_env_overrides() -> None:
     assert config.global_daily_cap_micro_usd == 12345
 
 
+def test_load_llm_config_honors_render_budget_usd_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LLM_DAILY_CAP_MICRO_USD", raising=False)
+    monkeypatch.setenv("LLM_DAILY_BUDGET_USD", "2.50")
+
+    config = load_llm_config_from_env()
+
+    assert config.global_daily_cap_micro_usd == 2_500_000
+
+
+@pytest.mark.parametrize(
+    ("budget_usd", "expected_micro_usd"),
+    [("0", 0), ("0.000001", 1), ("1.000001", 1_000_001), ("0.0000019", 1)],
+)
+def test_render_budget_conversion_uses_decimal_precision(
+    budget_usd: str, expected_micro_usd: int
+) -> None:
+    config = load_llm_config_from_env({"LLM_DAILY_BUDGET_USD": budget_usd})
+
+    assert config.global_daily_cap_micro_usd == expected_micro_usd
+
+
+@pytest.mark.parametrize("micro_usd", ["0", "12345"])
+def test_micro_usd_budget_override_takes_precedence(micro_usd: str) -> None:
+    config = load_llm_config_from_env(
+        {"LLM_DAILY_CAP_MICRO_USD": micro_usd, "LLM_DAILY_BUDGET_USD": "invalid"}
+    )
+
+    assert config.global_daily_cap_micro_usd == int(micro_usd)
+
+
+@pytest.mark.parametrize("budget_usd", ["", "invalid", "NaN", "Infinity", "-Infinity", "-0.01"])
+def test_render_budget_rejects_invalid_values(budget_usd: str) -> None:
+    with pytest.raises(ValueError, match="LLM_DAILY_BUDGET_USD"):
+        load_llm_config_from_env({"LLM_DAILY_BUDGET_USD": budget_usd})
+
+
+def test_missing_budget_preserves_default_cap() -> None:
+    assert load_llm_config_from_env({}).global_daily_cap_micro_usd == 200_000
+
+
 def test_provider_kwarg_overrides_default_provider() -> None:
     """Callers can route to a non-default provider per call."""
     provider_default = FakeProvider(name="default")

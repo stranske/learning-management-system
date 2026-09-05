@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 
 from lms.llm.models import LLM_MODES
 
@@ -69,10 +70,22 @@ def load_llm_config_from_env(
     choices are deferred until empirical evaluation data exists; the defaults
     are intentionally sensible-but-revisable.
     """
+    # The legacy micro-USD override takes precedence over Render's USD secret.
     env = dict(environ) if environ is not None else dict(os.environ)
     mode_models = {mode: env.get(_env_var_for(mode), defaults[mode]) for mode in LLM_MODES}
     cap_str = env.get("LLM_DAILY_CAP_MICRO_USD")
-    cap = int(cap_str) if cap_str else 200_000
+    if cap_str:
+        cap = int(cap_str)
+    elif "LLM_DAILY_BUDGET_USD" in env:
+        try:
+            budget_usd = Decimal(env["LLM_DAILY_BUDGET_USD"])
+        except InvalidOperation as exc:
+            raise ValueError("LLM_DAILY_BUDGET_USD must be a finite non-negative decimal") from exc
+        if not budget_usd.is_finite() or budget_usd < 0:
+            raise ValueError("LLM_DAILY_BUDGET_USD must be a finite non-negative decimal")
+        cap = int(budget_usd * 1_000_000)
+    else:
+        cap = 200_000
     provider = env.get("LLM_DEFAULT_PROVIDER", "fake")
     return LLMConfig(
         mode_models=mode_models,
