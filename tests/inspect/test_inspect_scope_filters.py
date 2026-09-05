@@ -127,14 +127,18 @@ def test_overview_honors_ownership_scope_for_prompts_and_sources() -> None:
         personal_payload = learner_overview_route(
             "learner-overview",
             session,
-            current_user=User(username="local-inspect", is_local=True),
+            current_user=User(
+                username="local-inspect", display_name="Local Inspect", is_local=True
+            ),
             settings=Settings(auth_required=False),
             ownership_scope="personal",
         )
         institutional_payload = learner_overview_route(
             "learner-overview",
             session,
-            current_user=User(username="local-inspect", is_local=True),
+            current_user=User(
+                username="local-inspect", display_name="Local Inspect", is_local=True
+            ),
             settings=Settings(auth_required=False),
             ownership_scope="institutional",
         )
