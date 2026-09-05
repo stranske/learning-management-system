@@ -10,9 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from lms.analytics.calibration import calibration_for_learner
+from lms.auth.login import SettingsDep
 from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
 from lms.graphs.models import KnowledgeNode
+from lms.learners.identity import CurrentUserDep, require_learner_ownership
 from lms.mastery.service import mastery_estimates_for_learner
 from lms.scheduling.models import ReviewQueueItem, SchedulerDecision
 from lms.sources.models import SourceReference
@@ -113,9 +115,12 @@ def _scheduler_panel(
 def learner_overview_route(
     learner_id: str,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
     ownership_scope: Annotated[str, Query(pattern="^(personal|institutional)$")] = "personal",
 ) -> dict[str, Any]:
     """Return a sparse-data-friendly Inspect overview for one learner."""
+    require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
     evidence = list(
         session.scalars(
             select(EvidenceRecord)
@@ -210,6 +215,8 @@ def learner_overview_route(
 def learner_calibration_route(
     learner_id: str,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
     knowledge_node_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     """Return confidence-vs-accuracy calibration for one learner.
@@ -218,6 +225,7 @@ def learner_calibration_route(
     the observed accuracy and median response time, plus an ``overconfident``
     flag when high confidence is paired with low accuracy.
     """
+    require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
     return calibration_for_learner(
         session, learner_id, knowledge_node_id=knowledge_node_id
     ).as_dict()

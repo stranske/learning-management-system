@@ -13,10 +13,12 @@ import lms.learners.models  # noqa: F401
 import lms.prompts.models  # noqa: F401
 import lms.sources.models  # noqa: F401
 from lms.api.inspect import learner_overview_route
+from lms.auth.models import User
 from lms.db.base import Base
 from lms.graphs.models import KnowledgeNode
 from lms.learners.models import LearningGoal
 from lms.prompts.models import Prompt
+from lms.settings import Settings
 from lms.sources.models import SourceReference
 
 
@@ -125,11 +127,19 @@ def test_overview_honors_ownership_scope_for_prompts_and_sources() -> None:
         personal_payload = learner_overview_route(
             "learner-overview",
             session,
+            current_user=User(
+                username="local-inspect", display_name="Local Inspect", is_local=True
+            ),
+            settings=Settings(auth_required=False),
             ownership_scope="personal",
         )
         institutional_payload = learner_overview_route(
             "learner-overview",
             session,
+            current_user=User(
+                username="local-inspect", display_name="Local Inspect", is_local=True
+            ),
+            settings=Settings(auth_required=False),
             ownership_scope="institutional",
         )
 
