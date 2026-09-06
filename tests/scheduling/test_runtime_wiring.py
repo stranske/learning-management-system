@@ -16,7 +16,9 @@ from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
 from lms.db.base import Base
 from lms.db.session import get_session
+from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_attempt
+from lms.feedback.models import RubricScore
 from lms.feedback.repository import create_rubric
 from lms.feedback.scoring import score_attempt_with_rubric
 from lms.graphs.repository import create_knowledge_node
@@ -102,10 +104,10 @@ def test_rubric_scoring_runtime_advances_success_ramp(
     assert rules == ["fsrs-warm-review"] * 3
 
 
-def test_rubric_scoring_keeps_score_when_scheduler_fails(
+def test_rubric_scoring_aborts_transaction_when_scheduler_fails(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A scheduler defect must not abort the core rubric score write."""
+    """The caller must receive a failure and roll back scoring evidence."""
     rubric_id, criterion_id, _node_id = _rubric(db_session)
     attempt = create_attempt(
         db_session,
@@ -115,28 +117,30 @@ def test_rubric_scoring_keeps_score_when_scheduler_fails(
         feedback={"goal": "Use spaced repetition."},
         confidence_rating=5,
     )
+    attempt_id = attempt.id
+    db_session.commit()
 
     def fail_schedule(*_args: object, **_kwargs: object) -> None:
         raise ValueError("scheduler unavailable")
 
     monkeypatch.setattr(scoring_module, "schedule_for_evidence", fail_schedule)
 
-    score = score_attempt_with_rubric(
-        db_session,
-        rubric_id=rubric_id,
-        attempt_id=attempt.id,
-        scorer_type="human",
-        criterion_scores=[
-            {
-                "criterion_id": criterion_id,
-                "points": 5,
-                "rationale": "Complete response.",
-            }
-        ],
-    )
+    with (
+        pytest.raises(scoring_module.RubricScoringError, match="scheduling failed") as error,
+        db_session.begin(),
+    ):
+        score_attempt_with_rubric(
+            db_session,
+            rubric_id=rubric_id,
+            attempt_id=attempt_id,
+            scorer_type="human",
+            criterion_scores=[{"criterion_id": criterion_id, "points": 5}],
+        )
 
-    assert score.id
-    assert score.evidence_record_id is not None
+    assert error.value.http_status == 500
+    assert isinstance(error.value.__cause__, ValueError)
+    assert db_session.scalar(select(RubricScore)) is None
+    assert db_session.scalar(select(EvidenceRecord)) is None
 
 
 def test_complete_review_queue_route_is_authorized_and_idempotent(
@@ -466,9 +470,11 @@ def test_deployed_scheduler_decisions_resolve_owner_and_reject_foreign_learner(
         )
         schedule_from_attempt(session, attempt=other_attempt, evidence_record=other_evidence)
         session.commit()
-        owned_decision_id = session.scalar(
+        owned_decision = session.scalar(
             select(SchedulerDecision).where(SchedulerDecision.learner_id == "learner-owned")
-        ).id
+        )
+        assert owned_decision is not None
+        owned_decision_id = owned_decision.id
 
     owned = client.get("/scheduler-decisions", params={"learner_id": "learner-owned"})
     assert owned.status_code == 200
