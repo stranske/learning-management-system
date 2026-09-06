@@ -26,7 +26,7 @@ from lms.settings import Settings, get_settings
 
 
 def _deployed_client(
-    *, auth_required: bool = True, learner_routes: bool = False
+    *, auth_required: bool = True
 ) -> Generator[tuple[TestClient, Session], None, None]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -98,7 +98,7 @@ def _deployed_client(
     def override_session() -> Generator[Session, None, None]:
         yield session
 
-    app = create_app(enable_local_identity_routes=True) if learner_routes else create_app()
+    app = create_app(enable_local_identity_routes=False)
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_settings] = lambda: Settings(auth_required=auth_required)
     app.dependency_overrides[require_authenticated_user] = lambda: owner
@@ -779,7 +779,7 @@ _LEARNER_ROUTE_CASES = [
 def test_learner_routes_enforce_ownership_without_changing_local_access(
     method: str, route: str, success_status: int, access: str
 ) -> None:
-    fixture = _deployed_client(auth_required=access != "local-foreign", learner_routes=True)
+    fixture = _deployed_client(auth_required=access != "local-foreign")
     client, session = next(fixture)
     try:
         learner_id = (
@@ -820,9 +820,10 @@ def test_learner_routes_enforce_ownership_without_changing_local_access(
         elif method == "POST":
             payload = {"prompt": "New prompt", "response": "New reflection"}
         suffix = route.format(goal_id=goal.id)
-        response = client.request(method, f"/learners/{learner_id}/{suffix}", json=payload)
+        request_kwargs = {"json": payload} if payload is not None else {}
+        response = client.request(method, f"/learners/{learner_id}/{suffix}", **request_kwargs)
         if access == "foreign":
-            missing = client.request(method, f"/learners/nonexistent/{suffix}", json=payload)
+            missing = client.request(method, f"/learners/nonexistent/{suffix}", **request_kwargs)
             assert response.status_code == missing.status_code == 404
             assert response.json() == missing.json() == {"detail": "Learner resource not found."}
             session.expire_all()
@@ -853,7 +854,7 @@ def test_learner_routes_enforce_ownership_without_changing_local_access(
 
 @pytest.mark.parametrize("access", ["foreign", "missing", "owner", "local-foreign"])
 def test_create_learner_enforces_signed_in_user_and_preserves_local_access(access: str) -> None:
-    fixture = _deployed_client(auth_required=access != "local-foreign", learner_routes=True)
+    fixture = _deployed_client(auth_required=access != "local-foreign")
     client, session = next(fixture)
     try:
         learner_id = (
@@ -880,7 +881,7 @@ def test_create_learner_enforces_signed_in_user_and_preserves_local_access(acces
 
 
 def test_learner_ownership_uses_real_login_session() -> None:
-    fixture = _deployed_client(learner_routes=True)
+    fixture = _deployed_client()
     client, session = next(fixture)
     try:
         owner_learner = session.get(Learner, client.owner_learner_id)  # type: ignore[attr-defined]

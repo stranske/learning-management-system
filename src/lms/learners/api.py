@@ -85,7 +85,7 @@ def create_learning_goal_route(
 ) -> LearningGoal:
     """Create a learner goal linked to published knowledge nodes."""
     require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
-    if get_learner(session, learner_id=learner_id) is None:
+    if not settings.auth_required and get_learner(session, learner_id=learner_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
     try:
         goal = create_learning_goal(
@@ -125,7 +125,7 @@ def list_learning_goals_route(
 ) -> list[LearningGoal]:
     """Return goals for exactly one learner."""
     require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
-    if get_learner(session, learner_id=learner_id) is None:
+    if not settings.auth_required and get_learner(session, learner_id=learner_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
     try:
         return list_learning_goals_for_learner(
@@ -154,7 +154,7 @@ def read_knowledge_profile_route(
 ) -> dict[str, object]:
     """Return the learner's computed knowledge profile for one graph scope."""
     require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
-    if get_learner(session, learner_id=learner_id) is None:
+    if not settings.auth_required and get_learner(session, learner_id=learner_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
     try:
         return knowledge_profile_for_learner(
@@ -219,7 +219,7 @@ def create_reflection_route(
 ) -> LearnerReflection:
     """Record a learner's metacognitive reflection after a review."""
     require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
-    if get_learner(session, learner_id=learner_id) is None:
+    if not settings.auth_required and get_learner(session, learner_id=learner_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
     try:
         reflection = create_reflection(
@@ -249,7 +249,7 @@ def list_reflections_route(
 ) -> list[LearnerReflection]:
     """Surface a learner's recorded reflections, newest first."""
     require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
-    if get_learner(session, learner_id=learner_id) is None:
+    if not settings.auth_required and get_learner(session, learner_id=learner_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
     return list_reflections_for_learner(session, learner_id=learner_id)
 
@@ -267,7 +267,7 @@ def read_goal_progress_route(
 ) -> dict[str, object]:
     """Return goal-relative progress (target nodes covered vs. mastered)."""
     require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
-    if get_learner(session, learner_id=learner_id) is None:
+    if not settings.auth_required and get_learner(session, learner_id=learner_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learner not found.")
     try:
         return goal_progress_for_learner(

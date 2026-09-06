@@ -42,7 +42,7 @@ def test_openapi_available() -> None:
         assert schema["info"]["title"] == "Learning Management System"
         assert "/health" in schema["paths"]
         assert "/auth/users" not in schema["paths"]
-        assert "/learners" not in schema["paths"]
+        assert "/learners" in schema["paths"]
 
 
 @pytest.mark.parametrize("path", ["/docs", "/redoc", "/docs/oauth2-redirect"])
