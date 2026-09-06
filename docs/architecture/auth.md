@@ -63,6 +63,10 @@ single-user v1 it's not justified.
 
 The HTML-vs-JSON disambiguation is based on the request's `Accept` header.
 
+When `AUTH_REQUIRED=true` at application startup, `/docs`, `/redoc`, and
+`/openapi.json` are disabled and return 404, including for authenticated users.
+These documentation endpoints remain available in local development.
+
 ## Password handling
 
 - Hashing: `argon2-cffi`'s `PasswordHasher` with library defaults

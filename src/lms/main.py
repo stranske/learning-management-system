@@ -48,12 +48,16 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
     database session, LLM provider wiring) can be injected without rewriting
     the module shape.
     """
+    settings = get_settings()
     app = FastAPI(
         title="Learning Management System",
         description="API-first backend for evidence-informed personal learning.",
         version="0.1.0",
+        # FastAPI's documentation routes bypass router authentication dependencies.
+        docs_url=None if settings.auth_required else "/docs",
+        redoc_url=None if settings.auth_required else "/redoc",
+        openapi_url=None if settings.auth_required else "/openapi.json",
     )
-    settings = get_settings()
     if enable_local_identity_routes is None:
         enable_local_identity_routes = settings.enable_local_identity_routes
     app.state.enable_local_identity_routes = enable_local_identity_routes
