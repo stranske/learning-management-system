@@ -41,6 +41,12 @@ class InvalidRubricScoringError(RubricScoringError):
     http_status = 422
 
 
+class RubricSchedulingError(RubricScoringError):
+    """Scheduling failed; callers must roll back the scoring transaction."""
+
+    http_status = 500
+
+
 class DuplicateRubricScoreError(RubricScoringError):
     """A second score for the same attempt+rubric (retry/double-submit guard)."""
 
@@ -70,7 +76,11 @@ def score_attempt_with_rubric(
     feedback_threshold: float = 0.85,
     remediation_threshold: float = 0.5,
 ) -> RubricScore:
-    """Score an attempt, write linked evidence, and create low-score feedback."""
+    """Score, schedule, and write feedback in the caller's transaction.
+
+    The caller commits on success and rolls back on failure, including any
+    evidence or scheduling writes made before a scheduling error.
+    """
     attempt = session.get(Attempt, attempt_id)
     if attempt is None:
         raise AttemptNotFoundError("referenced attempt was not found")
@@ -129,15 +139,14 @@ def score_attempt_with_rubric(
     )
     try:
         schedule_for_evidence(session, attempt=attempt, evidence_record=evidence)
-    except Exception:
+    except Exception as exc:
+        # Do not inspect ORM attributes here: a database error may have left
+        # the session unusable until the caller rolls it back.
         logger.exception(
             "failed to schedule review or apply remediation triggers for rubric score",
-            extra={
-                "attempt_id": attempt.id,
-                "evidence_record_id": evidence.id,
-                "learner_id": attempt.learner_id,
-            },
+            extra={"attempt_id": attempt_id, "rubric_id": rubric_id},
         )
+        raise RubricSchedulingError("Rubric scheduling failed; the score was not saved.") from exc
 
     feedback_record_id: str | None = None
     if normalized_score < feedback_threshold:

@@ -757,7 +757,7 @@ def create_rubric_score_route(
     current_user: CurrentUserDep,
     settings: SettingsDep,
 ) -> RubricScoreRead:
-    """Score an owned attempt and preserve partial-credit evidence."""
+    """Commit an owned attempt's score and scheduling together or neither."""
     if settings.auth_required:
         attempt = get_attempt_for_user(
             session, attempt_id=payload.attempt_id, user_id=current_user.id
@@ -770,6 +770,7 @@ def create_rubric_score_route(
         session.commit()
         session.refresh(score)
     except RubricScoringError as exc:
+        # This includes scheduler failures (500), not only invalid input.
         session.rollback()
         raise HTTPException(status_code=exc.http_status, detail=str(exc)) from exc
     return RubricScoreRead.model_validate(score)
