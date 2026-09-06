@@ -12,14 +12,16 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from lms.audit.models import AuditLog
 from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
 from lms.auth.passwords import hash_password
+from lms.competencies.models import Competency, CompetencyEvidence
 from lms.db.base import Base
 from lms.db.session import get_session
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.models import FeedbackRecord
-from lms.graphs.models import KnowledgeNode
+from lms.graphs.models import KnowledgeEdge, KnowledgeNode
 from lms.learners.models import Learner, LearnerReflection, LearningGoal
 from lms.main import create_app
 from lms.settings import Settings, get_settings
@@ -115,6 +117,161 @@ def _deployed_client(
         session.close()
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+@pytest.fixture
+def competency_client() -> Generator[tuple[TestClient, Session, dict[str, str]], None, None]:
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        node = KnowledgeNode(
+            title="Shared concept",
+            knowledge_type="conceptual",
+            ownership_scope="personal",
+            status="published",
+        )
+        competency = Competency(
+            title="Shared competency",
+            ownership_scope="personal",
+            target_knowledge_type="conceptual",
+            status="active",
+        )
+        session.add_all([node, competency])
+        session.flush()
+        ids = {"node": node.id, "competency": competency.id}
+        for kind, learner_id in (
+            ("owner", client.owner_learner_id),
+            ("foreign", client.other_learner_id),
+        ):
+            evidence = EvidenceRecord(learner_id=learner_id, knowledge_node_id=node.id)
+            session.add(evidence)
+            session.flush()
+            link = CompetencyEvidence(
+                competency_id=competency.id,
+                knowledge_node_id=node.id,
+                evidence_record_id=evidence.id,
+                learner_id=learner_id,
+            )
+            session.add(link)
+            session.flush()
+            ids[kind] = learner_id
+            ids[f"{kind}_link"] = link.id
+        session.commit()
+        yield client, session, ids
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+@pytest.mark.parametrize("route", ["/competency-evidence", "/competencies/{competency}/evidence"])
+@pytest.mark.parametrize("access", ["owner", "foreign", "missing", "local-foreign"])
+def test_competency_evidence_lists_enforce_learner_ownership(
+    competency_client: tuple[TestClient, Session, dict[str, str]], route: str, access: str
+) -> None:
+    client, _, ids = competency_client
+    if access == "local-foreign":
+        client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=False)
+    learner_id = ids["owner"] if access == "owner" else ids["foreign"]
+    if access == "missing":
+        learner_id = "nonexistent"
+    response = client.get(route.format(**ids), params={"learner_id": learner_id})
+    if access in {"foreign", "missing"}:
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Learner resource not found."}
+    else:
+        assert response.status_code == 200, response.text
+        kind = "owner" if access == "owner" else "foreign"
+        assert [row["id"] for row in response.json()] == [ids[f"{kind}_link"]]
+
+
+@pytest.mark.parametrize("auth_required", [True, False])
+@pytest.mark.parametrize("filtered", [True, False])
+def test_competency_evidence_default_list_is_scoped_before_limit(
+    competency_client: tuple[TestClient, Session, dict[str, str]],
+    auth_required: bool,
+    filtered: bool,
+) -> None:
+    client, _, ids = competency_client
+    client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=auth_required)
+    params: dict[str, str | int] = {"limit": 1 if auth_required else 100}
+    if filtered:
+        params["competency_id"] = ids["competency"]
+    response = client.get("/competency-evidence", params=params)
+    assert response.status_code == 200, response.text
+    expected = {ids["owner_link"]} if auth_required else {ids["owner_link"], ids["foreign_link"]}
+    assert {row["id"] for row in response.json()} == expected
+    definitions = client.get("/competencies")
+    assert definitions.status_code == 200
+    assert [row["id"] for row in definitions.json()] == [ids["competency"]]
+
+
+@pytest.mark.parametrize("access", ["owner", "foreign", "missing", "local-foreign"])
+def test_competency_evidence_creation_checks_record_owner_before_writes(
+    competency_client: tuple[TestClient, Session, dict[str, str]], access: str
+) -> None:
+    client, session, ids = competency_client
+    if access == "local-foreign":
+        client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=False)
+    evidence = EvidenceRecord(
+        learner_id=ids["owner"] if access == "owner" else ids["foreign"],
+        knowledge_node_id=ids["node"],
+    )
+    session.add(evidence)
+    session.commit()
+    models = (CompetencyEvidence, KnowledgeNode, KnowledgeEdge, AuditLog)
+    before = [session.query(model).count() for model in models]
+    response = client.post(
+        "/competency-evidence",
+        json={
+            "competency_id": ids["competency"],
+            "knowledge_node_id": ids["node"],
+            "evidence_record_id": "nonexistent" if access == "missing" else evidence.id,
+        },
+    )
+    if access in {"foreign", "missing"}:
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Evidence record not found."}
+        session.expire_all()
+        assert [session.query(model).count() for model in models] == before
+    else:
+        assert response.status_code == 201, response.text
+        assert response.json()["evidence_record_id"] == evidence.id
+        assert response.json()["learner_id"] == evidence.learner_id
+        assert session.query(CompetencyEvidence).count() == before[0] + 1
+
+
+def test_competency_evidence_uses_real_login_identity(
+    competency_client: tuple[TestClient, Session, dict[str, str]],
+) -> None:
+    client, session, ids = competency_client
+    learner = session.get(Learner, ids["owner"])
+    assert learner is not None
+    user = session.get(User, learner.user_id)
+    assert user is not None
+    user.password_hash = hash_password("competency-owner-password")
+    session.commit()
+    client.app.dependency_overrides.pop(require_authenticated_user)
+    assert client.get("/competency-evidence").status_code == 401
+    login = client.post(
+        "/login",
+        data={"username": user.username, "password": "competency-owner-password"},
+        follow_redirects=False,
+    )
+    assert login.status_code == 303
+    owned = client.get("/competency-evidence")
+    assert owned.status_code == 200
+    assert [row["id"] for row in owned.json()] == [ids["owner_link"]]
+    assert (
+        client.get("/competency-evidence", params={"learner_id": ids["foreign"]}).status_code == 404
+    )
+
+
+def test_competency_evidence_rejects_empty_learner_filter(
+    competency_client: tuple[TestClient, Session, dict[str, str]],
+) -> None:
+    client, _, _ = competency_client
+    response = client.get("/competency-evidence", params={"learner_id": ""})
+    assert response.status_code == 422
 
 
 def test_authenticated_user_cannot_fetch_another_learners_attempt() -> None:

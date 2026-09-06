@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from lms.auth.login import SettingsDep
 from lms.competencies.repository import (
     create_competency,
     create_competency_evidence,
@@ -23,7 +24,9 @@ from lms.competencies.schemas import (
     CompetencyStatus,
 )
 from lms.db.session import get_session
+from lms.evidence.repository import get_evidence_record_for_user
 from lms.graphs.schemas import KnowledgeType, OwnershipScope
+from lms.learners.identity import CurrentUserDep, require_learner_ownership, resolve_learner_id
 
 router = APIRouter(tags=["competencies"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -89,9 +92,22 @@ def get_competency_route(competency_id: str, session: SessionDep) -> CompetencyR
     status_code=status.HTTP_201_CREATED,
 )
 def create_competency_evidence_route(
-    payload: CompetencyEvidenceCreate, session: SessionDep
+    payload: CompetencyEvidenceCreate,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> CompetencyEvidenceRead:
     """Create a link between a competency, knowledge node, and evidence record."""
+    if (
+        settings.auth_required
+        and get_evidence_record_for_user(
+            session, evidence_record_id=payload.evidence_record_id, user_id=current_user.id
+        )
+        is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Evidence record not found."
+        )
     try:
         link = create_competency_evidence(
             session,
@@ -115,11 +131,20 @@ def create_competency_evidence_route(
 @router.get("/competency-evidence", response_model=list[CompetencyEvidenceRead])
 def list_competency_evidence_route(
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
     competency_id: Annotated[str | None, Query(max_length=36)] = None,
-    learner_id: Annotated[str | None, Query(max_length=36)] = None,
+    learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[CompetencyEvidenceRead]:
-    """List competency evidence links."""
+    """List evidence links for the acting learner in deployed mode."""
+    if settings.auth_required:
+        if learner_id is not None:
+            require_learner_ownership(
+                session, user=current_user, settings=settings, learner_id=learner_id
+            )
+        else:
+            learner_id = resolve_learner_id(session, user=current_user, settings=settings)
     links = list_competency_evidence(
         session,
         competency_id=competency_id,
@@ -136,10 +161,13 @@ def list_competency_evidence_route(
 def learner_evidence_for_competency_route(
     competency_id: str,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
     learner_id: Annotated[str, Query(min_length=1, max_length=36)],
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[CompetencyEvidenceRead]:
     """Return evidence contributing to one learner's competency estimate."""
+    require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
     links = evidence_for_competency_learner(
         session,
         competency_id=competency_id,
