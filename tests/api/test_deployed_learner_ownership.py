@@ -6,6 +6,7 @@ from collections.abc import Generator
 from contextlib import suppress
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -13,16 +14,20 @@ from sqlalchemy.pool import StaticPool
 
 from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
+from lms.auth.passwords import hash_password
 from lms.db.base import Base
 from lms.db.session import get_session
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.models import FeedbackRecord
-from lms.learners.models import Learner
+from lms.graphs.models import KnowledgeNode
+from lms.learners.models import Learner, LearnerReflection, LearningGoal
 from lms.main import create_app
 from lms.settings import Settings, get_settings
 
 
-def _deployed_client() -> Generator[tuple[TestClient, Session], None, None]:
+def _deployed_client(
+    *, auth_required: bool = True
+) -> Generator[tuple[TestClient, Session], None, None]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -93,9 +98,9 @@ def _deployed_client() -> Generator[tuple[TestClient, Session], None, None]:
     def override_session() -> Generator[Session, None, None]:
         yield session
 
-    app = create_app()
+    app = create_app(enable_local_identity_routes=False)
     app.dependency_overrides[get_session] = override_session
-    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=auth_required)
     app.dependency_overrides[require_authenticated_user] = lambda: owner
     try:
         with TestClient(app) as client:
@@ -753,6 +758,153 @@ def test_capability_collections_reject_empty_id_filters() -> None:
                 response = client.get(f"/capability/{route}", params={field: ""})
                 assert response.status_code == 422, (route, field, response.text)
                 assert response.json()["detail"][0]["loc"] == ["query", field]
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+_LEARNER_ROUTE_CASES = [
+    ("GET", "learning-goals", 200),
+    ("POST", "learning-goals", 201),
+    ("GET", "knowledge-profile", 200),
+    ("PATCH", "learning-goals/{goal_id}", 200),
+    ("POST", "reflections", 201),
+    ("GET", "reflections", 200),
+    ("GET", "learning-goals/{goal_id}/progress", 200),
+]
+
+
+@pytest.mark.parametrize("method,route,success_status", _LEARNER_ROUTE_CASES)
+@pytest.mark.parametrize("access", ["foreign", "owner", "local-foreign"])
+def test_learner_routes_enforce_ownership_without_changing_local_access(
+    method: str, route: str, success_status: int, access: str
+) -> None:
+    fixture = _deployed_client(auth_required=access != "local-foreign")
+    client, session = next(fixture)
+    try:
+        learner_id = (
+            client.owner_learner_id if access == "owner" else client.other_learner_id
+        )  # type: ignore[attr-defined]
+        node = KnowledgeNode(
+            title="Published concept",
+            knowledge_type="conceptual",
+            ownership_scope="personal",
+            status="published",
+        )
+        goal = LearningGoal(
+            learner_id=learner_id,
+            title="Private learning goal",
+            knowledge_type="conceptual",
+            ownership_scope="personal",
+            target_nodes=[node],
+        )
+        reflection = LearnerReflection(
+            learner_id=learner_id,
+            prompt="Private prompt",
+            response="Private reflection",
+        )
+        session.add_all([goal, reflection])
+        session.commit()
+        before_goals = session.query(LearningGoal).count()
+        before_reflections = session.query(LearnerReflection).count()
+        payload = None
+        if method == "POST" and route == "learning-goals":
+            payload = {
+                "title": "New goal",
+                "knowledge_type": "conceptual",
+                "target_node_ids": [node.id],
+                "ownership_scope": "personal",
+            }
+        elif method == "PATCH":
+            payload = {"title": "Changed goal"}
+        elif method == "POST":
+            payload = {"prompt": "New prompt", "response": "New reflection"}
+        suffix = route.format(goal_id=goal.id)
+        request_kwargs = {"json": payload} if payload is not None else {}
+        response = client.request(method, f"/learners/{learner_id}/{suffix}", **request_kwargs)
+        if access == "foreign":
+            missing = client.request(method, f"/learners/nonexistent/{suffix}", **request_kwargs)
+            assert response.status_code == missing.status_code == 404
+            assert response.json() == missing.json() == {"detail": "Learner resource not found."}
+            session.expire_all()
+            assert session.query(LearningGoal).count() == before_goals
+            assert session.query(LearnerReflection).count() == before_reflections
+            assert goal.title == "Private learning goal"
+            assert reflection.response == "Private reflection"
+        else:
+            assert response.status_code == success_status, response.text
+            result = response.json()
+            if route == "learning-goals" and method == "GET":
+                assert [item["title"] for item in result] == ["Private learning goal"]
+            elif route == "reflections" and method == "GET":
+                assert [item["response"] for item in result] == ["Private reflection"]
+            else:
+                assert result["learner_id"] == learner_id
+            if method == "PATCH":
+                session.refresh(goal)
+                assert goal.title == "Changed goal"
+            elif method == "POST":
+                model = LearningGoal if route == "learning-goals" else LearnerReflection
+                before = before_goals if route == "learning-goals" else before_reflections
+                assert session.query(model).count() == before + 1
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+@pytest.mark.parametrize("access", ["foreign", "missing", "owner", "local-foreign"])
+def test_create_learner_enforces_signed_in_user_and_preserves_local_access(access: str) -> None:
+    fixture = _deployed_client(auth_required=access != "local-foreign")
+    client, session = next(fixture)
+    try:
+        learner_id = (
+            client.owner_learner_id if access == "owner" else client.other_learner_id
+        )  # type: ignore[attr-defined]
+        learner = session.get(Learner, learner_id)
+        assert learner is not None
+        user_id = "missing-user" if access == "missing" else learner.user_id
+        before = session.query(Learner).count()
+        response = client.post(
+            "/learners", json={"user_id": user_id, "display_name": "New profile"}
+        )
+        if access in {"foreign", "missing"}:
+            assert response.status_code == 403
+            assert response.json() == {"detail": "Cannot create a learner for another user."}
+            assert session.query(Learner).count() == before
+        else:
+            assert response.status_code == 201, response.text
+            assert response.json()["user_id"] == user_id
+            assert session.query(Learner).count() == before + 1
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_learner_ownership_uses_real_login_session() -> None:
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        owner_learner = session.get(Learner, client.owner_learner_id)  # type: ignore[attr-defined]
+        assert owner_learner is not None
+        owner = session.get(User, owner_learner.user_id)
+        assert owner is not None
+        owner.password_hash = hash_password("ownership-test-password")
+        session.commit()
+        client.app.dependency_overrides.pop(require_authenticated_user)  # type: ignore[attr-defined]
+        own_url = f"/learners/{owner_learner.id}/learning-goals"
+        assert client.get(own_url).status_code == 401
+        login = client.post(
+            "/login",
+            data={"username": owner.username, "password": "ownership-test-password"},
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        assert client.get(own_url).status_code == 200
+        foreign = client.get(f"/learners/{client.other_learner_id}/learning-goals")  # type: ignore[attr-defined]
+        assert foreign.status_code == 404
+        created = client.post("/learners", json={"user_id": owner.id, "display_name": "Owned"})
+        assert created.status_code == 201
+        assert created.json()["user_id"] == owner.id
     finally:
         with suppress(StopIteration):
             next(fixture)
