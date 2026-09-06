@@ -170,7 +170,7 @@ def test_mastery_estimate_orders_same_observed_at_records_deterministically(
     assert reverse_estimates[0]["last_evidence_id"] == "evidence-b-copy"
 
 
-@pytest.mark.parametrize("bad_score", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("bad_score", [float("nan"), float("inf"), float("-inf"), -0.25, 1.25])
 def test_mastery_estimates_stay_finite_with_nan_evidence(
     db_session: Session, bad_score: float
 ) -> None:
@@ -200,6 +200,6 @@ def test_mastery_estimates_stay_finite_with_nan_evidence(
     estimates = response.json()
     assert len(estimates) == 1
     assert estimates[0]["evidence_count"] == 1
-    assert estimates[0]["current_estimate"] > 0.5
+    assert 0.5 < estimates[0]["current_estimate"] <= 1.0
     assert all(isfinite(item["current_estimate"]) for item in estimates)
     assert all(isfinite(item["confidence"]) for item in estimates)

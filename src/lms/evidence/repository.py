@@ -37,7 +37,11 @@ def _resolved_normalized_score(
     raw_score: float | None,
     max_score: float | None,
 ) -> float | None:
-    """Prefer explicit normalized scores; derive when only raw/max are available."""
+    """Prefer valid normalized scores, then valid raw/max ratios; skip invalid signals.
+
+    Scores must be finite and within 0..1; ratios require a positive maximum.
+    Return None when neither scoring signal is usable.
+    """
     return resolved_normalized_score(
         normalized_score=normalized_score, raw_score=raw_score, max_score=max_score
     )

@@ -70,7 +70,7 @@ def test_record_score_rejects_nan_normalized_score(
     assert result == expected
 
 
-@pytest.mark.parametrize("score", [float("nan"), float("inf"), float("-inf"), None])
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), float("-inf"), -0.25, 1.25, None])
 def test_invalid_normalized_score_uses_finite_raw_ratio(score: float | None) -> None:
     assert record_score(_record(normalized_score=score, raw_score=3.0, max_score=4.0)) == 0.75
     assert _resolved_normalized_score(normalized_score=score, raw_score=3.0, max_score=4.0) == 0.75
@@ -89,6 +89,10 @@ def test_invalid_normalized_score_uses_finite_raw_ratio(score: float | None) -> 
         (1.0, float("inf")),
         (1.0, float("-inf")),
         (1.0, 0.0),
+        (3.0, 2.0),
+        (-1.0, 2.0),
+        (-1.0, -2.0),
+        (0.0, -2.0),
         (1e308, 1e-308),
     ],
 )
@@ -103,3 +107,17 @@ def test_invalid_raw_ratio_falls_back_to_correctness(raw_score: float, max_score
 def test_zero_normalized_score_remains_valid() -> None:
     assert record_score(_record(normalized_score=0.0, correctness=True)) == 0.0
     assert _resolved_normalized_score(normalized_score=0.0, raw_score=1.0, max_score=2.0) == 0.0
+
+
+@pytest.mark.parametrize("score", [-0.25, 1.25])
+@pytest.mark.parametrize("correctness, expected", [(True, 1.0), (False, 0.0), (None, 0.5)])
+def test_out_of_range_normalized_scores_use_fallback(
+    score: float, correctness: bool | None, expected: float
+) -> None:
+    assert record_score(_record(normalized_score=score, correctness=correctness)) == expected
+
+
+@pytest.mark.parametrize("score", [0.0, 1.0])
+def test_unit_interval_boundaries_remain_valid(score: float) -> None:
+    assert record_score(_record(normalized_score=score, correctness=False)) == score
+    assert record_score(_record(raw_score=score * 2, max_score=2, correctness=True)) == score

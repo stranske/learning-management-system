@@ -28,17 +28,17 @@ def record_score(record: EvidenceRecord) -> float:
 def resolved_normalized_score(
     *, normalized_score: float | None, raw_score: float | None, max_score: float | None
 ) -> float | None:
-    """Select a finite normalized score or raw/max ratio, ignoring invalid signals."""
-    if normalized_score is not None and isfinite(normalized_score):
+    """Select a finite score in 0..1, preferring normalized over a valid raw/max ratio."""
+    if normalized_score is not None and isfinite(normalized_score) and 0 <= normalized_score <= 1:
         return float(normalized_score)
     if (
         raw_score is not None
         and isfinite(raw_score)
         and max_score is not None
         and isfinite(max_score)
-        and max_score != 0
+        and max_score > 0
     ):
         ratio = raw_score / max_score
-        if isfinite(ratio):
+        if isfinite(ratio) and 0 <= ratio <= 1:
             return ratio
     return None
