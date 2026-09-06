@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from math import isfinite
 from statistics import median
 from typing import Any
 
@@ -31,12 +32,13 @@ def _record_accuracy(record: EvidenceRecord) -> float | None:
 
     Prefers the boolean ``correctness`` signal; falls back to the
     ``normalized_score`` (already constrained to the unit interval) when
-    correctness was not captured.
+    correctness was not captured. Non-finite normalized scores are unscored.
     """
     if record.correctness is not None:
         return 1.0 if record.correctness else 0.0
     if record.normalized_score is not None:
-        return float(record.normalized_score)
+        score = float(record.normalized_score)
+        return score if isfinite(score) else None
     return None
 
 
