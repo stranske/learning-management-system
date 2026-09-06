@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.evidence.models import Attempt, EvidenceRecord
+from lms.evidence.scoring import resolved_normalized_score
 from lms.learners.models import Learner
 
 
@@ -36,12 +37,14 @@ def _resolved_normalized_score(
     raw_score: float | None,
     max_score: float | None,
 ) -> float | None:
-    """Prefer explicit normalized scores; derive when only raw/max are available."""
-    if normalized_score is not None:
-        return normalized_score
-    if raw_score is not None and max_score is not None:
-        return raw_score / max_score
-    return None
+    """Prefer valid normalized scores, then valid raw/max ratios; skip invalid signals.
+
+    Scores must be finite and within 0..1; ratios require a positive maximum.
+    Return None when neither scoring signal is usable.
+    """
+    return resolved_normalized_score(
+        normalized_score=normalized_score, raw_score=raw_score, max_score=max_score
+    )
 
 
 def create_attempt(

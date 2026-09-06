@@ -5,10 +5,13 @@ from __future__ import annotations
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from math import isfinite
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.pool import StaticPool
 
 import lms.audit.models  # noqa: F401
@@ -165,3 +168,38 @@ def test_mastery_estimate_orders_same_observed_at_records_deterministically(
     assert first_estimates[0]["current_estimate"] == reverse_estimates[0]["current_estimate"]
     assert first_estimates[0]["last_evidence_id"] == "evidence-b"
     assert reverse_estimates[0]["last_evidence_id"] == "evidence-b-copy"
+
+
+@pytest.mark.parametrize("bad_score", [float("nan"), float("inf"), float("-inf"), -0.25, 1.25])
+def test_mastery_estimates_stay_finite_with_nan_evidence(
+    db_session: Session, bad_score: float
+) -> None:
+    record = create_evidence_record(
+        db_session,
+        learner_id="learner-bad-score",
+        knowledge_node_id="node-1",
+        prompt_id="prompt-1",
+        normalized_score=0.75,
+        correctness=True,
+    )
+    db_session.flush()
+    # SQLite converts NaN to NULL and constrains infinities. Keep a corrupt
+    # loaded value in the identity map to exercise the real query/estimator/API
+    # path without letting SQLite sanitize the regression input.
+    set_committed_value(record, "normalized_score", bad_score)
+
+    def override_get_session() -> Generator[Session, None, None]:
+        with db_session.no_autoflush:
+            yield db_session
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_get_session
+    with TestClient(app) as client:
+        response = client.get("/learners/learner-bad-score/mastery-estimates")
+    assert response.status_code == 200
+    estimates = response.json()
+    assert len(estimates) == 1
+    assert estimates[0]["evidence_count"] == 1
+    assert 0.5 < estimates[0]["current_estimate"] <= 1.0
+    assert all(isfinite(item["current_estimate"]) for item in estimates)
+    assert all(isfinite(item["confidence"]) for item in estimates)
