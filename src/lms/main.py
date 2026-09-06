@@ -98,7 +98,7 @@ def create_app(*, enable_local_identity_routes: bool | None = None) -> FastAPI:
         # Local identity bootstrap endpoints must stay reachable without the
         # auth gate they are intended to initialize.
         app.include_router(auth_router)
-        app.include_router(learners_router, dependencies=auth)
+    app.include_router(learners_router, dependencies=auth)
 
     @app.get("/", include_in_schema=False)
     def root_redirect() -> RedirectResponse:
