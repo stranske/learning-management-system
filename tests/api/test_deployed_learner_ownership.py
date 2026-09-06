@@ -908,3 +908,202 @@ def test_learner_ownership_uses_real_login_session() -> None:
     finally:
         with suppress(StopIteration):
             next(fixture)
+
+
+def _seed_owned_work_products(client: TestClient, session: Session) -> dict[str, Any]:
+    """Seed scoreable owner and foreign submissions through real repositories."""
+    from datetime import UTC, datetime, timedelta
+
+    from lms.cases.repository import create_case, create_work_product
+    from lms.feedback.repository import create_rubric
+
+    node = KnowledgeNode(
+        title="Shared transfer concept",
+        knowledge_type="judgment",
+        ownership_scope="personal",
+        status="published",
+    )
+    session.add(node)
+    session.flush()
+    rubric = create_rubric(
+        session,
+        title="Shared transfer rubric",
+        ownership_scope="personal",
+        authoring_actor="user:owner",
+        knowledge_node_id=node.id,
+    )
+    case = create_case(
+        session,
+        title="Public transfer definition",
+        ownership_scope="personal",
+        rubric_id=rubric.id,
+        knowledge_node_id=node.id,
+        steps=[{"step_order": 1, "title": "Analyze", "prompt": "Explain the decision."}],
+    )
+    products = {}
+    for index, (access, learner_id) in enumerate(
+        [
+            ("owner", client.owner_learner_id),  # type: ignore[attr-defined]
+            ("foreign", client.other_learner_id),  # type: ignore[attr-defined]
+        ]
+    ):
+        product = create_work_product(
+            session,
+            case_id=case.id,
+            case_step_id=case.steps[0].id,
+            learner_id=learner_id,
+            rubric_id=rubric.id,
+            submission_type="memo",
+            body=f"{access} confidential submission",
+        )
+        product.submitted_at = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(days=index)
+        products[access] = product
+    session.commit()
+    return products
+
+
+@pytest.mark.parametrize("route", ["submit", "get", "score"])
+@pytest.mark.parametrize("access", ["foreign", "missing", "owner", "local-foreign"])
+def test_work_product_routes_enforce_ownership(route: str, access: str) -> None:
+    """Reject foreign and missing resources before reading text or writing evidence."""
+    from lms.cases.models import WorkProduct
+    from lms.feedback.models import RubricScore
+
+    fixture = _deployed_client(auth_required=access != "local-foreign")
+    client, session = next(fixture)
+    try:
+        products = _seed_owned_work_products(client, session)
+        product = products["owner" if access == "owner" else "foreign"]
+        product_id = "missing-product" if access == "missing" else product.id
+        learner_id = "missing-learner" if access == "missing" else product.learner_id
+        models = (WorkProduct, RubricScore, EvidenceRecord, Attempt)
+        before = {model: session.query(model).count() for model in models}
+        if route == "submit":
+            response = client.post(
+                f"/cases/{product.case_id}/work-products",
+                json={
+                    "learner_id": learner_id,
+                    "submission_type": "memo",
+                    "body": "New submission",
+                    "rubric_id": product.rubric_id,
+                },
+            )
+        elif route == "score":
+            response = client.post(
+                f"/work-products/{product_id}/score",
+                json={"scorer_type": "rubric-self", "raw_score": 3.0, "max_score": 4.0},
+            )
+        else:
+            response = client.get(f"/work-products/{product_id}")
+        session.expire_all()
+        if access in {"foreign", "missing"}:
+            assert response.status_code == 404, response.text
+            assert response.json() == {"detail": "Learner resource not found."}
+            assert "confidential submission" not in response.text
+            assert {model: session.query(model).count() for model in models} == before
+            assert product.status == "submitted"
+            assert product.rubric_score_id is None
+            assert product.body == "foreign confidential submission"
+        else:
+            assert response.status_code == (200 if route == "get" else 201), response.text
+            if route == "get":
+                assert response.json()["body"] == product.body
+            elif route == "submit":
+                assert response.json()["learner_id"] == learner_id
+                assert session.query(WorkProduct).count() == before[WorkProduct] + 1
+            else:
+                assert product.status == "scored"
+                assert product.rubric_score_id == response.json()["rubric_score_id"]
+                evidence = session.get(EvidenceRecord, response.json()["evidence_record_id"])
+                assert evidence is not None and evidence.learner_id == learner_id
+                assert session.query(RubricScore).count() == before[RubricScore] + 1
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+@pytest.mark.parametrize("auth_required", [True, False])
+def test_work_product_lists_scope_before_filters_and_limit(auth_required: bool) -> None:
+    """Deployed lists default to the owner while local unfiltered lists retain all rows."""
+    fixture = _deployed_client(auth_required=auth_required)
+    client, session = next(fixture)
+    try:
+        products = _seed_owned_work_products(client, session)
+        own, foreign = products["owner"], products["foreign"]
+        url = f"/cases/{own.case_id}/work-products"
+        response = client.get(url)
+        assert response.status_code == 200, response.text
+        expected = [own.id] if auth_required else [foreign.id, own.id]
+        assert [row["id"] for row in response.json()] == expected
+        limited = client.get(
+            url, params={"limit": 1, "status": "submitted", "case_step_id": own.case_step_id}
+        )
+        assert limited.status_code == 200
+        assert [row["id"] for row in limited.json()] == expected[:1]
+        assert client.get(url, params={"status": "scored"}).json() == []
+        for learner_id in (foreign.learner_id, "missing-learner"):
+            filtered = client.get(url, params={"learner_id": learner_id})
+            if auth_required:
+                assert filtered.status_code == 404
+                assert filtered.json() == {"detail": "Learner resource not found."}
+            else:
+                assert filtered.status_code == 200
+                ids = [foreign.id] if learner_id == foreign.learner_id else []
+                assert [row["id"] for row in filtered.json()] == ids
+        owned = client.get(url, params={"learner_id": own.learner_id})
+        assert owned.status_code == 200
+        assert [row["id"] for row in owned.json()] == [own.id]
+        assert client.get(url, params={"learner_id": ""}).status_code == 422
+        # Shared case definitions remain readable in both modes.
+        assert client.get(f"/cases/{own.case_id}").status_code == 200
+        assert own.case_id in [row["id"] for row in client.get("/cases").json()]
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+def test_work_product_ownership_uses_real_login_session() -> None:
+    """The actual login dependency protects all four case submission routes."""
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    try:
+        products = _seed_owned_work_products(client, session)
+        own, foreign = products["owner"], products["foreign"]
+        learner = session.get(Learner, own.learner_id)
+        assert learner is not None
+        owner = session.get(User, learner.user_id)
+        assert owner is not None
+        owner.password_hash = hash_password("case-test-password")
+        session.commit()
+        client.app.dependency_overrides.pop(require_authenticated_user)  # type: ignore[attr-defined]
+        requests = [
+            ("GET", f"/cases/{own.case_id}/work-products", {}),
+            ("GET", f"/work-products/{own.id}", {}),
+            (
+                "POST",
+                f"/cases/{own.case_id}/work-products",
+                {"json": {"learner_id": own.learner_id, "submission_type": "memo", "body": "Own"}},
+            ),
+            (
+                "POST",
+                f"/work-products/{own.id}/score",
+                {"json": {"scorer_type": "rubric-self", "raw_score": 3.0, "max_score": 4.0}},
+            ),
+        ]
+        for method, url, kwargs in requests:
+            assert client.request(method, url, **kwargs).status_code == 401
+        login = client.post(
+            "/login",
+            data={"username": owner.username, "password": "case-test-password"},
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        for method, url, kwargs in requests:
+            response = client.request(method, url, **kwargs)
+            assert response.status_code == (200 if method == "GET" else 201), response.text
+        assert client.get(f"/work-products/{foreign.id}").status_code == 404
+        listed = client.get(f"/cases/{own.case_id}/work-products").json()
+        assert listed and all(row["learner_id"] == own.learner_id for row in listed)
+    finally:
+        with suppress(StopIteration):
+            next(fixture)

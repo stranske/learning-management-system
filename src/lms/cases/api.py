@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from lms.auth.login import SettingsDep
 from lms.cases.repository import (
     add_case_step,
     add_decision_point,
@@ -42,6 +43,7 @@ from lms.cases.schemas import (
     WorkProductStatus,
 )
 from lms.db.session import get_session
+from lms.learners.identity import CurrentUserDep, require_learner_ownership, resolve_learner_id
 
 router = APIRouter(tags=["cases"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -158,9 +160,16 @@ def add_decision_point_route(
     status_code=status.HTTP_201_CREATED,
 )
 def submit_work_product_route(
-    case_id: str, payload: WorkProductCreate, session: SessionDep
+    case_id: str,
+    payload: WorkProductCreate,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> dict[str, object]:
     """Submit a learner work product for a transfer case."""
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=payload.learner_id
+    )
     if get_case(session, case_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found.")
     try:
@@ -184,6 +193,8 @@ def submit_work_product_route(
 def list_work_products_route(
     case_id: str,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
     learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     case_step_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     work_product_status: Annotated[WorkProductStatus | None, Query(alias="status")] = None,
@@ -192,6 +203,13 @@ def list_work_products_route(
     """List work products submitted for a transfer case."""
     if get_case(session, case_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found.")
+    if settings.auth_required:
+        if learner_id is not None:
+            require_learner_ownership(
+                session, user=current_user, settings=settings, learner_id=learner_id
+            )
+        else:
+            learner_id = resolve_learner_id(session, user=current_user, settings=settings)
     work_products = list_work_products(
         session,
         case_id=case_id,
@@ -204,11 +222,26 @@ def list_work_products_route(
 
 
 @router.get("/work-products/{work_product_id}", response_model=WorkProductRead)
-def get_work_product_route(work_product_id: str, session: SessionDep) -> dict[str, object]:
+def get_work_product_route(
+    work_product_id: str,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
+) -> dict[str, object]:
     """Return one work product."""
     work_product = get_work_product(session, work_product_id)
     if work_product is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work product not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Learner resource not found."
+                if settings.auth_required
+                else "Work product not found."
+            ),
+        )
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=work_product.learner_id
+    )
     return serialize_work_product(work_product)
 
 
@@ -221,11 +254,23 @@ def score_work_product_route(
     work_product_id: str,
     payload: WorkProductScoreCreate,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> dict[str, object]:
     """Score a work product and record transfer evidence."""
     work_product = get_work_product(session, work_product_id)
     if work_product is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work product not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Learner resource not found."
+                if settings.auth_required
+                else "Work product not found."
+            ),
+        )
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=work_product.learner_id
+    )
     try:
         score = score_work_product(
             session,
