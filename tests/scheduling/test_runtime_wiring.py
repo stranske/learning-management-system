@@ -125,6 +125,7 @@ def test_rubric_scoring_aborts_transaction_when_scheduler_fails(
 
     monkeypatch.setattr(scoring_module, "schedule_for_evidence", fail_schedule)
 
+    # Contexts exit right-to-left: rollback must precede exception suppression.
     with (
         pytest.raises(scoring_module.RubricScoringError, match="scheduling failed") as error,
         db_session.begin(),

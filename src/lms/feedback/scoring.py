@@ -140,9 +140,12 @@ def score_attempt_with_rubric(
     try:
         schedule_for_evidence(session, attempt=attempt, evidence_record=evidence)
     except Exception as exc:
-        logger.exception("failed to schedule review or apply remediation triggers for rubric score")
         # Do not inspect ORM attributes here: a database error may have left
         # the session unusable until the caller rolls it back.
+        logger.exception(
+            "failed to schedule review or apply remediation triggers for rubric score",
+            extra={"attempt_id": attempt_id, "rubric_id": rubric_id},
+        )
         raise RubricSchedulingError("Rubric scheduling failed; the score was not saved.") from exc
 
     feedback_record_id: str | None = None
