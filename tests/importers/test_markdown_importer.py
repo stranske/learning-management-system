@@ -175,6 +175,27 @@ def test_setext_descriptions_exclude_heading_underlines(
     assert note.read_text(encoding="utf-8") == content
 
 
+@pytest.mark.parametrize("underline", ["===", "---"])
+def test_setext_description_preserves_later_thematic_break(
+    db_session: Session, tmp_path: Path, underline: str
+) -> None:
+    note = tmp_path / "setext-thematic-break.md"
+    content = f"Heading\n{underline}\nDescription paragraph\n\n---\n\nMore details.\n"
+    note.write_text(content, encoding="utf-8")
+
+    summary = import_markdown_notes(db_session, note, actor_id="user:alice")
+    db_session.commit()
+    db_session.expire_all()
+
+    assert summary.created_nodes == 1
+    node = db_session.query(KnowledgeNode).one()
+    assert node.description == "Description paragraph --- More details."
+    source = db_session.get(SourceReference, node.source_reference_id)
+    assert source is not None
+    assert source.content_hash == hashlib.sha256(content.encode("utf-8")).hexdigest()
+    assert note.read_text(encoding="utf-8") == content
+
+
 def test_atx_description_preserves_existing_body_extraction(
     db_session: Session, tmp_path: Path
 ) -> None:
