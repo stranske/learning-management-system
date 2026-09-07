@@ -347,10 +347,16 @@ def _normalize_source_heading_title(title: str) -> str:
 
 
 def _section_description(content: str) -> str | None:
+    lines = content.splitlines()
+    # Only the underline immediately after a Setext heading is heading syntax.
+    setext_section = bool(
+        len(lines) >= 2
+        and not _ATX_HEADING_RE.match(lines[0])
+        and _SETEXT_UNDERLINE_RE.match(lines[1])
+    )
+    body_source = lines[2:] if setext_section else lines[1:]
     body_lines = [
-        line.strip()
-        for line in content.splitlines()[1:]
-        if line.strip() and not line.lstrip().startswith("#")
+        line.strip() for line in body_source if line.strip() and not line.lstrip().startswith("#")
     ]
     if not body_lines:
         return None

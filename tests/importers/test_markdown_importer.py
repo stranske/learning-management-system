@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import Any
 
+import pytest
 from sqlalchemy.orm import Session
 
 import lms.__main__ as lms_main
@@ -147,6 +149,65 @@ def test_setext_headings_do_not_crash(db_session: Session, tmp_path: Path) -> No
         "Big Title",
         "Small Section",
     ]
+
+
+@pytest.mark.parametrize("underline", ["===", "---", "  ===  ", "  ---  "])
+@pytest.mark.parametrize("description", ["Description paragraph", ""])
+def test_setext_descriptions_exclude_heading_underlines(
+    db_session: Session, tmp_path: Path, underline: str, description: str
+) -> None:
+    note = tmp_path / "setext-description.md"
+    content = f"Heading\n{underline}\n{description}\n"
+    note.write_text(content, encoding="utf-8")
+
+    summary = import_markdown_notes(db_session, note, actor_id="user:alice")
+    db_session.commit()
+    db_session.expire_all()
+
+    assert summary.created_nodes == 1
+    node = db_session.query(KnowledgeNode).one()
+    assert node.title == "Heading"
+    assert node.description == (description or None)
+    # Description cleanup must not change the retained source evidence.
+    source = db_session.get(SourceReference, node.source_reference_id)
+    assert source is not None
+    assert source.content_hash == hashlib.sha256(content.encode("utf-8")).hexdigest()
+    assert note.read_text(encoding="utf-8") == content
+
+
+@pytest.mark.parametrize("underline", ["===", "---"])
+def test_setext_description_preserves_later_thematic_break(
+    db_session: Session, tmp_path: Path, underline: str
+) -> None:
+    note = tmp_path / "setext-thematic-break.md"
+    content = f"Heading\n{underline}\nDescription paragraph\n\n---\n\nMore details.\n"
+    note.write_text(content, encoding="utf-8")
+
+    summary = import_markdown_notes(db_session, note, actor_id="user:alice")
+    db_session.commit()
+    db_session.expire_all()
+
+    assert summary.created_nodes == 1
+    node = db_session.query(KnowledgeNode).one()
+    assert node.description == "Description paragraph --- More details."
+    source = db_session.get(SourceReference, node.source_reference_id)
+    assert source is not None
+    assert source.content_hash == hashlib.sha256(content.encode("utf-8")).hexdigest()
+    assert note.read_text(encoding="utf-8") == content
+
+
+def test_atx_description_preserves_existing_body_extraction(
+    db_session: Session, tmp_path: Path
+) -> None:
+    note = tmp_path / "atx-description.md"
+    note.write_text("# Heading\nDescription paragraph\n\n---\n\nMore details.\n", encoding="utf-8")
+
+    import_markdown_notes(db_session, note, actor_id="user:alice")
+    db_session.commit()
+
+    assert db_session.query(KnowledgeNode).one().description == (
+        "Description paragraph --- More details."
+    )
 
 
 def test_setext_headings_with_inline_markup_map_to_source_lines(
