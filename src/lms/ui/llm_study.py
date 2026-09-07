@@ -101,7 +101,9 @@ async def create_llm_study_session_route(
             error="Enter a message and a supported mode to start a study turn.",
         )
     try:
-        read = create_llm_session_route(payload, session)
+        read = create_llm_session_route(
+            payload, session, current_user=current_user, settings=settings
+        )
     except BudgetExceeded:
         return _study_surface(
             learner_id=learner_id,

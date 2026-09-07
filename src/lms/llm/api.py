@@ -5,15 +5,17 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from lms.auth.login import SettingsDep
 from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
 from lms.feedback.models import FeedbackRecord
+from lms.learners.identity import CurrentUserDep, require_learner_ownership, resolve_learner_id
 from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
@@ -428,8 +430,13 @@ def list_interaction_skills_route(
 def create_feedback_event_route(
     payload: LLMFeedbackEventCreate,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> LLMFeedbackEventRead:
     """Persist a redacted per-turn LLM feedback event."""
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=payload.learner_id
+    )
     llm_session, skill = _validate_feedback_event_links(
         session,
         llm_session_id=payload.llm_session_id,
@@ -471,11 +478,20 @@ def create_feedback_event_route(
 @router.get("/feedback-events", response_model=list[LLMFeedbackEventRead])
 def list_feedback_events_route(
     session: SessionDep,
-    learner_id: str | None = None,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
+    learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
     llm_session_id: str | None = None,
     feedback_record_id: str | None = None,
 ) -> list[LLMFeedbackEventRead]:
     """List persisted per-turn LLM feedback facts."""
+    if settings.auth_required:
+        if learner_id is not None:
+            require_learner_ownership(
+                session, user=current_user, settings=settings, learner_id=learner_id
+            )
+        else:
+            learner_id = resolve_learner_id(session, user=current_user, settings=settings)
     statement = select(LLMFeedbackEvent).order_by(
         LLMFeedbackEvent.created_at.desc(), LLMFeedbackEvent.id
     )
@@ -489,8 +505,16 @@ def list_feedback_events_route(
 
 
 @router.post("/sessions", response_model=LLMSessionRead)
-def create_llm_session_route(payload: LLMSessionCreate, session: SessionDep) -> LLMSessionRead:
+def create_llm_session_route(
+    payload: LLMSessionCreate,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
+) -> LLMSessionRead:
     """Create and persist a fake-provider study/practice LLM turn."""
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=payload.learner_id
+    )
     _, skill = _validate_feedback_event_links(
         session,
         skill_id=payload.skill_id,
