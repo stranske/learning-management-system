@@ -279,6 +279,8 @@ def _read_feedback_event(event: LLMFeedbackEvent) -> LLMFeedbackEventRead:
 def _validate_feedback_event_links(
     session: Session,
     *,
+    learner_id: str,
+    enforce_ownership: bool,
     llm_session_id: str | None = None,
     skill_id: str | None = None,
     feedback_record_id: str | None = None,
@@ -287,17 +289,40 @@ def _validate_feedback_event_links(
     llm_session: LLMSession | None = None
     if llm_session_id is not None:
         llm_session = session.get(LLMSession, llm_session_id)
-        if llm_session is None:
-            raise HTTPException(status_code=404, detail="LLM session not found")
+        if llm_session is None or (enforce_ownership and llm_session.learner_id != learner_id):
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Learner resource not found." if enforce_ownership else "LLM session not found"
+                ),
+            )
     skill: LearningInteractionSkill | None = None
     if skill_id is not None:
         skill = session.get(LearningInteractionSkill, skill_id)
         if skill is None:
             raise HTTPException(status_code=404, detail="Learning interaction skill not found")
-    if feedback_record_id is not None and session.get(FeedbackRecord, feedback_record_id) is None:
-        raise HTTPException(status_code=404, detail="Feedback record not found")
-    if evidence_record_id is not None and session.get(EvidenceRecord, evidence_record_id) is None:
-        raise HTTPException(status_code=404, detail="Evidence record not found")
+    if feedback_record_id is not None:
+        feedback = session.get(FeedbackRecord, feedback_record_id)
+        if feedback is None or (enforce_ownership and feedback.learner_id != learner_id):
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Learner resource not found."
+                    if enforce_ownership
+                    else "Feedback record not found"
+                ),
+            )
+    if evidence_record_id is not None:
+        evidence = session.get(EvidenceRecord, evidence_record_id)
+        if evidence is None or (enforce_ownership and evidence.learner_id != learner_id):
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Learner resource not found."
+                    if enforce_ownership
+                    else "Evidence record not found"
+                ),
+            )
     return llm_session, skill
 
 
@@ -439,6 +464,8 @@ def create_feedback_event_route(
     )
     llm_session, skill = _validate_feedback_event_links(
         session,
+        learner_id=payload.learner_id,
+        enforce_ownership=settings.auth_required,
         llm_session_id=payload.llm_session_id,
         skill_id=payload.skill_id,
         feedback_record_id=payload.feedback_record_id,
@@ -481,8 +508,8 @@ def list_feedback_events_route(
     current_user: CurrentUserDep,
     settings: SettingsDep,
     learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
-    llm_session_id: str | None = None,
-    feedback_record_id: str | None = None,
+    llm_session_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    feedback_record_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
 ) -> list[LLMFeedbackEventRead]:
     """List persisted per-turn LLM feedback facts."""
     if settings.auth_required:
@@ -517,6 +544,8 @@ def create_llm_session_route(
     )
     _, skill = _validate_feedback_event_links(
         session,
+        learner_id=payload.learner_id,
+        enforce_ownership=settings.auth_required,
         skill_id=payload.skill_id,
         feedback_record_id=payload.feedback_record_id,
         evidence_record_id=payload.evidence_record_id,

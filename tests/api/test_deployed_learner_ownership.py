@@ -1449,8 +1449,91 @@ def test_llm_ownership_uses_real_login_session(
     assert 'aria-label="LLM session result"' in study.text
 
 
+@pytest.mark.parametrize("filter_name", ["learner_id", "llm_session_id", "feedback_record_id"])
 def test_llm_feedback_rejects_empty_learner_filter(
     llm_ownership_client: tuple[TestClient, Session, dict[str, str], LLMClient],
+    filter_name: str,
 ) -> None:
     client, _, _, _ = llm_ownership_client
-    assert client.get("/llm/feedback-events", params={"learner_id": ""}).status_code == 422
+    assert client.get("/llm/feedback-events", params={filter_name: ""}).status_code == 422
+
+
+@pytest.mark.parametrize("route", ["/llm/feedback-events", "/llm/sessions"])
+@pytest.mark.parametrize("record_kind", ["feedback", "evidence"])
+@pytest.mark.parametrize("access", ["owner", "foreign", "missing", "local-foreign"])
+def test_llm_linked_records_checked_before_writes_and_budget(
+    llm_ownership_client: tuple[TestClient, Session, dict[str, str], LLMClient],
+    route: str,
+    record_kind: str,
+    access: str,
+) -> None:
+    """Foreign and absent links are indistinguishable and cannot spend or persist."""
+    client, session, ids, llm_client = llm_ownership_client
+    if access == "local-foreign":
+        client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=False)
+    kind = "owner" if access == "owner" else "foreign"
+    if record_kind == "evidence":
+        record = EvidenceRecord(learner_id=ids[kind], knowledge_node_id="linked-node")
+        session.add(record)
+        session.commit()
+        record_id = record.id
+    else:
+        record_id = ids[f"{kind}_feedback"]
+    payload = {
+        "learner_id": ids["owner"],
+        f"{record_kind}_record_id": "nonexistent" if access == "missing" else record_id,
+    }
+    if route == "/llm/sessions":
+        payload["user_message"] = "Help me practice retrieval."
+    else:
+        payload["llm_session_id"] = ids["owner_session"]
+    models = (LLMSession, LLMFeedbackEvent, AuditLog)
+    before = [session.query(model).count() for model in models]
+    spent_before = llm_client.budget.spent_micro_usd()
+    response = client.post(route, json=payload)
+    if access in {"foreign", "missing"}:
+        assert response.status_code == 404, response.text
+        assert response.json() == {"detail": "Learner resource not found."}
+        assert [session.query(model).count() for model in models] == before
+        assert llm_client.budget.spent_micro_usd() == spent_before
+    else:
+        assert response.status_code == (200 if route.endswith("sessions") else 201), response.text
+        event_id = response.json().get("feedback_event_id", response.json().get("id"))
+        event = session.get(LLMFeedbackEvent, event_id)
+        assert event is not None and event.learner_id == ids["owner"]
+        assert getattr(event, f"{record_kind}_record_id") == record_id
+        assert session.query(LLMFeedbackEvent).count() == before[1] + 1
+        if route.endswith("sessions"):
+            assert session.query(LLMSession).count() == before[0] + 1
+            assert llm_client.budget.spent_micro_usd() > spent_before
+
+
+@pytest.mark.parametrize("access", ["owner", "foreign", "missing", "unassigned"])
+def test_llm_linked_session_does_not_enumerate_foreign_owners(
+    llm_ownership_client: tuple[TestClient, Session, dict[str, str], LLMClient],
+    access: str,
+) -> None:
+    """Linked session ownership uses the same opaque denial as other records."""
+    client, session, ids, llm_client = llm_ownership_client
+    session_id = ids["owner_session"] if access == "owner" else ids["foreign_session"]
+    if access == "missing":
+        session_id = "nonexistent"
+    elif access == "unassigned":
+        turn = session.get(LLMSession, session_id)
+        assert turn is not None
+        turn.learner_id = None
+        session.commit()
+    models = (LLMSession, LLMFeedbackEvent, AuditLog)
+    before = [session.query(model).count() for model in models]
+    response = client.post(
+        "/llm/feedback-events",
+        json={"learner_id": ids["owner"], "llm_session_id": session_id},
+    )
+    if access == "owner":
+        assert response.status_code == 201, response.text
+        assert response.json()["llm_session_id"] == session_id
+    else:
+        assert response.status_code == 404, response.text
+        assert response.json() == {"detail": "Learner resource not found."}
+        assert [session.query(model).count() for model in models] == before
+        assert llm_client.budget.spent_micro_usd() == 0
