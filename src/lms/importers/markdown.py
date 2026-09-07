@@ -347,10 +347,15 @@ def _normalize_source_heading_title(title: str) -> str:
 
 
 def _section_description(content: str) -> str | None:
+    lines = content.splitlines()
+    # Preserve the existing ATX description behavior, including thematic breaks.
+    setext_section = bool(lines and not _ATX_HEADING_RE.match(lines[0]))
     body_lines = [
         line.strip()
-        for line in content.splitlines()[1:]
-        if line.strip() and not line.lstrip().startswith("#")
+        for line in lines[1:]
+        if line.strip()
+        and not line.lstrip().startswith("#")
+        and not (setext_section and _SETEXT_UNDERLINE_RE.match(line))
     ]
     if not body_lines:
         return None
