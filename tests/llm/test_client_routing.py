@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from lms.llm.budgets import DailyBudgetTracker
-from lms.llm.client import LLMClient
+from lms.llm.client import GoldSetEntry, LLMClient
 from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig, load_llm_config_from_env
 from lms.llm.exceptions import BudgetExceeded, LLMError
 from lms.llm.providers import AnthropicProvider, FakeProvider, build_default_providers
@@ -174,6 +175,68 @@ def test_provider_kwarg_overrides_default_provider() -> None:
     )
 
     assert response.session.provider == "alt"
+
+
+@pytest.mark.parametrize("mode_override", [None, "practice"])
+@pytest.mark.parametrize(
+    ("configured_model", "provider_override", "expected_provider", "expected_model"),
+    [
+        ("anthropic:claude-haiku-4-5", None, "anthropic", "claude-haiku-4-5"),
+        ("anthropic:claude-haiku-4-5", "alt", "alt", "claude-haiku-4-5"),
+        ("bare-model", None, "fake", "bare-model"),
+        ("bare-model", "alt", "alt", "bare-model"),
+    ],
+)
+def test_replay_routes_configured_provider_and_model(
+    configured_model: str,
+    provider_override: str | None,
+    expected_provider: str,
+    expected_model: str,
+    mode_override: str | None,
+) -> None:
+    """Replay shares routing precedence while keeping eval accounting isolated."""
+    mode = mode_override or "study-coach"
+    client, _ = _make_client(
+        {**dict.fromkeys(DEFAULT_MODE_MODELS, "unused-model"), mode: configured_model}
+    )
+    calls: list[tuple[str, str, str]] = []
+
+    def record_call(provider: str, model: str, prompt: str) -> str:
+        calls.append((provider, model, prompt))
+        return "replayed response"
+
+    client.providers = {
+        name: FakeProvider(
+            name=name,
+            responder=partial(record_call, name),
+        )
+        for name in ("fake", "anthropic", "alt")
+    }
+    # Exhaust the production budget: replay must neither reserve nor debit it.
+    client.budget.record(mode, 10_000)
+    exports: list[str] = []
+    client.trace_exporter = lambda _session, text: exports.append(text)
+
+    response = client.replay(
+        GoldSetEntry(
+            entry_id="routing-gold",
+            mode="study-coach",
+            prompt="Explain retrieval practice",
+            trace_class="formative",
+        ),
+        mode_override=mode_override,
+        provider_name=provider_override,
+    )
+
+    assert calls == [(expected_provider, expected_model, "Explain retrieval practice")]
+    assert response.session.provider == expected_provider
+    assert response.session.model == expected_model
+    assert response.session.mode == mode
+    assert response.session.is_replay is True
+    assert response.session.external_export_allowed is False
+    assert client.budget.spent_micro_usd() == 10_000
+    assert client.budget.spent_micro_usd(mode) == 10_000
+    assert exports == []
 
 
 # ---------------------------------------------------------------------------

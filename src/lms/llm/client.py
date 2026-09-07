@@ -202,14 +202,15 @@ class LLMClient:
 
         Replay isolates eval traffic from the production budget tracker so a
         regression sweep does not exhaust the daily cap, and never writes
-        traces to LangSmith.
+        traces to LangSmith. Provider/model routing follows completion: an
+        explicit provider override wins over the configured model prefix.
         """
         mode = mode_override or gold_set_entry.mode
         self._validate_mode(mode)
         self._validate_trace_class(gold_set_entry.trace_class)
 
-        provider = self._resolve_provider(provider_name)
-        model = self.config.model_for(mode)
+        derived_provider, model = self.config.provider_and_model_for(mode)
+        provider = self._resolve_provider(provider_name or derived_provider)
         provider_response = provider.complete(
             model=model,
             prompt=gold_set_entry.prompt,
