@@ -23,6 +23,12 @@ from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.models import FeedbackRecord
 from lms.graphs.models import KnowledgeEdge, KnowledgeNode
 from lms.learners.models import Learner, LearnerReflection, LearningGoal
+from lms.llm import api as llm_api
+from lms.llm.budgets import DailyBudgetTracker
+from lms.llm.client import LLMClient
+from lms.llm.config import LLMConfig
+from lms.llm.models import LLMFeedbackEvent, LLMSession
+from lms.llm.providers import FakeProvider
 from lms.main import create_app
 from lms.settings import Settings, get_settings
 
@@ -1264,3 +1270,270 @@ def test_work_product_ownership_uses_real_login_session() -> None:
     finally:
         with suppress(StopIteration):
             next(fixture)
+
+
+@pytest.fixture
+def llm_ownership_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[tuple[TestClient, Session, dict[str, str], LLMClient], None, None]:
+    fixture = _deployed_client()
+    client, session = next(fixture)
+    llm_client = LLMClient(
+        config=LLMConfig(mode_models={"study-coach": "fake-learning-policy"}),
+        providers={"fake": FakeProvider(responder=lambda _model, _prompt: "Practice retrieval.")},
+        budget=DailyBudgetTracker(mode_caps_micro_usd={}, global_cap_micro_usd=200_000),
+    )
+    monkeypatch.setattr(llm_api, "_default_client", lambda: llm_client)
+    try:
+        ids = {"owner": client.owner_learner_id, "foreign": client.other_learner_id}
+        for kind in ("owner", "foreign"):
+            turn = LLMSession(
+                learner_id=ids[kind],
+                mode="study-coach",
+                trace_class="formative",
+                provider="fake",
+                model="fake-learning-policy",
+            )
+            session.add(turn)
+            session.flush()
+            feedback = session.query(FeedbackRecord).filter_by(learner_id=ids[kind]).one()
+            event = LLMFeedbackEvent(
+                llm_session_id=turn.id,
+                learner_id=ids[kind],
+                feedback_record_id=feedback.id,
+                event_type="manual-review",
+                trace_class="formative",
+                event_summary=f"{kind} private feedback",
+            )
+            session.add(event)
+            session.flush()
+            ids[f"{kind}_session"] = turn.id
+            ids[f"{kind}_event"] = event.id
+            ids[f"{kind}_feedback"] = feedback.id
+        session.commit()
+        yield client, session, ids, llm_client
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
+
+
+@pytest.mark.parametrize("access", ["owner", "foreign", "missing", "local-foreign"])
+def test_llm_feedback_list_enforces_learner_ownership(
+    llm_ownership_client: tuple[TestClient, Session, dict[str, str], LLMClient], access: str
+) -> None:
+    client, _, ids, _ = llm_ownership_client
+    if access == "local-foreign":
+        client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=False)
+    learner_id = ids["owner"] if access == "owner" else ids["foreign"]
+    if access == "missing":
+        learner_id = "nonexistent"
+    response = client.get("/llm/feedback-events", params={"learner_id": learner_id})
+    if access in {"foreign", "missing"}:
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Learner resource not found."}
+    else:
+        assert response.status_code == 200, response.text
+        kind = "owner" if access == "owner" else "foreign"
+        assert [row["id"] for row in response.json()] == [ids[f"{kind}_event"]]
+
+
+@pytest.mark.parametrize("auth_required", [True, False])
+@pytest.mark.parametrize("filter_name", [None, "llm_session_id", "feedback_record_id"])
+def test_llm_feedback_default_list_scopes_before_other_filters(
+    llm_ownership_client: tuple[TestClient, Session, dict[str, str], LLMClient],
+    auth_required: bool,
+    filter_name: str | None,
+) -> None:
+    client, _, ids, _ = llm_ownership_client
+    client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=auth_required)
+    params = {}
+    if filter_name:
+        key = "foreign_session" if filter_name == "llm_session_id" else "foreign_feedback"
+        params[filter_name] = ids[key]
+    response = client.get("/llm/feedback-events", params=params)
+    assert response.status_code == 200, response.text
+    expected = {ids["owner_event"]} if auth_required else {ids["owner_event"], ids["foreign_event"]}
+    if filter_name:
+        expected &= {ids["foreign_event"]}
+    assert {row["id"] for row in response.json()} == expected
+
+
+@pytest.mark.parametrize("route", ["/llm/feedback-events", "/llm/sessions"])
+@pytest.mark.parametrize("access", ["owner", "foreign", "missing", "local-foreign"])
+def test_llm_creation_checks_learner_before_writes_and_budget(
+    llm_ownership_client: tuple[TestClient, Session, dict[str, str], LLMClient],
+    route: str,
+    access: str,
+) -> None:
+    client, session, ids, llm_client = llm_ownership_client
+    if access == "local-foreign":
+        client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=False)
+    kind = "owner" if access == "owner" else "foreign"
+    learner_id = "nonexistent" if access == "missing" else ids[kind]
+    payload = {"learner_id": learner_id}
+    if route == "/llm/feedback-events":
+        payload.update(llm_session_id=ids[f"{kind}_session"], event_summary="New feedback")
+    else:
+        payload["user_message"] = "Help me practice retrieval."
+    models = (LLMSession, LLMFeedbackEvent, AuditLog)
+    before = [session.query(model).count() for model in models]
+    response = client.post(route, json=payload)
+    if access in {"foreign", "missing"}:
+        assert response.status_code == 404, response.text
+        assert response.json() == {"detail": "Learner resource not found."}
+        assert [session.query(model).count() for model in models] == before
+        assert llm_client.budget.spent_micro_usd() == 0
+    else:
+        assert response.status_code == (
+            201 if route.endswith("feedback-events") else 200
+        ), response.text
+        event_id = response.json().get("feedback_event_id", response.json().get("id"))
+        event = session.get(LLMFeedbackEvent, event_id)
+        assert event is not None and event.learner_id == learner_id
+        assert session.query(LLMFeedbackEvent).count() == before[1] + 1
+        if route.endswith("sessions"):
+            turn = session.get(LLMSession, response.json()["session_id"])
+            assert turn is not None and turn.learner_id == learner_id
+            assert session.query(LLMSession).count() == before[0] + 1
+            assert llm_client.budget.spent_micro_usd() == turn.cost_micro_usd > 0
+
+
+def test_llm_ownership_uses_real_login_session(
+    llm_ownership_client: tuple[TestClient, Session, dict[str, str], LLMClient],
+) -> None:
+    client, session, ids, _ = llm_ownership_client
+    learner = session.get(Learner, ids["owner"])
+    assert learner is not None
+    owner = session.get(User, learner.user_id)
+    assert owner is not None
+    owner.password_hash = hash_password("llm-owner-password")
+    session.commit()
+    client.app.dependency_overrides.pop(require_authenticated_user)
+    requests = [
+        ("GET", "/llm/feedback-events", {}),
+        (
+            "POST",
+            "/llm/feedback-events",
+            {"json": {"learner_id": ids["owner"], "llm_session_id": ids["owner_session"]}},
+        ),
+        (
+            "POST",
+            "/llm/sessions",
+            {"json": {"learner_id": ids["owner"], "user_message": "Help me learn."}},
+        ),
+    ]
+    for method, url, kwargs in requests:
+        assert client.request(method, url, **kwargs).status_code == 401
+    login = client.post(
+        "/login",
+        data={"username": owner.username, "password": "llm-owner-password"},
+        follow_redirects=False,
+    )
+    assert login.status_code == 303
+    for method, url, kwargs in requests:
+        response = client.request(method, url, **kwargs)
+        assert response.status_code == (
+            201 if method == "POST" and url.endswith("feedback-events") else 200
+        ), response.text
+    listed = client.get("/llm/feedback-events").json()
+    assert listed and all(row["learner_id"] == ids["owner"] for row in listed)
+    assert (
+        client.get("/llm/feedback-events", params={"learner_id": ids["foreign"]}).status_code == 404
+    )
+    assert client.get("/llm/interaction-skills").status_code == 200
+    study = client.post(
+        "/app/learner/llm-study/sessions",
+        data={"learner_id": ids["owner"], "user_message": "Practice retrieval."},
+    )
+    assert study.status_code == 200
+    assert 'aria-label="LLM session result"' in study.text
+
+
+@pytest.mark.parametrize("filter_name", ["learner_id", "llm_session_id", "feedback_record_id"])
+def test_llm_feedback_rejects_empty_learner_filter(
+    llm_ownership_client: tuple[TestClient, Session, dict[str, str], LLMClient],
+    filter_name: str,
+) -> None:
+    client, _, _, _ = llm_ownership_client
+    assert client.get("/llm/feedback-events", params={filter_name: ""}).status_code == 422
+
+
+@pytest.mark.parametrize("route", ["/llm/feedback-events", "/llm/sessions"])
+@pytest.mark.parametrize("record_kind", ["feedback", "evidence"])
+@pytest.mark.parametrize("access", ["owner", "foreign", "missing", "local-foreign"])
+def test_llm_linked_records_checked_before_writes_and_budget(
+    llm_ownership_client: tuple[TestClient, Session, dict[str, str], LLMClient],
+    route: str,
+    record_kind: str,
+    access: str,
+) -> None:
+    """Foreign and absent links are indistinguishable and cannot spend or persist."""
+    client, session, ids, llm_client = llm_ownership_client
+    if access == "local-foreign":
+        client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=False)
+    kind = "owner" if access == "owner" else "foreign"
+    if record_kind == "evidence":
+        record = EvidenceRecord(learner_id=ids[kind], knowledge_node_id="linked-node")
+        session.add(record)
+        session.commit()
+        record_id = record.id
+    else:
+        record_id = ids[f"{kind}_feedback"]
+    payload = {
+        "learner_id": ids["owner"],
+        f"{record_kind}_record_id": "nonexistent" if access == "missing" else record_id,
+    }
+    if route == "/llm/sessions":
+        payload["user_message"] = "Help me practice retrieval."
+    else:
+        payload["llm_session_id"] = ids["owner_session"]
+    models = (LLMSession, LLMFeedbackEvent, AuditLog)
+    before = [session.query(model).count() for model in models]
+    spent_before = llm_client.budget.spent_micro_usd()
+    response = client.post(route, json=payload)
+    if access in {"foreign", "missing"}:
+        assert response.status_code == 404, response.text
+        assert response.json() == {"detail": "Learner resource not found."}
+        assert [session.query(model).count() for model in models] == before
+        assert llm_client.budget.spent_micro_usd() == spent_before
+    else:
+        assert response.status_code == (200 if route.endswith("sessions") else 201), response.text
+        event_id = response.json().get("feedback_event_id", response.json().get("id"))
+        event = session.get(LLMFeedbackEvent, event_id)
+        assert event is not None and event.learner_id == ids["owner"]
+        assert getattr(event, f"{record_kind}_record_id") == record_id
+        assert session.query(LLMFeedbackEvent).count() == before[1] + 1
+        if route.endswith("sessions"):
+            assert session.query(LLMSession).count() == before[0] + 1
+            assert llm_client.budget.spent_micro_usd() > spent_before
+
+
+@pytest.mark.parametrize("access", ["owner", "foreign", "missing", "unassigned"])
+def test_llm_linked_session_does_not_enumerate_foreign_owners(
+    llm_ownership_client: tuple[TestClient, Session, dict[str, str], LLMClient],
+    access: str,
+) -> None:
+    """Linked session ownership uses the same opaque denial as other records."""
+    client, session, ids, llm_client = llm_ownership_client
+    session_id = ids["owner_session"] if access == "owner" else ids["foreign_session"]
+    if access == "missing":
+        session_id = "nonexistent"
+    elif access == "unassigned":
+        turn = session.get(LLMSession, session_id)
+        assert turn is not None
+        turn.learner_id = None
+        session.commit()
+    models = (LLMSession, LLMFeedbackEvent, AuditLog)
+    before = [session.query(model).count() for model in models]
+    response = client.post(
+        "/llm/feedback-events",
+        json={"learner_id": ids["owner"], "llm_session_id": session_id},
+    )
+    if access == "owner":
+        assert response.status_code == 201, response.text
+        assert response.json()["llm_session_id"] == session_id
+    else:
+        assert response.status_code == 404, response.text
+        assert response.json() == {"detail": "Learner resource not found."}
+        assert [session.query(model).count() for model in models] == before
+        assert llm_client.budget.spent_micro_usd() == 0
