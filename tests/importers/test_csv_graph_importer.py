@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from lms.audit.models import AuditLog
+from lms.db.base import Base
 from lms.graphs.models import KnowledgeEdge, KnowledgeNode
 from lms.importers.csv_graph import CsvGraphImportError, import_csv_graph
 from lms.sources.models import SourceReference
@@ -114,7 +119,10 @@ def test_invalid_enum_rejected_in_dry_run(tmp_path: Path, db_session: Session) -
     assert db_session.query(SourceReference).count() == 0
 
 
-def test_self_prerequisite_rejected_before_writes(tmp_path: Path, db_session: Session) -> None:
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_self_prerequisite_rejected_before_writes(
+    tmp_path: Path, db_session: Session, dry_run: bool
+) -> None:
     csv_path = tmp_path / "graph.csv"
     csv_path.write_text(
         "\n".join(
@@ -127,7 +135,7 @@ def test_self_prerequisite_rejected_before_writes(tmp_path: Path, db_session: Se
     )
 
     with pytest.raises(CsvGraphImportError, match="cannot list itself as a prerequisite"):
-        import_csv_graph(db_session, csv_path)
+        import_csv_graph(db_session, csv_path, dry_run=dry_run)
 
     assert db_session.query(KnowledgeNode).count() == 0
     assert db_session.query(KnowledgeEdge).count() == 0
@@ -193,3 +201,92 @@ def test_dry_run_reports_counts_without_writes(tmp_path: Path, db_session: Sessi
     assert summary.source_references == 2
     assert summary.dry_run is True
     assert db_session.query(KnowledgeNode).count() == 0
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("length", [2, 3])
+def test_import_csv_graph_cycle_raises_csv_graph_import_error(
+    tmp_path: Path, db_session: Session, dry_run: bool, length: int
+) -> None:
+    csv_path = tmp_path / "cycle.csv"
+    csv_path.write_text(
+        "title,knowledge_type,prerequisites,ownership_scope,status,source_locator\n"
+        + "\n".join(
+            f"Node {index},conceptual,node {(index + 1) % length},personal,draft,outline.csv"
+            for index in range(length)
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        CsvGraphImportError, match=rf"Row {length + 1}: .*prerequisite cycle"
+    ) as error:
+        import_csv_graph(db_session, csv_path, dry_run=dry_run)
+
+    if not dry_run:
+        assert type(error.value.__cause__) is ValueError
+        db_session.rollback()
+    for model in (KnowledgeNode, KnowledgeEdge, SourceReference, AuditLog):
+        assert db_session.query(model).count() == 0
+
+
+def test_dry_run_accepts_diamond_and_separate_scope_graphs(
+    tmp_path: Path, db_session: Session
+) -> None:
+    csv_path = tmp_path / "graph.csv"
+    csv_path.write_text(
+        "title,knowledge_type,prerequisites,ownership_scope,status,source_locator\n"
+        "A,conceptual,B|C,personal,draft,outline.csv\n"
+        "B,conceptual,D,personal,draft,outline.csv\n"
+        "C,conceptual,D,personal,draft,outline.csv\n"
+        "D,conceptual,,personal,draft,outline.csv\n"
+        "A,conceptual,,institutional,draft,outline.csv\n"
+        "B,conceptual,A,institutional,draft,outline.csv\n",
+        encoding="utf-8",
+    )
+
+    summary = import_csv_graph(db_session, csv_path, dry_run=True)
+
+    assert (summary.nodes, summary.edges) == (6, 5)
+    for model in (KnowledgeNode, KnowledgeEdge, SourceReference, AuditLog):
+        assert db_session.query(model).count() == 0
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_cli_csv_cycle_exits_cleanly_without_persisting_rows(tmp_path: Path, dry_run: bool) -> None:
+    csv_path = tmp_path / "cycle.csv"
+    csv_path.write_text(
+        "title,knowledge_type,prerequisites,ownership_scope,status,source_locator\n"
+        "A,conceptual,B,personal,draft,outline.csv\n"
+        "B,conceptual,A,personal,draft,outline.csv\n",
+        encoding="utf-8",
+    )
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'cli.db'}"
+    engine = create_engine(database_url)
+    try:
+        Base.metadata.create_all(engine)
+        result = subprocess.run(
+            [sys.executable, "-m", "lms", "import-graph", str(csv_path)]
+            + (["--dry-run"] if dry_run else []),
+            env={
+                **os.environ,
+                "DATABASE_URL": database_url,
+                "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == 1
+        assert (
+            "CSV graph import failed: Row 3: edge would create a prerequisite cycle"
+            in result.stderr
+        )
+        assert "Traceback" not in result.stderr
+        assert result.stdout == ""
+        with Session(engine) as session:
+            for model in (KnowledgeNode, KnowledgeEdge, SourceReference, AuditLog):
+                assert session.query(model).count() == 0
+    finally:
+        engine.dispose()
