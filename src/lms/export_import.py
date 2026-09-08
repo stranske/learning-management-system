@@ -254,6 +254,8 @@ RELATIONSHIP_KEYS = {
 }
 
 PII_FIELDS = {"User": {"email"}}
+# Credentials never belong in portable exports, even when all PII is requested.
+EXCLUDED_EXPORT_FIELDS = {"User": {"password_hash"}}
 SOURCE_CONTENT_FIELDS = {"body", "content", "raw_content", "source_content", "text"}
 DEFAULT_REDACTED_FIELDS = {
     "CapabilityEstimate": {"commentary"},
@@ -286,7 +288,7 @@ def export_jsonl(
     include_pii: str = "never",
     confirm_all: bool = False,
 ) -> Iterator[str]:
-    """Yield typed JSONL records in dependency order."""
+    """Yield typed JSONL records in dependency order, always excluding credentials."""
     _validate_redaction_flags(
         include_llm_traces=include_llm_traces,
         include_source_content=include_source_content,
@@ -385,6 +387,7 @@ def _model_to_record(row: Any, *, include_pii: str, include_source_content: str)
     mapper = inspect(row).mapper
     record_type = row.__class__.__name__
     record: dict[str, Any] = {}
+    excluded_fields = EXCLUDED_EXPORT_FIELDS.get(record_type, set())
     pii_fields = set(PII_FIELDS.get(record_type, set()))
     redacted_fields = set()
     if include_source_content != ALL_VALUE:
@@ -393,6 +396,8 @@ def _model_to_record(row: Any, *, include_pii: str, include_source_content: str)
     if record_type == "SourceReference" and include_source_content != ALL_VALUE:
         source_content_fields = SOURCE_CONTENT_FIELDS
     for column in mapper.columns:
+        if column.key in excluded_fields:
+            continue
         if include_pii != ALL_VALUE and column.key in pii_fields:
             continue
         if column.key in source_content_fields:
