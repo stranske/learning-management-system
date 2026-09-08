@@ -7,7 +7,7 @@ from typing import Annotated
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -30,14 +30,30 @@ router = APIRouter(tags=["graph-design-ui"])
 SessionDep = Annotated[Session, Depends(get_session)]
 
 
+class InvalidProposalStateError(ValueError):
+    """A graph proposal no longer contains only draft artifacts."""
+
+
+class ProposalNotFoundError(ValueError):
+    """A graph proposal or its graph artifacts are no longer available."""
+
+
+@router.get("/app/admin/graph-design", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/app/author/graph", response_class=HTMLResponse)
 def graph_design_route(
+    request: Request,
     session: SessionDep,
     scope: Annotated[str, Query(pattern="^(personal|institutional)$")] = "personal",
     learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
 ) -> str:
     """Return a compact authoring graph surface."""
-    return _graph_surface(session=session, scope=scope, learner_id=learner_id)
+    notice = request.session.pop("graph_proposal_notice", None)
+    return _graph_surface(
+        session=session,
+        scope=scope,
+        learner_id=learner_id,
+        message=notice if isinstance(notice, str) else None,
+    )
 
 
 @router.post("/app/author/graph/nodes", response_class=HTMLResponse)
@@ -93,42 +109,60 @@ async def create_graph_edge_route(request: Request, session: SessionDep) -> str:
     return _graph_surface(session=session, scope=scope, message=message)
 
 
-@router.post("/app/author/graph/proposals/{proposal_id}/approve", response_class=HTMLResponse)
+@router.post(
+    "/app/author/graph/proposals/{proposal_id}/approve",
+    response_class=HTMLResponse,
+    response_model=None,
+)
 async def approve_graph_proposal_route(
     proposal_id: str,
     request: Request,
     session: SessionDep,
-) -> str:
+) -> str | RedirectResponse:
     """Publish draft graph artifacts linked to an LLM proposal."""
     form = await _form_data(request)
     scope = _scope(form.get("ownership_scope"))
-    message = _set_proposal_status(
-        session=session,
-        proposal_id=proposal_id,
-        node_status="published",
-        edge_status="published",
-        actor_id="graph-ui",
-    )
+    try:
+        message = _set_proposal_status(
+            session=session,
+            proposal_id=proposal_id,
+            node_status="published",
+            edge_status="published",
+            actor_id="graph-ui",
+        )
+    except (InvalidProposalStateError, ProposalNotFoundError) as exc:
+        session.rollback()
+        request.session["graph_proposal_notice"] = str(exc)
+        return RedirectResponse(f"/app/admin/graph-design?scope={scope}", status_code=303)
     session.commit()
     return _graph_surface(session=session, scope=scope, message=message)
 
 
-@router.post("/app/author/graph/proposals/{proposal_id}/reject", response_class=HTMLResponse)
+@router.post(
+    "/app/author/graph/proposals/{proposal_id}/reject",
+    response_class=HTMLResponse,
+    response_model=None,
+)
 async def reject_graph_proposal_route(
     proposal_id: str,
     request: Request,
     session: SessionDep,
-) -> str:
+) -> str | RedirectResponse:
     """Deprecate draft graph artifacts linked to an LLM proposal."""
     form = await _form_data(request)
     scope = _scope(form.get("ownership_scope"))
-    message = _set_proposal_status(
-        session=session,
-        proposal_id=proposal_id,
-        node_status="deprecated",
-        edge_status="deprecated",
-        actor_id="graph-ui",
-    )
+    try:
+        message = _set_proposal_status(
+            session=session,
+            proposal_id=proposal_id,
+            node_status="deprecated",
+            edge_status="deprecated",
+            actor_id="graph-ui",
+        )
+    except (InvalidProposalStateError, ProposalNotFoundError) as exc:
+        session.rollback()
+        request.session["graph_proposal_notice"] = str(exc)
+        return RedirectResponse(f"/app/admin/graph-design?scope={scope}", status_code=303)
     session.commit()
     return _graph_surface(session=session, scope=scope, message=message)
 
@@ -168,7 +202,7 @@ def _graph_surface(
           <header>
             <p class="eyebrow">Author graph</p>
             <h1>Graph design</h1>
-            <p>{escape(message or "Edit nodes, test typed edges, and review LLM drafts.")}</p>
+            <p role="status">{escape(message or "Edit nodes, test typed edges, and review LLM drafts.")}</p>
           </header>
           <section aria-labelledby="nodes-heading">
             <h2 id="nodes-heading">Nodes</h2>
@@ -354,21 +388,38 @@ def _set_proposal_status(
 ) -> str:
     proposal = session.get(LLMProposal, proposal_id)
     if proposal is None:
-        return "Proposal not found."
-    if proposal.knowledge_node_id is not None:
-        node = session.get(KnowledgeNode, proposal.knowledge_node_id)
-        if node is not None:
-            update_knowledge_node(session, node, status=node_status, actor_id=actor_id)
-    if proposal.knowledge_edge_id is not None:
-        edge = session.get(KnowledgeEdge, proposal.knowledge_edge_id)
-        if edge is not None:
-            update_knowledge_edge(
-                session,
-                edge,
-                status=edge_status,
-                actor_id=actor_id,
-                source_subsystem="graph-ui",
-            )
+        raise ProposalNotFoundError("Proposal not found.")
+    node = (
+        session.get(KnowledgeNode, proposal.knowledge_node_id)
+        if proposal.knowledge_node_id is not None
+        else None
+    )
+    edge = (
+        session.get(KnowledgeEdge, proposal.knowledge_edge_id)
+        if proposal.knowledge_edge_id is not None
+        else None
+    )
+    if (
+        (node is None and edge is None)
+        or (proposal.knowledge_node_id is not None and node is None)
+        or (proposal.knowledge_edge_id is not None and edge is None)
+    ):
+        raise ProposalNotFoundError("Proposal not found.")
+    # Validate the entire bundle before changing either artifact or its audit trail.
+    if (node is not None and node.status != "draft") or (
+        edge is not None and edge.status != "draft"
+    ):
+        raise InvalidProposalStateError("Proposal has already been processed.")
+    if node is not None:
+        update_knowledge_node(session, node, status=node_status, actor_id=actor_id)
+    if edge is not None:
+        update_knowledge_edge(
+            session,
+            edge,
+            status=edge_status,
+            actor_id=actor_id,
+            source_subsystem="graph-ui",
+        )
     return f"Proposal {node_status}."
 
 
