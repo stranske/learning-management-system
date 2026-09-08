@@ -74,6 +74,7 @@ def import_csv_graph(
         ) from exc
     edge_count = sum(len(row.prerequisites) for row in rows)
     if dry_run:
+        _validate_prerequisite_cycles(rows)
         return CsvGraphImportSummary(
             nodes=len(rows),
             edges=edge_count,
@@ -114,16 +115,19 @@ def import_csv_graph(
         source_node_id = nodes_by_key[_node_key(row.ownership_scope, row.title)]
         for prerequisite_title in row.prerequisites:
             target_node_id = nodes_by_key[_node_key(row.ownership_scope, prerequisite_title)]
-            create_knowledge_edge(
-                session,
-                source_node_id=source_node_id,
-                target_node_id=target_node_id,
-                edge_type="prerequisite",
-                scope=row.ownership_scope,
-                actor_id=actor_id,
-                status="draft",
-                source_subsystem="csv-graph-importer",
-            )
+            try:
+                create_knowledge_edge(
+                    session,
+                    source_node_id=source_node_id,
+                    target_node_id=target_node_id,
+                    edge_type="prerequisite",
+                    scope=row.ownership_scope,
+                    actor_id=actor_id,
+                    status="draft",
+                    source_subsystem="csv-graph-importer",
+                )
+            except ValueError as exc:
+                raise CsvGraphImportError(f"Row {row.row_number}: {exc}") from exc
 
     return CsvGraphImportSummary(
         nodes=len(rows),
@@ -131,6 +135,30 @@ def import_csv_graph(
         source_references=len(rows),
         dry_run=False,
     )
+
+
+def _validate_prerequisite_cycles(rows: list[CsvGraphRow]) -> None:
+    """Check prospective edges in import order without writing dry-run records."""
+    adjacency: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for row in rows:
+        source = _node_key(row.ownership_scope, row.title)
+        for title in row.prerequisites:
+            target = _node_key(row.ownership_scope, title)
+            # Match the repository's source -> prerequisite direction and report
+            # the row whose new edge closes the cycle. Scope is part of each key.
+            stack = [target]
+            visited: set[tuple[str, str]] = set()
+            while stack:
+                node = stack.pop()
+                if node == source:
+                    raise CsvGraphImportError(
+                        f"Row {row.row_number}: edge would create a prerequisite cycle"
+                    )
+                if node in visited:
+                    continue
+                visited.add(node)
+                stack.extend(adjacency.get(node, ()))
+            adjacency.setdefault(source, set()).add(target)
 
 
 def _load_rows(csv_file: TextIO) -> list[CsvGraphRow]:
