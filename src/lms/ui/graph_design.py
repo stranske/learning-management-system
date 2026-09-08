@@ -195,6 +195,7 @@ def _graph_surface(
         for candidate in ("personal", "institutional")
     )
 
+    status_attribute = ' role="status"' if message else ""
     return render_page(
         "Graph",
         f"""
@@ -202,7 +203,7 @@ def _graph_surface(
           <header>
             <p class="eyebrow">Author graph</p>
             <h1>Graph design</h1>
-            <p role="status">{escape(message or "Edit nodes, test typed edges, and review LLM drafts.")}</p>
+            <p{status_attribute}>{escape(message or "Edit nodes, test typed edges, and review LLM drafts.")}</p>
           </header>
           <section aria-labelledby="nodes-heading">
             <h2 id="nodes-heading">Nodes</h2>

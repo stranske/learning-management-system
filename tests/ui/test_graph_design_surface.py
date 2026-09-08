@@ -264,21 +264,15 @@ def test_graph_view_has_empty_state(
     response = client.get("/app/author/graph")
 
     assert response.status_code == 200
+    assert 'role="status"' not in response.text
     assert "No graph nodes yet." in response.text
     assert "No graph edges yet." in response.text
     assert "No proposal drafts pending human approval." in response.text
 
 
-@pytest.mark.parametrize("scope", ["personal", "institutional"])
-@pytest.mark.parametrize("first_action", ["approve", "reject"])
-@pytest.mark.parametrize("duplicate_action", ["approve", "reject"])
-def test_graph_design_duplicate_proposal_approval_redirects_with_notice(
-    api_client: tuple[TestClient, sessionmaker[Session]],
-    scope: str,
-    first_action: str,
-    duplicate_action: str,
-) -> None:
-    client, session_factory = api_client
+def _create_graph_proposal_bundle(
+    session_factory: sessionmaker[Session], scope: str
+) -> tuple[str, str, str]:
     with session_factory() as session:
         node = create_knowledge_node(
             session,
@@ -322,7 +316,20 @@ def test_graph_design_duplicate_proposal_approval_redirects_with_notice(
         )
         session.add(proposal)
         session.commit()
-        proposal_id, node_id, edge_id = proposal.id, node.id, edge.id
+        return proposal.id, node.id, edge.id
+
+
+@pytest.mark.parametrize("scope", ["personal", "institutional"])
+@pytest.mark.parametrize("first_action", ["approve", "reject"])
+@pytest.mark.parametrize("duplicate_action", ["approve", "reject"])
+def test_graph_design_duplicate_proposal_approval_redirects_with_notice(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    scope: str,
+    first_action: str,
+    duplicate_action: str,
+) -> None:
+    client, session_factory = api_client
+    proposal_id, node_id, edge_id = _create_graph_proposal_bundle(session_factory, scope)
 
     initial = client.post(
         f"/app/author/graph/proposals/{proposal_id}/{first_action}",
@@ -375,4 +382,46 @@ def test_graph_design_missing_proposal_redirects_with_notice(
     assert landing.status_code == 200
     assert "Proposal not found." in landing.text
     with session_factory() as session:
+        assert session.query(AuditLog).count() == audit_count
+
+
+@pytest.mark.parametrize("scope", ["personal", "institutional"])
+@pytest.mark.parametrize("action", ["approve", "reject"])
+@pytest.mark.parametrize("resolved_artifact", ["node", "edge"])
+def test_graph_design_partially_resolved_bundle_preserves_draft(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    scope: str,
+    action: str,
+    resolved_artifact: str,
+) -> None:
+    client, session_factory = api_client
+    proposal_id, node_id, edge_id = _create_graph_proposal_bundle(session_factory, scope)
+    with session_factory() as session:
+        node = session.get(KnowledgeNode, node_id)
+        edge = session.get(KnowledgeEdge, edge_id)
+        assert node is not None and edge is not None
+        if resolved_artifact == "node":
+            node.status = "published"
+        else:
+            edge.status = "published"
+        session.commit()
+        audit_count = session.query(AuditLog).count()
+
+    response = client.post(
+        f"/app/author/graph/proposals/{proposal_id}/{action}",
+        data={"ownership_scope": scope},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/app/admin/graph-design?scope={scope}"
+    landing = client.get(response.headers["location"])
+    assert landing.status_code == 200
+    assert "Proposal has already been processed." in landing.text
+    assert 'role="status"' in landing.text
+    with session_factory() as session:
+        node = session.get(KnowledgeNode, node_id)
+        edge = session.get(KnowledgeEdge, edge_id)
+        assert node is not None and edge is not None
+        assert node.status == ("published" if resolved_artifact == "node" else "draft")
+        assert edge.status == ("published" if resolved_artifact == "edge" else "draft")
         assert session.query(AuditLog).count() == audit_count
