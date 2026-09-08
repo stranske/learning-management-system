@@ -5,8 +5,9 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.orm import Session
 
+from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_evidence_record
-from lms.scheduling.fsrs_adapter import FSRS_RULES, evidence_to_fsrs_rating
+from lms.scheduling.fsrs_adapter import FSRS_RULES, _score, evidence_to_fsrs_rating
 
 
 def test_incorrect_maps_to_again(db_session: Session) -> None:
@@ -383,6 +384,7 @@ def test_adapter_rule_table_is_data_driven() -> None:
     assert [rule.rule_id for rule in FSRS_RULES] == [
         "transfer-excluded",
         "incorrect",
+        "insufficient-signal",
         "supported-or-low-confidence-correct",
         "partial-under-half",
         "partial-under-mastery",
@@ -390,3 +392,77 @@ def test_adapter_rule_table_is_data_driven() -> None:
         "fast-first-attempt",
         "unsupported-correct",
     ]
+
+
+@pytest.mark.parametrize("correctness", [None, True])
+@pytest.mark.parametrize("confidence", [3, 5])
+@pytest.mark.parametrize(
+    ("normalized_score", "raw_score", "max_score"),
+    [
+        (float("nan"), None, None),
+        (float("inf"), None, None),
+        (float("-inf"), None, None),
+        (None, float("nan"), 4.0),
+        (None, float("inf"), 4.0),
+        (None, float("-inf"), 4.0),
+        (None, 3.0, float("nan")),
+        (None, 3.0, float("inf")),
+        (None, 3.0, float("-inf")),
+        (None, 1e308, 1e-308),
+    ],
+    ids=[
+        "normalized-nan",
+        "normalized-inf",
+        "normalized-negative-inf",
+        "raw-nan",
+        "raw-inf",
+        "raw-negative-inf",
+        "max-nan",
+        "max-inf",
+        "max-negative-inf",
+        "ratio-overflow",
+    ],
+)
+def test_non_finite_scores_schedule_conservatively(
+    normalized_score: float | None,
+    raw_score: float | None,
+    max_score: float | None,
+    correctness: bool | None,
+    confidence: int,
+) -> None:
+    # Keep the non-finite values in memory: SQLite can coerce NaN to SQL NULL.
+    record = EvidenceRecord(
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        normalized_score=normalized_score,
+        raw_score=raw_score,
+        max_score=max_score,
+        correctness=correctness,
+        confidence_rating=confidence,
+        response_time_seconds=12,
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.label == "again"
+    assert rating.value == 1
+    assert rating.rule_id == "insufficient-signal"
+    assert rating.scheduling_included is True
+    assert _score(record) is None
+
+
+@pytest.mark.parametrize("correctness", [False, True])
+def test_non_finite_transfer_evidence_remains_excluded(correctness: bool) -> None:
+    record = EvidenceRecord(
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        normalized_score=float("nan"),
+        correctness=correctness,
+        transfer_distance="near",
+    )
+
+    rating = evidence_to_fsrs_rating(record)
+
+    assert rating.rule_id == "transfer-excluded"
+    assert rating.scheduling_included is False
+    assert rating.value is None
