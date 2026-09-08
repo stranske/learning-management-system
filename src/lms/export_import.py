@@ -583,7 +583,7 @@ def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
         model = MODEL_BY_TYPE[entry["type"]]
         record = dict(entry["record"])
         for key in RELATIONSHIP_KEYS.get(entry["type"], ()):
-            if entry["type"] == "FeedbackTemplate":
+            if entry["type"] == "FeedbackTemplate" and key == "knowledge_node_ids":
                 continue  # knowledge_node_ids is a persisted JSON column.
             pending_relationships.append(
                 (entry["type"], key, record["id"], list(record.pop(key, [])))
