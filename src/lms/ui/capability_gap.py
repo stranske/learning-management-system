@@ -17,18 +17,22 @@ from html import escape
 from typing import Annotated
 from urllib.parse import parse_qs, quote_plus
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.auth.login import SettingsDep
+from lms.auth.models import User
+from lms.capability.models import CapabilityEstimate, CapabilityTarget, GapAnalysis
 from lms.capability.repository import (
     create_capability_target,
     create_gap_analysis,
     create_maintenance_plan,
+    get_capability_estimate,
     get_capability_target,
+    get_gap_analysis,
     list_capability_estimates,
     list_capability_targets,
     list_gap_analyses,
@@ -48,8 +52,14 @@ from lms.capability.schemas import (
 from lms.competencies.models import Competency
 from lms.db.session import get_session
 from lms.graphs.models import KnowledgeNode
-from lms.learners.identity import CurrentUserDep, LearnerIdDep, resolve_learner_id
+from lms.learners.identity import (
+    CurrentUserDep,
+    LearnerIdDep,
+    require_learner_ownership,
+    resolve_learner_id,
+)
 from lms.learners.models import LearningGoal
+from lms.settings import Settings
 from lms.ui.shell import empty_state, render_page
 
 router = APIRouter(tags=["learner-ui"])
@@ -90,11 +100,19 @@ def capability_overview_route(
 
 
 @router.get(f"{CAPABILITY_PATH}/targets/{{target_id}}", response_class=HTMLResponse)
-def capability_target_detail_route(target_id: str, session: SessionDep) -> str:
+def capability_target_detail_route(
+    target_id: str, session: SessionDep, current_user: CurrentUserDep, settings: SettingsDep
+) -> str:
     """Return the detail surface for one personal capability target."""
-    target = _target_payload(session, target_id)
-    if target is None:
+    target_model = get_capability_target(session, target_id)
+    if target_model is None:
+        if settings.auth_required:
+            raise HTTPException(status_code=404, detail="Learner resource not found.")
         return _not_found_page()
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=target_model.learner_id
+    )
+    target = serialize_capability_target(target_model)
     return _detail_surface(session=session, target=target, notice=None)
 
 
@@ -160,10 +178,16 @@ async def create_capability_target_action(
 
 
 @router.post(ESTIMATES_PATH, response_class=HTMLResponse)
-async def recompute_estimate_action(request: Request, session: SessionDep) -> str:
+async def recompute_estimate_action(
+    request: Request, session: SessionDep, current_user: CurrentUserDep, settings: SettingsDep
+) -> str:
     """Recompute a current capability estimate for one target."""
     form = _parse_form((await request.body()).decode())
     target_id = _one(form, "target_id")
+    if target_id:
+        _require_owned_resource(
+            session, get_capability_target(session, target_id), current_user, settings
+        )
     try:
         payload = CapabilityEstimateRecompute(target_id=target_id)
         estimate = recompute_capability_estimate(session, target_id=payload.target_id)
@@ -180,12 +204,24 @@ async def recompute_estimate_action(request: Request, session: SessionDep) -> st
 
 
 @router.post(GAP_PATH, response_class=HTMLResponse)
-async def create_gap_analysis_action(request: Request, session: SessionDep) -> str:
+async def create_gap_analysis_action(
+    request: Request, session: SessionDep, current_user: CurrentUserDep, settings: SettingsDep
+) -> str:
     """Generate a gap analysis from the most recent estimate."""
     form = _parse_form((await request.body()).decode())
     target_id = _one(form, "target_id")
+    if target_id:
+        _require_owned_resource(
+            session, get_capability_target(session, target_id), current_user, settings
+        )
     try:
         payload = GapAnalysisCreate(estimate_id=_one(form, "estimate_id"))
+        estimate = get_capability_estimate(session, payload.estimate_id)
+        _require_owned_resource(session, estimate, current_user, settings)
+        if estimate is not None:
+            _require_owned_resource(
+                session, get_capability_target(session, estimate.target_id), current_user, settings
+            )
         analysis = create_gap_analysis(session, estimate_id=payload.estimate_id)
         session.commit()
         session.refresh(analysis)
@@ -201,12 +237,24 @@ async def create_gap_analysis_action(request: Request, session: SessionDep) -> s
 
 
 @router.post(PLAN_PATH, response_class=HTMLResponse)
-async def create_maintenance_plan_action(request: Request, session: SessionDep) -> str:
+async def create_maintenance_plan_action(
+    request: Request, session: SessionDep, current_user: CurrentUserDep, settings: SettingsDep
+) -> str:
     """Create a maintenance plan with scheduled next steps from a gap analysis."""
     form = _parse_form((await request.body()).decode())
     target_id = _one(form, "target_id")
+    if target_id:
+        _require_owned_resource(
+            session, get_capability_target(session, target_id), current_user, settings
+        )
     try:
         payload = MaintenancePlanCreate(gap_analysis_id=_one(form, "gap_analysis_id"))
+        analysis = get_gap_analysis(session, payload.gap_analysis_id)
+        _require_owned_resource(session, analysis, current_user, settings)
+        if analysis is not None:
+            _require_owned_resource(
+                session, get_capability_target(session, analysis.target_id), current_user, settings
+            )
         plan = create_maintenance_plan(session, gap_analysis_id=payload.gap_analysis_id)
         session.commit()
         session.refresh(plan)
@@ -219,6 +267,20 @@ async def create_maintenance_plan_action(request: Request, session: SessionDep) 
         target_id=target_id,
         notice="Created a maintenance plan with scheduled next steps.",
     )
+
+
+def _require_owned_resource(
+    session: Session,
+    resource: CapabilityTarget | CapabilityEstimate | GapAnalysis | None,
+    user: User,
+    settings: Settings,
+) -> None:
+    """Authorize both action inputs and error-page context before using them."""
+    if not settings.auth_required:
+        return
+    if resource is None:
+        raise HTTPException(status_code=404, detail="Learner resource not found.")
+    require_learner_ownership(session, user=user, settings=settings, learner_id=resource.learner_id)
 
 
 def _overview_surface(*, session: Session, learner_id: str, error: str | None) -> str:

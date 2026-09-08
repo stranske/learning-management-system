@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from typing import Protocol
 
+import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
+from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
+from lms.capability.models import CapabilityEstimate, GapAnalysis, MaintenancePlan
 from lms.capability.repository import (
     create_capability_target,
     create_gap_analysis,
@@ -17,6 +23,7 @@ from lms.capability.repository import (
 from lms.evidence.repository import create_evidence_record
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.repository import create_learner_for_user
+from lms.settings import Settings, get_settings
 from lms.ui.capability_gap import (
     CAPABILITY_PATH,
     ESTIMATES_PATH,
@@ -279,3 +286,175 @@ def test_capability_surface_empty_states_guide_next_step(
     assert "once you have collected evidence" in detail.text
     assert "No gap analysis yet" in detail.text
     assert "No maintenance-plan steps yet" in detail.text
+
+
+def _seed_private_capability(session: Session) -> tuple[User, User, dict[str, str]]:
+    learner_id, node_id = _seed_learner_with_low_evidence(session)
+    owner = session.query(User).filter_by(username="capability-learner").one()
+    foreign = User(username="other-learner", display_name="Other learner")
+    session.add(foreign)
+    session.flush()
+    other_learner = create_learner_for_user(
+        session, user_id=foreign.id, display_name="Other learner"
+    )
+    target = create_capability_target(
+        session, learner_id=learner_id, title="Private capability target", target_node_ids=[node_id]
+    )
+    other_target = create_capability_target(
+        session, learner_id=other_learner.id, title="Other target", target_node_ids=[node_id]
+    )
+    estimate = recompute_capability_estimate(session, target_id=target.id)
+    analysis = create_gap_analysis(session, estimate_id=estimate.id)
+    session.commit()
+    return (
+        owner,
+        foreign,
+        {
+            "target_id": target.id,
+            "other_target_id": other_target.id,
+            "estimate_id": estimate.id,
+            "gap_analysis_id": analysis.id,
+        },
+    )
+
+
+class _CapabilityResponse(Protocol):
+    @property
+    def status_code(self) -> int: ...
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def content(self) -> bytes: ...
+
+    @property
+    def headers(self) -> Mapping[str, str]: ...
+
+
+def _capability_request(client: TestClient, route: str, ids: dict[str, str]) -> _CapabilityResponse:
+    if route == "detail":
+        return client.get(f"{TARGETS_PATH}/{ids['target_id']}", follow_redirects=False)
+    return client.post(
+        {"estimate": ESTIMATES_PATH, "gap": GAP_PATH, "plan": PLAN_PATH}[route],
+        data=ids,
+        follow_redirects=False,
+    )
+
+
+def _assert_capability_counts(session: Session, route: str = "detail") -> None:
+    assert session.query(CapabilityEstimate).count() == 1 + int(route == "estimate")
+    assert session.query(GapAnalysis).count() == 1 + int(route == "gap")
+    assert session.query(MaintenancePlan).count() == int(route == "plan")
+
+
+@pytest.mark.parametrize("route", ["detail", "estimate", "gap", "plan"])
+def test_capability_gap_surface_rejects_foreign_learner_target(
+    api_client: tuple[TestClient, sessionmaker[Session]], route: str
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        _, foreign, ids = _seed_private_capability(session)
+    assert isinstance(client.app, FastAPI)
+    client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
+    client.app.dependency_overrides[require_authenticated_user] = lambda: foreign
+
+    response = _capability_request(client, route, ids)
+
+    assert response.status_code == 404
+    assert "Private capability target" not in response.text
+    missing = dict.fromkeys(ids, "missing-resource")
+    missing_response = _capability_request(client, route, missing)
+    assert missing_response.status_code == 404
+    assert missing_response.content == response.content
+    assert missing_response.headers["content-type"] == response.headers["content-type"]
+    with session_factory() as session:
+        _assert_capability_counts(session)
+
+
+@pytest.mark.parametrize("route", ["detail", "estimate", "gap", "plan"])
+@pytest.mark.parametrize("auth_required", [True, False])
+def test_capability_gap_surface_allows_owner_and_local_access(
+    api_client: tuple[TestClient, sessionmaker[Session]], route: str, auth_required: bool
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        owner, foreign, ids = _seed_private_capability(session)
+    assert isinstance(client.app, FastAPI)
+    client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=auth_required)
+    client.app.dependency_overrides[require_authenticated_user] = lambda: (
+        owner if auth_required else foreign
+    )
+
+    response = _capability_request(client, route, ids)
+
+    assert response.status_code == 200
+    assert "Private capability target" in response.text
+    with session_factory() as session:
+        _assert_capability_counts(session, route)
+
+
+@pytest.mark.parametrize("route", ["detail", "estimate", "gap", "plan"])
+@pytest.mark.parametrize("accept, status", [("text/html", 302), ("application/json", 401)])
+def test_capability_gap_surface_requires_login(
+    api_client: tuple[TestClient, sessionmaker[Session]], route: str, accept: str, status: int
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        _, _, ids = _seed_private_capability(session)
+    assert isinstance(client.app, FastAPI)
+    client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
+    client.headers["Accept"] = accept
+
+    response = _capability_request(client, route, ids)
+
+    assert response.status_code == status
+    assert "Private capability target" not in response.text
+    with session_factory() as session:
+        _assert_capability_counts(session)
+
+
+@pytest.mark.parametrize(
+    "route, resource_key", [("gap", "estimate_id"), ("plan", "gap_analysis_id")]
+)
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "owned-target-foreign-parent",
+        "omitted-target",
+        "foreign-error-target",
+        "missing-parent",
+        "foreign-target-owned-parent",
+    ],
+)
+def test_capability_actions_authorize_parent_and_error_target(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    route: str,
+    resource_key: str,
+    scenario: str,
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        owner, foreign, ids = _seed_private_capability(session)
+    assert isinstance(client.app, FastAPI)
+    client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
+    client.app.dependency_overrides[require_authenticated_user] = lambda: foreign
+    if scenario == "owned-target-foreign-parent":
+        ids["target_id"] = ids["other_target_id"]
+    elif scenario == "omitted-target":
+        del ids["target_id"]
+    elif scenario == "foreign-error-target":
+        ids[resource_key] = ""
+    elif scenario == "missing-parent":
+        ids["target_id"] = ids["other_target_id"]
+        ids[resource_key] = "missing-resource"
+    else:
+        client.app.dependency_overrides[require_authenticated_user] = lambda: owner
+        ids["target_id"] = ids["other_target_id"]
+
+    response = _capability_request(client, route, ids)
+
+    assert response.status_code == 404
+    assert "Private capability target" not in response.text
+    with session_factory() as session:
+        _assert_capability_counts(session)
