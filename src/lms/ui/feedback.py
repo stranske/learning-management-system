@@ -7,7 +7,7 @@ from html import escape
 from typing import Annotated
 from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
@@ -84,15 +84,15 @@ def learner_feedback_detail_route(
     session: SessionDep,
     current_user: CurrentUserDep,
     settings: SettingsDep,
-) -> str:
+) -> HTMLResponse:
     """Return one learner feedback detail page."""
     record = get_feedback_record(session, feedback_record_id)
     if record is None:
-        return _missing_feedback_page()
+        return _missing_feedback_response(auth_required=settings.auth_required)
     require_learner_ownership(
         session, user=current_user, settings=settings, learner_id=record.learner_id
     )
-    return _feedback_detail_page(session, record)
+    return HTMLResponse(_feedback_detail_page(session, record))
 
 
 @router.post("/app/learner/feedback/{feedback_record_id}/hints/{hint_id}/reveal")
@@ -107,7 +107,7 @@ def learner_hint_reveal_route(
     record = get_feedback_record(session, feedback_record_id)
     hint = get_hint(session, hint_id)
     if record is None or hint is None:
-        return HTMLResponse(_missing_feedback_page(), status_code=404)
+        return _missing_feedback_response(auth_required=settings.auth_required)
     require_learner_ownership(
         session, user=current_user, settings=settings, learner_id=record.learner_id
     )
@@ -139,7 +139,7 @@ def learner_model_answer_reveal_route(
     record = get_feedback_record(session, feedback_record_id)
     answer = get_model_answer(session, model_answer_id)
     if record is None or answer is None:
-        return HTMLResponse(_missing_feedback_page(), status_code=404)
+        return _missing_feedback_response(auth_required=settings.auth_required)
     require_learner_ownership(
         session, user=current_user, settings=settings, learner_id=record.learner_id
     )
@@ -174,7 +174,7 @@ async def learner_revision_submit_route(
     """Open or reuse a revision request and submit the learner revision."""
     record = get_feedback_record(session, feedback_record_id)
     if record is None:
-        return HTMLResponse(_missing_feedback_page(), status_code=404)
+        return _missing_feedback_response(auth_required=settings.auth_required)
     require_learner_ownership(
         session, user=current_user, settings=settings, learner_id=record.learner_id
     )
@@ -205,6 +205,13 @@ async def learner_revision_submit_route(
             message=f"Revision submitted. Status: {revision.status}.",
         )
     )
+
+
+def _missing_feedback_response(*, auth_required: bool) -> HTMLResponse:
+    if auth_required:
+        # Match the ownership guard so missing and foreign records look identical.
+        raise HTTPException(status_code=404, detail="Learner resource not found.")
+    return HTMLResponse(_missing_feedback_page(), status_code=404)
 
 
 def _feedback_detail_page(

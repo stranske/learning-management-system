@@ -103,6 +103,47 @@ def test_feedback_surface_rejects_foreign_learner_access(
         _assert_no_feedback_mutations(session)
 
 
+@pytest.mark.parametrize("route", ["detail", "hint", "answer", "revision"])
+def test_feedback_surface_hides_missing_and_foreign_record_distinction(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    route: str,
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        _, foreign, paths = _seed_private_feedback(session)
+    assert isinstance(client.app, FastAPI)
+    client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
+    client.app.dependency_overrides[require_authenticated_user] = lambda: foreign
+    method = "GET" if route == "detail" else "POST"
+    missing_path = paths[route].replace(paths["detail"], "/app/learner/feedback/missing-record")
+
+    foreign_response = client.request(method, paths[route])
+    missing_response = client.request(method, missing_path)
+
+    assert missing_response.status_code == foreign_response.status_code == 404
+    assert missing_response.content == foreign_response.content
+    assert missing_response.headers["content-type"] == foreign_response.headers["content-type"]
+    assert "Private" not in missing_response.text
+    with session_factory() as session:
+        _assert_no_feedback_mutations(session)
+
+
+@pytest.mark.parametrize("route", ["detail", "hint", "answer", "revision"])
+def test_feedback_surface_missing_record_local_mode(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    route: str,
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        _, _, paths = _seed_private_feedback(session)
+    missing_path = paths[route].replace(paths["detail"], "/app/learner/feedback/missing-record")
+
+    response = client.request("GET" if route == "detail" else "POST", missing_path)
+
+    assert response.status_code == 404
+    assert "Feedback not found" in response.text
+
+
 @pytest.mark.parametrize("auth_required", [True, False])
 @pytest.mark.parametrize("route", ["detail", "hint", "answer", "revision"])
 def test_feedback_surface_allows_owner_and_local_access(
