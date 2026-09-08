@@ -4,11 +4,8 @@
 deliberately return 0 rather than None — a rendered card needs a number — which means every way
 of being wrong here shows a learner a real-looking score rather than an error.
 
-THIS FILE ALSO RECORDS A DIVERGENCE FOUND WHILE WRITING IT. There are two `_as_float` functions
-in this codebase with the same name and different contracts, and the less defensive one is the
-one in the scoring path. That is documented below rather than changed, because which behaviour is
-correct depends on the database column types feeding it, and quietly altering a scoring input is
-not a test's business.
+The repository and UI helpers retain different boolean and non-finite contracts. Issue #626
+makes repository numeric conversion defensive so malformed values cannot hide weak mastery.
 """
 
 from __future__ import annotations
@@ -89,24 +86,18 @@ def test_a_non_finite_float_passes_through_and_that_matters():
 
 
 def test_the_two_as_float_helpers_do_not_agree():
-    """Two functions, one name, different contracts — and the weaker one is in the scoring path.
+    """Both helpers accept numeric strings and fall back for malformed strings.
 
-    `capability/repository._as_float` has no bool guard and no ValueError guard, so it returns 1.0
-    for a boolean and RAISES on a non-numeric string, where the UI twin returns 0.0 for both. It
-    is the one reading `row["weighted_score"]` and `row["current_estimate"]` when a capability
-    estimate is recomputed.
-
-    Pinned rather than unified: whether the raise is reachable depends on the column types feeding
-    those rows, and making them agree is a change to a scoring input that deserves its own review.
-    This test exists so the difference is a KNOWN one rather than a surprise to whoever next reads
-    a stack trace from the scoring path.
+    The repository additionally rejects non-finite numbers; its existing boolean conversion
+    remains unchanged by the finite-value fix.
     """
     assert _as_float(True) == 0.0
     assert repository_as_float(True) == 1.0
 
     assert _as_float("abc") == 0.0
-    with pytest.raises(ValueError):
-        repository_as_float("abc")
+    assert repository_as_float("abc") == 0.0
+    assert repository_as_float("nan") == 0.0
+    assert repository_as_float("inf") == 0.0
 
     # They agree on the ordinary cases, which is why the divergence is easy to miss.
     assert _as_float("2.5") == repository_as_float("2.5") == 2.5

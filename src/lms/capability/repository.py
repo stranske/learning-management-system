@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -760,7 +761,12 @@ def _coverage_factor(
 
 def _as_float(value: object) -> float:
     if isinstance(value, int | float | str):
-        return float(value)
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        # Invalid estimates must not hide weak nodes through NaN comparisons.
+        return parsed if math.isfinite(parsed) else 0.0
     return 0.0
 
 
