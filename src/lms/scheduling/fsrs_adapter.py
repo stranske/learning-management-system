@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -46,8 +47,24 @@ SUPPORTED_LEVELS = frozenset(
 )
 
 
+def _has_non_finite_score(record: EvidenceRecord) -> bool:
+    """Reject non-finite inputs and overflowed ratios as unusable evidence."""
+    values = (record.normalized_score, record.raw_score, record.max_score)
+    if any(value is not None and not math.isfinite(value) for value in values):
+        return True
+    return (
+        record.normalized_score is None
+        and record.raw_score is not None
+        and record.max_score is not None
+        and record.max_score != 0
+        and not math.isfinite(record.raw_score / record.max_score)
+    )
+
+
 def _score(record: EvidenceRecord) -> float | None:
     """Normalize explicit score signals before boolean correctness rules."""
+    if _has_non_finite_score(record):
+        return None
     if record.normalized_score is not None:
         return record.normalized_score
     if record.raw_score is not None and record.max_score:
@@ -150,6 +167,14 @@ FSRS_RULES: tuple[FSRSRule, ...] = (
         scheduling_included=True,
         reason="Incorrect evidence maps to FSRS Again.",
         applies=lambda record: record.correctness is False,
+    ),
+    FSRSRule(
+        rule_id="insufficient-signal",
+        rating="again",
+        value=1,
+        scheduling_included=True,
+        reason="Non-finite score evidence cannot establish mastery; schedule conservatively.",
+        applies=_has_non_finite_score,
     ),
     FSRSRule(
         rule_id="supported-or-low-confidence-correct",
