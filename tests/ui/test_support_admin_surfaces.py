@@ -143,14 +143,21 @@ def test_support_dashboard_isolates_deployed_learner_signals(
             assert "Private foreign" not in denied.text
 
 
+@pytest.mark.parametrize("accept, expected_status", [("text/html", 302), ("application/json", 401)])
 def test_support_dashboard_requires_login_when_deployed(
     api_client: tuple[TestClient, sessionmaker[Session]],
+    accept: str,
+    expected_status: int,
 ) -> None:
     client, _ = api_client
     assert isinstance(client.app, FastAPI)
     client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
-    response = client.get("/app/support", follow_redirects=False)
-    assert response.status_code in {303, 401}
+    response = client.get("/app/support", headers={"Accept": accept}, follow_redirects=False)
+    assert response.status_code == expected_status
+    if expected_status == 302:
+        assert response.headers["location"] == "/login?next=%2Fapp%2Fsupport"
+    else:
+        assert "location" not in response.headers
     assert "Support signals" not in response.text
 
 
