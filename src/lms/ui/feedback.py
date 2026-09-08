@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
+from lms.auth.login import SettingsDep
 from lms.db.session import get_session
 from lms.feedback.models import (
     FeedbackAction,
@@ -35,7 +36,7 @@ from lms.feedback.repository import (
     reveal_model_answer,
     submit_revision_request,
 )
-from lms.learners.identity import LearnerIdDep
+from lms.learners.identity import CurrentUserDep, LearnerIdDep, require_learner_ownership
 from lms.ui.shell import empty_state, render_page
 
 router = APIRouter(tags=["learner-feedback-ui"])
@@ -78,11 +79,19 @@ def learner_feedback_list_route(
 
 
 @router.get("/app/learner/feedback/{feedback_record_id}", response_class=HTMLResponse)
-def learner_feedback_detail_route(feedback_record_id: str, session: SessionDep) -> str:
+def learner_feedback_detail_route(
+    feedback_record_id: str,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
+) -> str:
     """Return one learner feedback detail page."""
     record = get_feedback_record(session, feedback_record_id)
     if record is None:
         return _missing_feedback_page()
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=record.learner_id
+    )
     return _feedback_detail_page(session, record)
 
 
@@ -91,12 +100,17 @@ def learner_hint_reveal_route(
     feedback_record_id: str,
     hint_id: str,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> HTMLResponse:
     """Reveal a hint from the feedback detail page."""
     record = get_feedback_record(session, feedback_record_id)
     hint = get_hint(session, hint_id)
     if record is None or hint is None:
         return HTMLResponse(_missing_feedback_page(), status_code=404)
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=record.learner_id
+    )
     try:
         reveal_hint(
             session,
@@ -118,12 +132,17 @@ def learner_model_answer_reveal_route(
     feedback_record_id: str,
     model_answer_id: str,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> HTMLResponse:
     """Reveal a model answer after backend policy allows it."""
     record = get_feedback_record(session, feedback_record_id)
     answer = get_model_answer(session, model_answer_id)
     if record is None or answer is None:
         return HTMLResponse(_missing_feedback_page(), status_code=404)
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=record.learner_id
+    )
     try:
         reveal_model_answer(
             session,
@@ -149,11 +168,16 @@ async def learner_revision_submit_route(
     feedback_record_id: str,
     request: Request,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> HTMLResponse:
     """Open or reuse a revision request and submit the learner revision."""
     record = get_feedback_record(session, feedback_record_id)
     if record is None:
         return HTMLResponse(_missing_feedback_page(), status_code=404)
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=record.learner_id
+    )
     form = await _read_form(request)
     response_text = form.get("response_text", "").strip()
     if not response_text:
