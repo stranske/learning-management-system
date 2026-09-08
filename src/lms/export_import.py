@@ -33,19 +33,25 @@ from lms.capability.models import (
     capability_target_competencies,
     capability_target_nodes,
 )
-from lms.cases.models import Case, CaseStep, DecisionPoint, EvidencePacket
+from lms.cases.models import Case, CaseStep, DecisionPoint, EvidencePacket, WorkProduct
 from lms.competencies.models import Competency, CompetencyEvidence
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.models import (
     FeedbackAction,
     FeedbackRecord,
+    FeedbackTemplate,
+    Hint,
+    HintReveal,
     MisconceptionPattern,
+    ModelAnswer,
+    ModelAnswerReveal,
+    RevisionRequest,
     Rubric,
     RubricCriterion,
     RubricScore,
 )
 from lms.graphs.models import KnowledgeEdge, KnowledgeNode
-from lms.learners.models import Learner, LearningGoal, learning_goal_nodes
+from lms.learners.models import Learner, LearnerReflection, LearningGoal, learning_goal_nodes
 from lms.llm.models import LLMSession
 from lms.prompts.models import Prompt, PromptVersion, prompt_source_references
 from lms.scheduling.models import (
@@ -92,6 +98,14 @@ MODEL_BY_TYPE = {
     "CapabilityEstimate": CapabilityEstimate,
     "GapAnalysis": GapAnalysis,
     "MaintenancePlan": MaintenancePlan,
+    "FeedbackTemplate": FeedbackTemplate,
+    "Hint": Hint,
+    "HintReveal": HintReveal,
+    "ModelAnswer": ModelAnswer,
+    "ModelAnswerReveal": ModelAnswerReveal,
+    "RevisionRequest": RevisionRequest,
+    "WorkProduct": WorkProduct,
+    "LearnerReflection": LearnerReflection,
 }
 
 EXPORT_ORDER = (
@@ -127,9 +141,57 @@ EXPORT_ORDER = (
     CapabilityEstimate,
     GapAnalysis,
     MaintenancePlan,
+    FeedbackTemplate,
+    Hint,
+    HintReveal,
+    ModelAnswer,
+    ModelAnswerReveal,
+    RevisionRequest,
+    WorkProduct,
+    LearnerReflection,
 )
 
 DEPENDENCIES = {
+    "FeedbackTemplate": {
+        "misconception_pattern_id": "MisconceptionPattern",
+        "feedback_action_id": "FeedbackAction",
+    },
+    "Hint": {"prompt_id": "Prompt"},
+    "HintReveal": {
+        "hint_id": "Hint",
+        "learner_id": "Learner",
+        "prompt_id": "Prompt",
+        "attempt_id": "Attempt",
+    },
+    "ModelAnswer": {"prompt_id": "Prompt", "rubric_id": "Rubric"},
+    "ModelAnswerReveal": {
+        "model_answer_id": "ModelAnswer",
+        "learner_id": "Learner",
+        "prompt_id": "Prompt",
+        "attempt_id": "Attempt",
+    },
+    "RevisionRequest": {
+        "learner_id": "Learner",
+        "feedback_record_id": "FeedbackRecord",
+        "feedback_action_id": "FeedbackAction",
+        "prompt_id": "Prompt",
+        "original_attempt_id": "Attempt",
+        "revised_attempt_id": "Attempt",
+        "work_product_id": "WorkProduct",
+    },
+    "WorkProduct": {
+        "case_id": "Case",
+        "case_step_id": "CaseStep",
+        "learner_id": "Learner",
+        "rubric_id": "Rubric",
+        "prompt_id": "Prompt",
+        "rubric_score_id": "RubricScore",
+        "revision_request_id": "RevisionRequest",
+    },
+    "LearnerReflection": {
+        "learner_id": "Learner",
+        "knowledge_node_id": "KnowledgeNode",
+    },
     "Learner": {"user_id": "User"},
     "KnowledgeNode": {"source_reference_id": "SourceReference"},
     "KnowledgeEdge": {
@@ -248,6 +310,7 @@ DEPENDENCIES = {
 }
 
 RELATIONSHIP_KEYS = {
+    "FeedbackTemplate": ("knowledge_node_ids",),
     "LearningGoal": ("target_node_ids",),
     "Prompt": ("source_reference_ids",),
     "CapabilityTarget": ("target_node_ids", "target_competency_ids"),
@@ -520,6 +583,8 @@ def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
         model = MODEL_BY_TYPE[entry["type"]]
         record = dict(entry["record"])
         for key in RELATIONSHIP_KEYS.get(entry["type"], ()):
+            if entry["type"] == "FeedbackTemplate" and key == "knowledge_node_ids":
+                continue  # knowledge_node_ids is a persisted JSON column.
             pending_relationships.append(
                 (entry["type"], key, record["id"], list(record.pop(key, [])))
             )
@@ -566,6 +631,8 @@ def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
                 left_id=record_id,
                 right_ids=related_ids,
             )
+        else:
+            raise ExportImportError(f"unsupported relationship key {key!r} for {record_type}")
 
 
 def _coerce_record(table: Table, record: dict[str, Any]) -> dict[str, Any]:
