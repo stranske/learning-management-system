@@ -9,11 +9,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.orm import Session
 
 from lms import APP_NAME, __version__
 from lms.audit.models import AuditLog
+from lms.auth.login import SettingsDep
 from lms.auth.models import User
 from lms.auth.repository import LOCAL_DEV_USERNAME
 from lms.capability.models import CapabilityEstimate, MaintenancePlan
@@ -21,6 +22,7 @@ from lms.db.base import Base
 from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
 from lms.feedback.models import FeedbackAction
+from lms.learners.identity import LearnerIdDep
 from lms.learners.models import Learner
 from lms.scheduling.models import ReviewQueueItem
 from lms.ui.shell import empty_state, render_page
@@ -42,9 +44,11 @@ class SupportSignal:
 
 
 @router.get("/app/support", response_class=HTMLResponse)
-def support_dashboard_route(session: SessionDep) -> str:
+def support_dashboard_route(
+    session: SessionDep, learner_id: LearnerIdDep, settings: SettingsDep
+) -> str:
     """Return the read-only support/testing dashboard."""
-    signals = _support_signals(session)
+    signals = _support_signals(session, learner_id=learner_id if settings.auth_required else None)
     content = (
         _support_signal_list(signals)
         if signals
@@ -113,7 +117,8 @@ def admin_dashboard_route(request: Request, session: SessionDep) -> str:
     )
 
 
-def _support_signals(session: Session) -> list[SupportSignal]:
+def _support_signals(session: Session, *, learner_id: str | None = None) -> list[SupportSignal]:
+    """Filter each signal source before limiting; None preserves the local overview."""
     signals: dict[str, SupportSignal] = {}
 
     def signal_for(learner_id: str) -> SupportSignal:
@@ -127,6 +132,7 @@ def _support_signals(session: Session) -> list[SupportSignal]:
 
     feedback_actions = session.scalars(
         select(FeedbackAction)
+        .where(FeedbackAction.learner_id == learner_id if learner_id is not None else true())
         .where(FeedbackAction.status == "open")
         .order_by(FeedbackAction.created_at.desc(), FeedbackAction.id.desc())
         .limit(100)
@@ -140,6 +146,7 @@ def _support_signals(session: Session) -> list[SupportSignal]:
 
     evidence_records = session.scalars(
         select(EvidenceRecord)
+        .where(EvidenceRecord.learner_id == learner_id if learner_id is not None else true())
         .order_by(EvidenceRecord.created_at.desc(), EvidenceRecord.id.desc())
         .limit(100)
     ).all()
@@ -164,6 +171,7 @@ def _support_signals(session: Session) -> list[SupportSignal]:
 
     estimates = session.scalars(
         select(CapabilityEstimate)
+        .where(CapabilityEstimate.learner_id == learner_id if learner_id is not None else true())
         .order_by(CapabilityEstimate.created_at.desc(), CapabilityEstimate.id.desc())
         .limit(100)
     ).all()
@@ -181,6 +189,7 @@ def _support_signals(session: Session) -> list[SupportSignal]:
 
     maintenance_plans = session.scalars(
         select(MaintenancePlan)
+        .where(MaintenancePlan.learner_id == learner_id if learner_id is not None else true())
         .where(MaintenancePlan.status == "active")
         .order_by(MaintenancePlan.created_at.desc(), MaintenancePlan.id.desc())
         .limit(100)
@@ -199,6 +208,7 @@ def _support_signals(session: Session) -> list[SupportSignal]:
 
     review_items = session.scalars(
         select(ReviewQueueItem)
+        .where(ReviewQueueItem.learner_id == learner_id if learner_id is not None else true())
         .where(ReviewQueueItem.reason_code == "stale")
         .order_by(ReviewQueueItem.created_at.desc(), ReviewQueueItem.id.desc())
         .limit(100)

@@ -2,15 +2,164 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from lms.audit.repository import record_audit_event
+from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
+from lms.capability.models import CapabilityEstimate, CapabilityTarget, GapAnalysis, MaintenancePlan
 from lms.evidence.models import EvidenceRecord
 from lms.feedback.models import FeedbackAction
 from lms.learners.models import Learner
+from lms.scheduling.models import ReviewQueueItem
+from lms.settings import Settings, get_settings
+
+
+def _seed_support_signal(session: Session, learner_id: str, kind: str, *, foreign: bool) -> None:
+    created_at = datetime(2021 if foreign else 2020, 1, 1, tzinfo=UTC)
+    marker = "Private foreign detail" if foreign else "Own support detail"
+    if kind == "feedback":
+        session.add(
+            FeedbackAction(
+                learner_id=learner_id,
+                action_type="retry",
+                status="open",
+                title=marker,
+                instructions=marker,
+                created_at=created_at,
+            )
+        )
+    elif kind == "evidence":
+        session.add(
+            EvidenceRecord(
+                learner_id=learner_id,
+                knowledge_node_id="support-node",
+                confidence_rating=2,
+                support_level="hint",
+                created_at=created_at,
+            )
+        )
+    elif kind == "review":
+        session.add(
+            ReviewQueueItem(
+                learner_id=learner_id,
+                knowledge_node_id="support-node",
+                reason_code="stale",
+                reason_explanation=marker,
+                due_at=created_at,
+                decision_log={},
+                created_at=created_at,
+            )
+        )
+    else:
+        target = CapabilityTarget(learner_id=learner_id, title=marker)
+        session.add(target)
+        session.flush()
+        estimate = CapabilityEstimate(
+            target_id=target.id,
+            learner_id=learner_id,
+            estimator_version="test",
+            current_score=0.4,
+            confidence=0.3,
+            validity_scope="test",
+            evidence_breakdown={},
+            commentary=marker,
+            created_at=created_at,
+        )
+        session.add(estimate)
+        session.flush()
+        if kind == "maintenance":
+            # Keep the estimate itself from creating a signal, so this case
+            # independently catches a missing maintenance-plan filter.
+            estimate.current_score = estimate.confidence = 0.9
+            gap = GapAnalysis(
+                target_id=target.id,
+                estimate_id=estimate.id,
+                learner_id=learner_id,
+                severity="low",
+            )
+            session.add(gap)
+            session.flush()
+            session.add(
+                MaintenancePlan(
+                    target_id=target.id,
+                    gap_analysis_id=gap.id,
+                    learner_id=learner_id,
+                    status="active",
+                    rationale=marker,
+                    plan_steps=[{"title": marker, "status": "blocked"}],
+                    created_at=created_at,
+                )
+            )
+
+
+@pytest.mark.parametrize("kind", ["feedback", "evidence", "estimate", "maintenance", "review"])
+@pytest.mark.parametrize("auth_required", [True, False])
+@pytest.mark.parametrize("own_signal", [True, False])
+def test_support_dashboard_isolates_deployed_learner_signals(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    kind: str,
+    auth_required: bool,
+    own_signal: bool,
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        owner = User(username="support-owner", display_name="Support owner")
+        foreign = User(username="support-foreign", display_name="Foreign account")
+        session.add_all([owner, foreign])
+        session.flush()
+        own_learner = Learner(user_id=owner.id, display_name="Own learner")
+        foreign_learner = Learner(user_id=foreign.id, display_name="Private foreign learner")
+        session.add_all([own_learner, foreign_learner])
+        session.flush()
+        if own_signal:
+            _seed_support_signal(session, own_learner.id, kind, foreign=False)
+        # Newer foreign rows must not crowd the owner's signal out of LIMIT 100.
+        for _ in range(101 if auth_required else 1):
+            _seed_support_signal(session, foreign_learner.id, kind, foreign=True)
+        session.commit()
+
+    assert isinstance(client.app, FastAPI)
+    client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=auth_required)
+    client.app.dependency_overrides[require_authenticated_user] = lambda: owner
+    for params in ({}, {"learner_id": own_learner.id}):
+        response = client.get("/app/support", params=params)
+        assert response.status_code == 200
+        assert ("Own learner" in response.text) is own_signal
+        assert ("Private foreign learner" in response.text) is (not auth_required)
+        if auth_required:
+            assert foreign_learner.id not in response.text
+            assert "Private foreign detail" not in response.text
+            assert ("No support signals" in response.text) is (not own_signal)
+    if auth_required:
+        for learner_id in (foreign_learner.id, "missing-learner"):
+            denied = client.get("/app/support", params={"learner_id": learner_id})
+            assert denied.status_code in {403, 404}
+            assert "Private foreign" not in denied.text
+
+
+@pytest.mark.parametrize("accept, expected_status", [("text/html", 302), ("application/json", 401)])
+def test_support_dashboard_requires_login_when_deployed(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    accept: str,
+    expected_status: int,
+) -> None:
+    client, _ = api_client
+    assert isinstance(client.app, FastAPI)
+    client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
+    response = client.get("/app/support", headers={"Accept": accept}, follow_redirects=False)
+    assert response.status_code == expected_status
+    if expected_status == 302:
+        assert response.headers["location"] == "/login?next=%2Fapp%2Fsupport"
+    else:
+        assert "location" not in response.headers
+    assert "Support signals" not in response.text
+
 
 _RANKING_OR_LABEL_COPY = (
     "rank #",
