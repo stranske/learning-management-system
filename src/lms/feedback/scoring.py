@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from sqlalchemy import select
@@ -230,7 +231,16 @@ def _normalize_criterion_scores(
             raise InvalidRubricScoringError(
                 f"unknown or inactive rubric criterion id: {criterion_id}"
             )
-        points = float(item.get("points", 0))
+        try:
+            points = float(item.get("points", 0))
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise InvalidRubricScoringError(
+                f"Points for criterion {criterion.id} must be a finite number"
+            ) from exc
+        if not math.isfinite(points):
+            raise InvalidRubricScoringError(
+                f"Points for criterion {criterion.id} must be a finite number"
+            )
         if points < 0 or points > criterion.max_points:
             raise InvalidRubricScoringError(
                 "criterion score points must be within criterion max_points"

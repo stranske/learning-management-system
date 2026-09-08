@@ -151,6 +151,62 @@ def test_rubric_score_requires_every_active_criterion(db_session: Session) -> No
         )
 
 
+@pytest.mark.parametrize(
+    "points", [float("nan"), float("inf"), float("-inf"), "NaN", "Infinity", "-Infinity", "1e999"]
+)
+def test_score_rubric_rejects_nan_and_inf_points(db_session: Session, points: object) -> None:
+    """Non-finite points fail before evidence persistence and leave scoring usable."""
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+
+    with pytest.raises(InvalidRubricScoringError, match="must be a finite number"):
+        score_attempt_with_rubric(
+            db_session,
+            rubric_id=rubric_id,
+            attempt_id=attempt_id,
+            scorer_type="human",
+            criterion_scores=[
+                {"criterion_id": criterion_ids[0], "points": points},
+                {"criterion_id": criterion_ids[1], "points": 2},
+            ],
+        )
+
+    # No rollback: rejection must leave the transaction usable for a corrected score.
+    score = score_attempt_with_rubric(
+        db_session,
+        rubric_id=rubric_id,
+        attempt_id=attempt_id,
+        scorer_type="human",
+        criterion_scores=[
+            {"criterion_id": criterion_ids[0], "points": "1.5"},
+            {"criterion_id": criterion_ids[1], "points": 2},
+        ],
+    )
+    db_session.commit()
+    assert score.raw_score == 3.5
+    assert score.normalized_score == 0.7
+
+
+@pytest.mark.parametrize("points", ["not-a-number", "", None, [], {}, 10**400])
+def test_score_rubric_rejects_non_numeric_points(db_session: Session, points: object) -> None:
+    """Malformed points surface the scoring API's validation error type."""
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+
+    with pytest.raises(InvalidRubricScoringError, match="must be a finite number") as exc_info:
+        score_attempt_with_rubric(
+            db_session,
+            rubric_id=rubric_id,
+            attempt_id=attempt_id,
+            scorer_type="human",
+            criterion_scores=[
+                {"criterion_id": criterion_ids[0], "points": points},
+                {"criterion_id": criterion_ids[1], "points": 2},
+            ],
+        )
+    assert isinstance(exc_info.value.__cause__, (ValueError, TypeError, OverflowError))
+
+
 def test_points_out_of_range_rejected(db_session: Session) -> None:
     """Points above a criterion's max_points raise (guards the max_points range check)."""
     attempt_id = _attempt(db_session)

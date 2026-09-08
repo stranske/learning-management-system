@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -101,6 +102,41 @@ def test_post_rubric_score_returns_criterion_breakdown(db_session: Session) -> N
     list_response = client.get("/rubric-scores", params={"attempt_id": attempt_id})
     assert list_response.status_code == 200
     assert [item["id"] for item in list_response.json()] == [body["id"]]
+
+
+@pytest.mark.parametrize(
+    ("points", "rejected_by_schema"),
+    [("NaN", True), ("Infinity", False), ("-Infinity", True), ("1e999", False)],
+)
+def test_post_rubric_score_rejects_non_finite_points(
+    db_session: Session, points: str, rejected_by_schema: bool
+) -> None:
+    """Non-finite numeric strings return 422 without persisting a score."""
+    client = _client(db_session)
+    rubric_id, attempt_id, criterion_ids = _rubric_score_fixture(db_session, client)
+
+    response = client.post(
+        "/rubric-scores",
+        json={
+            "rubric_id": rubric_id,
+            "attempt_id": attempt_id,
+            "scorer_type": "human",
+            "criterion_scores": [
+                {"criterion_id": criterion_ids[0], "points": points},
+                {"criterion_id": criterion_ids[1], "points": 2},
+            ],
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    if rejected_by_schema:
+        assert detail[0]["loc"] == ["body", "criterion_scores", 0, "points"]
+    else:
+        assert "must be a finite number" in detail
+    list_response = client.get("/rubric-scores", params={"attempt_id": attempt_id})
+    assert list_response.status_code == 200
+    assert list_response.json() == []
 
 
 def test_post_rubric_score_rejects_invalid_criterion_id(db_session: Session) -> None:
