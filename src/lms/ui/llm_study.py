@@ -154,7 +154,9 @@ async def control_llm_study_trace_route(
         )
     payload = LLMTraceControlRequest(action=action, actor_id=learner_id)
     try:
-        read = control_llm_trace_route(session_id, payload, session)
+        read = control_llm_trace_route(
+            session_id, payload, session, current_user=current_user, settings=settings
+        )
     except HTTPException as exc:
         return _study_surface(
             learner_id=learner_id,

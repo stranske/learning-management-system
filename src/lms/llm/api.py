@@ -659,11 +659,20 @@ def control_llm_trace_route(
     session_id: str,
     payload: LLMTraceControlRequest,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> LLMTraceControlRead:
     """Apply a learner keep/forget override to one persisted LLM session."""
     llm_session = session.get(LLMSession, session_id)
-    if llm_session is None:
+    if llm_session is None or llm_session.learner_id is None:
         raise HTTPException(status_code=404, detail="LLM session not found")
+    require_learner_ownership(
+        session,
+        user=current_user,
+        settings=settings,
+        learner_id=llm_session.learner_id,
+    )
+    # Bind the audit actor to the session's now-authorized learner identity.
     if llm_session.learner_id != payload.actor_id:
         raise HTTPException(status_code=404, detail="LLM session not found")
     try:

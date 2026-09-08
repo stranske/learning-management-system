@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import suppress
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -1537,3 +1538,133 @@ def test_llm_linked_session_does_not_enumerate_foreign_owners(
         assert response.json() == {"detail": "Learner resource not found."}
         assert [session.query(model).count() for model in models] == before
         assert llm_client.budget.spent_micro_usd() == 0
+
+
+@pytest.fixture
+def trace_ownership_client(
+    llm_ownership_client: tuple[TestClient, Session, dict[str, str], LLMClient],
+) -> tuple[TestClient, Session, dict[str, str]]:
+    client, session, ids, _ = llm_ownership_client
+    for kind in ("owner", "foreign"):
+        turn = session.get(LLMSession, ids[f"{kind}_session"])
+        assert turn is not None
+        turn.response_summary = f"{kind} private transcript"
+        turn.external_export_allowed = True
+    session.commit()
+    return client, session, ids
+
+
+@pytest.mark.parametrize("action", ["keep", "forget"])
+def test_control_llm_trace_foreign_learner_rejected(
+    trace_ownership_client: tuple[TestClient, Session, dict[str, str]], action: str
+) -> None:
+    """Knowing the victim's learner id must not grant trace control."""
+    client, session, ids = trace_ownership_client
+    before = session.query(AuditLog).count()
+    response = client.post(
+        f"/llm/sessions/{ids['foreign_session']}/trace-control",
+        json={"action": action, "actor_id": ids["foreign"]},
+    )
+    assert response.status_code == 404, response.text
+    assert "private transcript" not in response.text
+    session.expire_all()
+    turn = session.get(LLMSession, ids["foreign_session"])
+    assert turn is not None
+    assert turn.response_summary == "foreign private transcript"
+    assert turn.trace_control_state == "default"
+    assert turn.external_export_allowed is True
+    assert turn.transcript_deleted_at is None
+    assert session.query(AuditLog).count() == before
+
+
+@pytest.mark.parametrize("action", ["keep", "forget"])
+@pytest.mark.parametrize("access", ["owner", "local-foreign"])
+def test_control_llm_trace_permits_owner_and_local_mode(
+    trace_ownership_client: tuple[TestClient, Session, dict[str, str]], action: str, access: str
+) -> None:
+    client, session, ids = trace_ownership_client
+    kind = "owner" if access == "owner" else "foreign"
+    if access == "local-foreign":
+        app = cast(FastAPI, client.app)
+        app.dependency_overrides[get_settings] = lambda: Settings(auth_required=False)
+        app.dependency_overrides.pop(require_authenticated_user)
+    response = client.post(
+        f"/llm/sessions/{ids[f'{kind}_session']}/trace-control",
+        json={"action": action, "actor_id": ids[kind]},
+    )
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    turn = session.get(LLMSession, ids[f"{kind}_session"])
+    assert turn is not None
+    assert turn.trace_control_state == ("kept" if action == "keep" else "forgotten")
+    assert turn.response_summary == (f"{kind} private transcript" if action == "keep" else None)
+    assert turn.external_export_allowed is (action == "keep")
+    assert (turn.transcript_deleted_at is None) is (action == "keep")
+    audit = session.query(AuditLog).filter_by(entity_id=turn.id).one()
+    assert audit.actor_id == ids[kind]
+    assert audit.action == f"llm_trace_{action}"
+
+
+@pytest.mark.parametrize("action", ["keep", "forget"])
+@pytest.mark.parametrize("access", ["wrong-actor", "missing", "unassigned"])
+def test_control_llm_trace_rejects_invalid_target_without_writes(
+    trace_ownership_client: tuple[TestClient, Session, dict[str, str]], action: str, access: str
+) -> None:
+    client, session, ids = trace_ownership_client
+    turn = session.get(LLMSession, ids["owner_session"])
+    assert turn is not None
+    if access == "unassigned":
+        turn.learner_id = None
+        session.commit()
+    session_id = "nonexistent" if access == "missing" else turn.id
+    before = session.query(AuditLog).count()
+    response = client.post(
+        f"/llm/sessions/{session_id}/trace-control",
+        json={"action": action, "actor_id": ids["foreign"]},
+    )
+    assert response.status_code == 404, response.text
+    session.expire_all()
+    assert turn.response_summary == "owner private transcript"
+    assert turn.trace_control_state == "default"
+    assert turn.external_export_allowed is True
+    assert turn.transcript_deleted_at is None
+    assert session.query(AuditLog).count() == before
+
+
+def test_control_llm_trace_requires_real_login_and_checks_session_owner(
+    trace_ownership_client: tuple[TestClient, Session, dict[str, str]],
+) -> None:
+    client, session, ids = trace_ownership_client
+    learner = session.get(Learner, ids["owner"])
+    assert learner is not None
+    user = session.get(User, learner.user_id)
+    assert user is not None
+    user.password_hash = hash_password("trace-owner-password")
+    session.commit()
+    cast(FastAPI, client.app).dependency_overrides.pop(require_authenticated_user)
+    before = session.query(AuditLog).count()
+    response = client.post(
+        f"/llm/sessions/{ids['foreign_session']}/trace-control",
+        json={"action": "forget", "actor_id": ids["foreign"]},
+    )
+    assert response.status_code == 401
+    session.expire_all()
+    turn = session.get(LLMSession, ids["foreign_session"])
+    assert turn is not None
+    assert turn.response_summary == "foreign private transcript"
+    assert turn.trace_control_state == "default"
+    assert turn.external_export_allowed is True
+    assert turn.transcript_deleted_at is None
+    assert session.query(AuditLog).count() == before
+    login = client.post(
+        "/login",
+        data={"username": user.username, "password": "trace-owner-password"},
+        follow_redirects=False,
+    )
+    assert login.status_code == 303
+    for kind, status_code in (("foreign", 404), ("owner", 200)):
+        response = client.post(
+            f"/llm/sessions/{ids[f'{kind}_session']}/trace-control",
+            json={"action": "forget", "actor_id": ids[kind]},
+        )
+        assert response.status_code == status_code, response.text
