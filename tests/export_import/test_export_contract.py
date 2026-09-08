@@ -325,10 +325,12 @@ def test_import_rejects_missing_m5_m6_dependency(
     try:
         Base.metadata.create_all(engine)
         with Session(engine) as destination:
-            with pytest.raises(
-                ExportImportError, match=f"{model.__name__}:.*references missing .*:missing-parent"
-            ):
-                import_jsonl(destination, path, dry_run=True)
-            assert destination.get(User, "user-1") is None
+            for dry_run in (True, False):
+                with pytest.raises(
+                    ExportImportError,
+                    match=f"{model.__name__}:.*references missing .*:missing-parent",
+                ):
+                    import_jsonl(destination, path, dry_run=dry_run)
+                assert destination.get(User, "user-1") is None
     finally:
         engine.dispose()

@@ -631,6 +631,8 @@ def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
                 left_id=record_id,
                 right_ids=related_ids,
             )
+        else:
+            raise ExportImportError(f"unsupported relationship key {key!r} for {record_type}")
 
 
 def _coerce_record(table: Table, record: dict[str, Any]) -> dict[str, Any]:
