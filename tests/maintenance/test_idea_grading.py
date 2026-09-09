@@ -22,11 +22,26 @@ from lms.maintenance.grading import (
     grade_idea_answer,
 )
 from lms.maintenance.seeds import ipo_surge_2026
+from lms.maintenance.service import score_to_rating
 
 KEY_POINTS = [
     KeyPoint.from_payload(raw) for raw in ipo_surge_2026.IDEA_ITEMS[0]["payload"]["key_points"]
 ]
 PROMPT = ipo_surge_2026.IDEA_ITEMS[0]["prompt"]
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), -float("inf"), -0.01, 1.01])
+def test_score_to_rating_rejects_invalid_grades(score: float) -> None:
+    with pytest.raises(ValueError, match="score must be finite and between 0 and 1"):
+        score_to_rating(score)
+
+
+@pytest.mark.parametrize(
+    ("score", "rating"),
+    [(0.0, 1), (0.4999, 1), (0.5, 2), (0.8499, 2), (0.85, 3), (1.0, 3)],
+)
+def test_score_to_rating_preserves_thresholds(score: float, rating: int) -> None:
+    assert score_to_rating(score) == rating
 
 
 class _StubGrader:

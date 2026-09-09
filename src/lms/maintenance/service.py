@@ -7,6 +7,7 @@ rather than through ``ReviewQueueItem``.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -136,6 +137,8 @@ def score_to_rating(score: float) -> int:
     the longest possible interval off a single strong answer would push items
     out of reach faster than the owner's stated goal allows.
     """
+    if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+        raise ValueError("score must be finite and between 0 and 1")
     if score >= _GOOD_SCORE:
         return 3
     if score >= _HARD_SCORE:

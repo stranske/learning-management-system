@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import math
 from datetime import UTC, datetime
 from html import escape
 from typing import Annotated
@@ -257,9 +258,10 @@ def _grade_choice(value: str | None) -> float | None:
 
 def _float_or_none(value: str | None) -> float | None:
     try:
-        return float(value) if value else None
+        parsed = float(value) if value else None
     except ValueError:
         return None
+    return parsed if parsed is not None and math.isfinite(parsed) else None
 
 
 def _type_label(item: MaintenanceItem) -> str:
