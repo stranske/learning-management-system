@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy import Column, Table, inspect, select
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.types import TypeEngine
 
 import lms.audit.models  # noqa: F401  # register metadata
 import lms.capability.models  # noqa: F401  # register metadata
@@ -21,9 +22,12 @@ import lms.feedback.models  # noqa: F401  # register metadata
 import lms.graphs.models  # noqa: F401  # register metadata
 import lms.learners.models  # noqa: F401  # register metadata
 import lms.llm.models  # noqa: F401  # register metadata
+import lms.llm.proposals  # noqa: F401  # register metadata
+import lms.maintenance.models  # noqa: F401  # register metadata
 import lms.prompts.models  # noqa: F401  # register metadata
 import lms.scheduling.models  # noqa: F401  # register metadata
 import lms.sources.models  # noqa: F401  # register metadata
+from lms.audit.models import AuditLog
 from lms.auth.models import User
 from lms.capability.models import (
     CapabilityEstimate,
@@ -52,10 +56,13 @@ from lms.feedback.models import (
 )
 from lms.graphs.models import KnowledgeEdge, KnowledgeNode
 from lms.learners.models import Learner, LearnerReflection, LearningGoal, learning_goal_nodes
-from lms.llm.models import LLMSession
+from lms.llm.models import LearningInteractionSkill, LLMFeedbackEvent, LLMSession
+from lms.llm.proposals import LLMProposal
+from lms.maintenance.models import DraftRejection, GradeDispute, MaintenanceItem
 from lms.prompts.models import Prompt, PromptVersion, prompt_source_references
 from lms.scheduling.models import (
     RemediationTrigger,
+    ReviewCardState,
     ReviewPolicy,
     ReviewQueueItem,
     ReviewSchedule,
@@ -106,7 +113,49 @@ MODEL_BY_TYPE = {
     "RevisionRequest": RevisionRequest,
     "WorkProduct": WorkProduct,
     "LearnerReflection": LearnerReflection,
+    "LearningInteractionSkill": LearningInteractionSkill,
+    "AuditLog": AuditLog,
+    "MaintenanceItem": MaintenanceItem,
+    "GradeDispute": GradeDispute,
+    "DraftRejection": DraftRejection,
+    "ReviewCardState": ReviewCardState,
+    "LLMFeedbackEvent": LLMFeedbackEvent,
+    "LLMProposal": LLMProposal,
 }
+
+
+def _column_python_type(column: Column[Any]) -> type[Any] | None:
+    """Resolve a column's Python type, unwrapping ``TypeDecorator`` layers.
+
+    ``TypeDecorator`` does not implement ``python_type``, so a decorated column
+    such as the audit log's ``UTCDateTime`` would otherwise look untyped and skip
+    the datetime coercion an import needs.
+    """
+    column_type: TypeEngine[Any] = column.type
+    while True:
+        try:
+            return column_type.python_type
+        except NotImplementedError:
+            impl = getattr(column_type, "impl", None)
+            if not isinstance(impl, TypeEngine):
+                return None
+            column_type = impl
+
+
+def _has_integer_primary_key(model: type[Any]) -> bool:
+    """Return True when ``model`` is keyed by a single integer column."""
+    columns = list(model.__table__.primary_key.columns)
+    if len(columns) != 1:
+        return False
+    return _column_python_type(columns[0]) is int
+
+
+# Almost every entity is keyed by a UUID string, but the audit log uses an
+# autoincrementing integer, so ``record.id`` validation is keyed by model
+# rather than assuming ``str`` for every type.
+INTEGER_ID_TYPES: frozenset[str] = frozenset(
+    record_type for record_type, model in MODEL_BY_TYPE.items() if _has_integer_primary_key(model)
+)
 
 EXPORT_ORDER = (
     User,
@@ -149,6 +198,14 @@ EXPORT_ORDER = (
     RevisionRequest,
     WorkProduct,
     LearnerReflection,
+    LearningInteractionSkill,
+    AuditLog,
+    MaintenanceItem,
+    GradeDispute,
+    DraftRejection,
+    ReviewCardState,
+    LLMFeedbackEvent,
+    LLMProposal,
 )
 
 DEPENDENCIES = {
@@ -306,6 +363,33 @@ DEPENDENCIES = {
         "target_id": "CapabilityTarget",
         "gap_analysis_id": "GapAnalysis",
         "learner_id": "Learner",
+    },
+    "MaintenanceItem": {
+        "learner_id": "Learner",
+        "source_reference_id": "SourceReference",
+    },
+    "GradeDispute": {
+        "learner_id": "Learner",
+        "maintenance_item_id": "MaintenanceItem",
+        "evidence_record_id": "EvidenceRecord",
+    },
+    "DraftRejection": {"learner_id": "Learner"},
+    # ``subject_id`` is polymorphic (knowledge node or maintenance item), so it has no
+    # single dependency type and is validated by the check constraint instead.
+    "ReviewCardState": {"learner_id": "Learner"},
+    "LLMFeedbackEvent": {
+        "llm_session_id": "LLMSession",
+        "learner_id": "Learner",
+        "skill_id": "LearningInteractionSkill",
+        "feedback_record_id": "FeedbackRecord",
+        "evidence_record_id": "EvidenceRecord",
+    },
+    "LLMProposal": {
+        "llm_session_id": "LLMSession",
+        "knowledge_node_id": "KnowledgeNode",
+        "knowledge_edge_id": "KnowledgeEdge",
+        "prompt_id": "Prompt",
+        "source_reference_id": "SourceReference",
     },
 }
 
@@ -512,12 +596,16 @@ def _validate_entry_shape(entry: Any, *, line_number: int) -> None:
     record = entry.get("record")
     if not isinstance(record, dict):
         raise ExportImportError(f"line {line_number}: record must be an object")
-    if not isinstance(record.get("id"), str):
+    record_id = record.get("id")
+    if record_type in INTEGER_ID_TYPES:
+        if not isinstance(record_id, int) or isinstance(record_id, bool):
+            raise ExportImportError(f"line {line_number}: record.id must be an integer")
+    elif not isinstance(record_id, str):
         raise ExportImportError(f"line {line_number}: record.id must be a string")
 
 
 def _validate_import(session: Session, entries: Sequence[dict[str, Any]]) -> None:
-    seen: dict[str, set[str]] = {record_type: set() for record_type in MODEL_BY_TYPE}
+    seen: dict[str, set[Any]] = {record_type: set() for record_type in MODEL_BY_TYPE}
     for entry in entries:
         record_type = entry["type"]
         record = entry["record"]
@@ -559,8 +647,8 @@ def _validate_import(session: Session, entries: Sequence[dict[str, Any]]) -> Non
 def _id_exists(
     session: Session,
     record_type: str,
-    record_id: str,
-    imported: dict[str, set[str]],
+    record_id: Any,
+    imported: dict[str, set[Any]],
 ) -> bool:
     if record_id in imported[record_type]:
         return True
@@ -649,12 +737,7 @@ def _coerce_record(table: Table, record: dict[str, Any]) -> dict[str, Any]:
 def _coerce_value(column: Column[Any], value: Any) -> Any:
     if value is None:
         return None
-    python_type: type[Any] | None
-    try:
-        python_type = column.type.python_type
-    except NotImplementedError:
-        python_type = None
-    if python_type is datetime and isinstance(value, str):
+    if _column_python_type(column) is datetime and isinstance(value, str):
         return datetime.fromisoformat(value)
     return value
 

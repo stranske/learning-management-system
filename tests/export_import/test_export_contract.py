@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -10,10 +11,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from tests.export_import.test_m5_export_contract import _seed_m5_runtime_records
 
+from lms.audit.models import AuditLog
 from lms.auth.models import User
 from lms.cases.models import WorkProduct
 from lms.db.base import Base
-from lms.export_import import MODEL_BY_TYPE, ExportImportError, export_jsonl, import_jsonl
+from lms.export_import import (
+    EXPORT_ORDER,
+    MODEL_BY_TYPE,
+    ExportImportError,
+    export_jsonl,
+    import_jsonl,
+)
 from lms.feedback.models import (
     FeedbackTemplate,
     Hint,
@@ -24,6 +32,10 @@ from lms.feedback.models import (
 )
 from lms.graphs.models import KnowledgeEdge, KnowledgeNode
 from lms.learners.models import LearnerReflection
+from lms.llm.models import LearningInteractionSkill, LLMFeedbackEvent
+from lms.llm.proposals import LLMProposal
+from lms.maintenance.models import DraftRejection, GradeDispute, MaintenanceItem
+from lms.scheduling.models import ReviewCardState
 from lms.sources.models import SourceReference
 
 
@@ -334,3 +346,265 @@ def test_import_rejects_missing_m5_m6_dependency(
                 assert destination.get(User, "user-1") is None
     finally:
         engine.dispose()
+
+
+MAINTENANCE_LLM_MODELS = (
+    LearningInteractionSkill,
+    AuditLog,
+    MaintenanceItem,
+    GradeDispute,
+    DraftRejection,
+    ReviewCardState,
+    LLMFeedbackEvent,
+    LLMProposal,
+)
+
+
+@pytest.fixture
+def maintenance_llm_records(db_session: Session) -> list[str]:
+    """Export real persisted rows for the maintenance, dispute and LLM entities."""
+    _seed_m5_runtime_records(db_session)
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    db_session.add_all(
+        [
+            KnowledgeNode(
+                id="node-2",
+                title="Second",
+                knowledge_type="conceptual",
+                ownership_scope="personal",
+                status="published",
+                provenance="manual",
+            ),
+        ]
+    )
+    db_session.flush()
+    db_session.add_all(
+        [
+            KnowledgeEdge(
+                id="edge-1",
+                source_node_id="node-1",
+                target_node_id="node-2",
+                edge_type="prerequisite",
+                source_scope="personal",
+                target_scope="personal",
+                status="published",
+            ),
+            LearningInteractionSkill(
+                id="skill-1",
+                name="Socratic prompting",
+                mode="practice",
+                policy_version="2026-06-01",
+                description="Ask before telling.",
+                allowed_trace_classes=["evidence-grade"],
+                source_citation_required=True,
+            ),
+            AuditLog(
+                id=1,
+                actor_id="author",
+                action="update",
+                entity_type="KnowledgeNode",
+                entity_id="node-1",
+                before_summary={"title": "Node"},
+                after_summary={"title": "Node"},
+                source_subsystem="authoring",
+                occurred_at=now,
+            ),
+            MaintenanceItem(
+                id="maintenance-item-1",
+                learner_id="learner-1",
+                item_type="reference_anchor",
+                title="IPO count distribution",
+                prompt="Where does a 400-IPO year sit?",
+                source_reference_id="source-1",
+                source_locator_hint="docs/demo.md#one",
+                subject_label="US IPO market",
+                retention_tier="warm",
+                precision_mode="band",
+                status="active",
+                payload={"bands": [{"label": "typical", "low": 80, "high": 150}]},
+                field_provenance={"bands": "source"},
+                approved_at=now,
+                content_as_of=now,
+            ),
+            GradeDispute(
+                id="grade-dispute-1",
+                learner_id="learner-1",
+                maintenance_item_id="maintenance-item-1",
+                evidence_record_id="evidence-1",
+                submitted_answer="About 100 a year, 1999 was roughly 400.",
+                machine_grade=0.4,
+                learner_grade=0.9,
+                comment="Band membership was correct.",
+            ),
+            DraftRejection(
+                id="draft-rejection-1",
+                learner_id="learner-1",
+                item_type="idea",
+                title="Rejected draft",
+                subject_label="US IPO market",
+                source_locator_hint="docs/demo.md#two",
+                reason="Figure could not be verified against the source.",
+                disposition="rejected",
+            ),
+            ReviewCardState(
+                id="review-card-1",
+                learner_id="learner-1",
+                subject_type="maintenance_item",
+                subject_id="maintenance-item-1",
+                retention_tier="warm",
+                card_state={"stability": 3.5, "difficulty": 5.0},
+                stability=3.5,
+                difficulty=5.0,
+                due_at=now,
+                last_review_at=now,
+                review_count=2,
+                lapse_count=1,
+            ),
+            LLMFeedbackEvent(
+                id="llm-feedback-event-1",
+                llm_session_id="llm-1",
+                learner_id="learner-1",
+                skill_id="skill-1",
+                feedback_record_id="feedback-record-1",
+                evidence_record_id="evidence-1",
+                event_type="feedback-outcome",
+                trace_class="evidence-grade",
+                source_reference_ids=["source-1"],
+                cost_metadata={"tokens": 42},
+                event_summary="Nudged toward the prerequisite.",
+                event_body="Full turn body.",
+            ),
+            LLMProposal(
+                id="llm-proposal-1",
+                llm_session_id="llm-1",
+                llm_model="fake-model",
+                proposed_by="author",
+                knowledge_node_id="node-1",
+                knowledge_edge_id="edge-1",
+                prompt_id="prompt-1",
+                source_reference_id="source-1",
+            ),
+        ]
+    )
+    db_session.commit()
+    return list(export_jsonl(db_session))
+
+
+def test_export_registry_covers_every_mapped_model() -> None:
+    """Every mapped entity must be exportable; a new model must not be silently dropped."""
+    mapped_types = {mapper.class_.__name__ for mapper in Base.registry.mappers}
+    registered_types = set(MODEL_BY_TYPE)
+    assert mapped_types - registered_types == set(), "mapped model missing from MODEL_BY_TYPE"
+    exported_types = {model.__name__ for model in EXPORT_ORDER}
+    assert mapped_types - exported_types == set(), "mapped model missing from EXPORT_ORDER"
+    assert registered_types == exported_types
+    assert len(EXPORT_ORDER) == len(MODEL_BY_TYPE) == len(mapped_types)
+
+
+def test_export_contract_includes_maintenance_dispute_and_llm_entities(
+    maintenance_llm_records: list[str],
+    tmp_path: Path,
+) -> None:
+    records = [json.loads(line) for line in maintenance_llm_records]
+    expected_types = {model.__name__ for model in MAINTENANCE_LLM_MODELS}
+    assert expected_types <= MODEL_BY_TYPE.keys(), "missing entity type in import registry"
+    assert expected_types <= {record["type"] for record in records}, "missing entity type in export"
+    by_type = {record["type"]: record["record"] for record in records}
+    positions = {record["type"]: i for i, record in enumerate(records)}
+    type_by_table = {model.__tablename__: model.__name__ for model in MODEL_BY_TYPE.values()}
+    for model in MAINTENANCE_LLM_MODELS:
+        # Verify emitted order against the actual schema, independently of DEPENDENCIES.
+        for fk in model.__table__.foreign_keys:
+            assert positions[type_by_table[fk.column.table.name]] < positions[model.__name__]
+
+    path = tmp_path / "maintenance-llm.jsonl"
+    path.write_text("\n".join(maintenance_llm_records) + "\n", encoding="utf-8")
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as destination:
+            dry_run = import_jsonl(destination, path, dry_run=True)
+            applied = import_jsonl(destination, path, dry_run=False)
+            destination.commit()
+            destination.expire_all()
+            assert dry_run.counts == applied.counts
+            for model in MAINTENANCE_LLM_MODELS:
+                assert applied.counts[model.__name__] == 1
+                assert destination.get(model, by_type[model.__name__]["id"]) is not None
+            restored = {
+                entry["type"]: entry["record"]
+                for entry in map(json.loads, export_jsonl(destination))
+            }
+            # Includes IDs, FK/soft links, text, JSON payloads and timestamps.
+            for record_type in expected_types:
+                assert restored[record_type] == by_type[record_type]
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "model,field",
+    [
+        (model, fk.parent.name)
+        for model in MAINTENANCE_LLM_MODELS
+        for fk in sorted(model.__table__.foreign_keys, key=lambda fk: fk.parent.name)
+    ]
+    + [
+        (GradeDispute, "evidence_record_id"),
+        (LLMFeedbackEvent, "learner_id"),
+    ],
+)
+def test_import_rejects_missing_maintenance_llm_dependency(
+    maintenance_llm_records: list[str],
+    tmp_path: Path,
+    model: type[Base],
+    field: str,
+) -> None:
+    records = [json.loads(line) for line in maintenance_llm_records]
+    entry = next(record for record in records if record["type"] == model.__name__)
+    entry["record"][field] = "missing-parent"
+    path = tmp_path / "missing-parent.jsonl"
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as destination:
+            for dry_run in (True, False):
+                with pytest.raises(
+                    ExportImportError,
+                    match=f"{model.__name__}:.*references missing .*:missing-parent",
+                ):
+                    import_jsonl(destination, path, dry_run=dry_run)
+                assert destination.get(User, "user-1") is None
+    finally:
+        engine.dispose()
+
+
+def test_import_rejects_wrong_id_type_per_model(
+    maintenance_llm_records: list[str],
+    tmp_path: Path,
+) -> None:
+    """The audit log is integer-keyed; every other entity keeps its string id contract."""
+    records = [json.loads(line) for line in maintenance_llm_records]
+    assert isinstance(next(r for r in records if r["type"] == "AuditLog")["record"]["id"], int)
+
+    for record_type, replacement, message in (
+        ("AuditLog", "1", "record.id must be an integer"),
+        ("MaintenanceItem", 1, "record.id must be a string"),
+    ):
+        mutated = [dict(record, record=dict(record["record"])) for record in records]
+        next(r for r in mutated if r["type"] == record_type)["record"]["id"] = replacement
+        path = tmp_path / f"bad-id-{record_type}.jsonl"
+        path.write_text(
+            "\n".join(json.dumps(record) for record in mutated) + "\n", encoding="utf-8"
+        )
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        try:
+            Base.metadata.create_all(engine)
+            with (
+                Session(engine) as destination,
+                pytest.raises(ExportImportError, match=message),
+            ):
+                import_jsonl(destination, path, dry_run=True)
+        finally:
+            engine.dispose()
