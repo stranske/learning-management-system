@@ -255,10 +255,9 @@ def _rubric(db_session: Session) -> tuple[str, str, str]:
     return rubric.id, rubric.criteria[0].id, node.id
 
 
-@pytest.fixture
-def scheduling_api_client() -> Generator[
-    tuple[TestClient, sessionmaker[Session], User], None, None
-]:
+def _scheduling_api_client(
+    *, auth_required: bool
+) -> Generator[tuple[TestClient, sessionmaker[Session], User], None, None]:
     """Provide a FastAPI client with a stable authenticated test user."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -291,6 +290,7 @@ def scheduling_api_client() -> Generator[
     app = create_app()
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[require_authenticated_user] = override_current_user
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=auth_required)
     try:
         with TestClient(app) as client:
             yield client, session_factory, current_user
@@ -344,49 +344,19 @@ def _queue_item_for_user(
 
 
 @pytest.fixture
+def scheduling_api_client() -> Generator[
+    tuple[TestClient, sessionmaker[Session], User], None, None
+]:
+    """Provide the local development client using the shared request lifecycle."""
+    yield from _scheduling_api_client(auth_required=False)
+
+
+@pytest.fixture
 def deployed_scheduling_api_client() -> Generator[
     tuple[TestClient, sessionmaker[Session], User], None, None
 ]:
     """Provide a deployed-mode client that enforces learner ownership."""
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(
-        bind=engine,
-        autoflush=False,
-        autocommit=False,
-        expire_on_commit=False,
-    )
-    current_user = User(id="user-current", username="current", display_name="Current")
-    with session_factory() as session:
-        session.add(current_user)
-        session.commit()
-
-    def override_get_session() -> Generator[Session, None, None]:
-        request_session = session_factory()
-        try:
-            yield request_session
-        finally:
-            request_session.close()
-
-    def override_current_user() -> User:
-        return current_user
-
-    app = create_app()
-    app.dependency_overrides[get_session] = override_get_session
-    app.dependency_overrides[require_authenticated_user] = override_current_user
-    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
-    try:
-        with TestClient(app) as client:
-            yield client, session_factory, current_user
-    finally:
-        app.dependency_overrides.clear()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+    yield from _scheduling_api_client(auth_required=True)
 
 
 def test_deployed_review_queue_allows_owner_and_rejects_foreign_learner(

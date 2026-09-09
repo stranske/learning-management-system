@@ -494,8 +494,11 @@ def test_complete_review_queue_ownership(
     db_session.commit()
     item_id = item.id
 
+    request_session_factory = sessionmaker(bind=db_session.get_bind(), expire_on_commit=False)
+
     def override_session() -> Generator[Session, None, None]:
-        yield db_session
+        with request_session_factory() as request_session:
+            yield request_session
 
     app = create_app(enable_local_identity_routes=False)
     app.dependency_overrides[get_session] = override_session
