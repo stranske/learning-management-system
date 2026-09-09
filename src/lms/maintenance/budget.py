@@ -34,6 +34,7 @@ hard limits live elsewhere (the daily queue cap and the draft cap).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from lms.scheduling.fsrs_engine import COLD, HOT, RETENTION_TIERS, WARM
@@ -102,7 +103,10 @@ def items_affordable_per_day(
 
     ``anchor_share`` is the fraction of reviews that are quick numeric
     anchors rather than written ideas; it moves the seconds-per-item blend.
+    Non-finite shares are rejected; finite shares are clamped to [0, 1].
     """
+    if not math.isfinite(anchor_share):
+        raise ValueError("anchor_share must be a finite float between 0.0 and 1.0")
     share = min(max(anchor_share, 0.0), 1.0)
     seconds_each = SECONDS_PER_ANCHOR * share + SECONDS_PER_IDEA * (1.0 - share)
     by_minutes = int((settings.daily_minutes * 60) // seconds_each)
@@ -137,7 +141,7 @@ def estimate_capacity(
     tier_counts: dict[str, int] | None = None,
     anchor_share: float = 0.5,
 ) -> CapacityEstimate:
-    """Estimate collection capacity and a sustainable intake rate."""
+    """Estimate capacity, validating anchor_share via items_affordable_per_day."""
     per_day, limited_by = items_affordable_per_day(settings, anchor_share=anchor_share)
     interval = mean_interval_days(tier_counts)
     capacity = max(1, int(per_day * interval))
