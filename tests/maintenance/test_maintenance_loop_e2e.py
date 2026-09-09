@@ -35,8 +35,21 @@ from lms.main import create_app
 from lms.maintenance.models import GradeDispute, MaintenanceItem
 from lms.maintenance.seeds import ipo_surge_2026
 from lms.scheduling.models import SUBJECT_MAINTENANCE_ITEM, ReviewCardState
+from lms.ui.maintenance import _float_or_none
 
 MAINTENANCE = "/app/learner/maintenance"
+
+
+@pytest.mark.parametrize(
+    "value", [None, "", " ", "invalid", "nan", "NaN", "inf", "-Infinity", "1e999"]
+)
+def test_dispute_float_parser_discards_invalid_values(value: str | None) -> None:
+    assert _float_or_none(value) is None
+
+
+@pytest.mark.parametrize(("value", "expected"), [("0", 0.0), ("1", 1.0), (" 0.6 ", 0.6)])
+def test_dispute_float_parser_preserves_finite_values(value: str, expected: float) -> None:
+    assert _float_or_none(value) == expected
 
 
 @pytest.fixture
@@ -253,6 +266,42 @@ def test_dispute_without_a_grade_only_records_the_note(
     after = _card(factory, idea.id)
     assert after is not None
     assert after.review_count == before.review_count
+
+
+@pytest.mark.parametrize(
+    ("raw_grade", "expected"),
+    [("nan", None), ("inf", None), ("-inf", None), ("1e999", None), ("0.6", 0.6)],
+)
+def test_dispute_persists_only_finite_machine_grades(
+    client_and_items: tuple[TestClient, sessionmaker[Session], str],
+    raw_grade: str,
+    expected: float | None,
+) -> None:
+    client, factory, learner_id = client_and_items
+    idea = _item(factory, item_type="idea")
+
+    response = client.post(
+        f"{MAINTENANCE}/dispute",
+        data={
+            "item_id": idea.id,
+            "answer": "My answer.",
+            "machine_grade": raw_grade,
+            "learner_grade": "correct",
+            "comment": "Keep this feedback.",
+        },
+    )
+
+    assert response.status_code == 200
+    with factory() as session:
+        dispute = session.scalars(select(GradeDispute)).one()
+        assert dispute.learner_id == learner_id
+        assert dispute.maintenance_item_id == idea.id
+        assert dispute.machine_grade == expected
+        assert dispute.learner_grade == 1.0
+        assert dispute.submitted_answer == "My answer."
+        assert dispute.comment == "Keep this feedback."
+    card = _card(factory, idea.id)
+    assert card is not None and card.review_count == 1
 
 
 def test_reviewed_item_leaves_the_due_list(

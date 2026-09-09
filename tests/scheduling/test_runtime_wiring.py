@@ -344,17 +344,17 @@ def _queue_item_for_user(
 
 
 @pytest.fixture
-def scheduling_api_client() -> Generator[
-    tuple[TestClient, sessionmaker[Session], User], None, None
-]:
+def scheduling_api_client() -> (
+    Generator[tuple[TestClient, sessionmaker[Session], User], None, None]
+):
     """Provide the local development client using the shared request lifecycle."""
     yield from _scheduling_api_client(auth_required=False)
 
 
 @pytest.fixture
-def deployed_scheduling_api_client() -> Generator[
-    tuple[TestClient, sessionmaker[Session], User], None, None
-]:
+def deployed_scheduling_api_client() -> (
+    Generator[tuple[TestClient, sessionmaker[Session], User], None, None]
+):
     """Provide a deployed-mode client that enforces learner ownership."""
     yield from _scheduling_api_client(auth_required=True)
 
