@@ -1668,3 +1668,49 @@ def test_control_llm_trace_requires_real_login_and_checks_session_owner(
             json={"action": "forget", "actor_id": ids[kind]},
         )
         assert response.status_code == status_code, response.text
+
+
+@pytest.mark.parametrize("auth_required", [True, False])
+@pytest.mark.parametrize("valid_input", [True, False])
+def test_author_goal_post_authorizes_before_validation_and_preserves_local_access(
+    auth_required: bool, valid_input: bool
+) -> None:
+    fixture = _deployed_client(auth_required=auth_required)
+    client, session = next(fixture)
+    try:
+        node = KnowledgeNode(
+            title="Goal concept",
+            knowledge_type="conceptual",
+            ownership_scope="personal",
+            status="published",
+        )
+        session.add(node)
+        session.commit()
+        before = session.query(LearningGoal).count()
+        payload = {
+            "learner_id": client.other_learner_id,  # type: ignore[attr-defined]
+            "title": "New goal",
+            "knowledge_type": "conceptual" if valid_input else "invalid",
+            "target_node_ids": node.id,
+        }
+        response = client.post("/app/author/goals", data=payload)
+        if auth_required:
+            missing = client.post(
+                "/app/author/goals", data={**payload, "learner_id": "nonexistent"}
+            )
+            assert response.status_code == missing.status_code == 404
+            assert response.json() == missing.json() == {"detail": "Learner resource not found."}
+        else:
+            assert response.status_code == 200, response.text
+            assert ("Goal saved." in response.text) is valid_input
+        session.expire_all()
+        assert session.query(LearningGoal).count() == before + int(
+            not auth_required and valid_input
+        )
+        if not auth_required and valid_input:
+            goal = session.query(LearningGoal).one()
+            assert goal.learner_id == payload["learner_id"]
+            assert goal.title == "New goal"
+    finally:
+        with suppress(StopIteration):
+            next(fixture)
