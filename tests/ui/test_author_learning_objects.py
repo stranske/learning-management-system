@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from typing import cast
+
+import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from lms.audit.models import AuditLog
+from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
 from lms.graphs.models import KnowledgeNode
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.models import LearningGoal
 from lms.learners.repository import create_learner_for_user
 from lms.prompts.models import Prompt, PromptVersion
+from lms.settings import Settings, get_settings
 from lms.sources.repository import create_source_reference
 
 
@@ -221,3 +227,57 @@ def test_author_prompt_hint_redacts_local_only_sources(
     assert response.status_code == 200
     assert "file:///private/local-note.md" not in response.text
     assert "local-only source hidden" in response.text
+
+
+@pytest.mark.parametrize("access", ["owner", "foreign", "missing", "empty"])
+def test_author_goal_form_checks_deployed_learner_ownership(
+    api_client: tuple[TestClient, sessionmaker[Session]], access: str
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        owner = User(username="goal-owner", display_name="Owner", is_local=False)
+        other = User(username="goal-other", display_name="Other", is_local=False)
+        session.add_all([owner, other])
+        session.flush()
+        own_learner = create_learner_for_user(session, user_id=owner.id, display_name="Owner")
+        foreign_learner = create_learner_for_user(session, user_id=other.id, display_name="Other")
+        node = create_knowledge_node(
+            session,
+            title="Goal target",
+            knowledge_type="conceptual",
+            scope="personal",
+            actor_id="test-author",
+            status="published",
+        )
+        session.commit()
+        learner_ids = {
+            "owner": own_learner.id,
+            "foreign": foreign_learner.id,
+            "missing": "nonexistent",
+            "empty": "",
+        }
+        node_id = node.id
+
+    app = cast(FastAPI, client.app)
+    app.dependency_overrides[require_authenticated_user] = lambda: owner
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
+    response = client.post(
+        "/app/author/goals",
+        data={
+            "learner_id": learner_ids[access],
+            "title": "Authorized goal",
+            "target_node_ids": node_id,
+        },
+    )
+    with session_factory() as session:
+        goals = session.query(LearningGoal).all()
+        if access == "owner":
+            assert response.status_code == 200, response.text
+            assert "Goal saved." in response.text
+            assert [(goal.learner_id, goal.title) for goal in goals] == [
+                (own_learner.id, "Authorized goal")
+            ]
+        else:
+            assert response.status_code == 404
+            assert response.json() == {"detail": "Learner resource not found."}
+            assert goals == []

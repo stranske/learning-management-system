@@ -48,7 +48,12 @@ from lms.graphs.repository import (
     list_knowledge_edges,
     list_knowledge_nodes,
 )
-from lms.learners.identity import CurrentUserDep, LearnerIdDep, resolve_learner_id
+from lms.learners.identity import (
+    CurrentUserDep,
+    LearnerIdDep,
+    require_learner_ownership,
+    resolve_learner_id,
+)
 from lms.learners.models import GOAL_STATUSES, Learner, LearnerReflection, LearningGoal
 from lms.learners.repository import (
     create_learning_goal,
@@ -606,10 +611,16 @@ def author_goals_route(
 
 
 @router.post("/app/author/goals", response_class=HTMLResponse)
-async def create_author_goal_route(request: Request, session: SessionDep) -> str:
+async def create_author_goal_route(
+    request: Request,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
+) -> str:
     """Create a learning goal from the author form."""
     form = await _read_form(request)
     learner_id = form.get("learner_id", "")
+    require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
     ownership_scope = form.get("ownership_scope", "personal")
     try:
         create_learning_goal(
