@@ -11,12 +11,12 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Table, create_engine, text
+from sqlalchemy import DateTime, Table, create_engine, inspect, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session
 from tests.export_import.test_m5_export_contract import _seed_m5_runtime_records
 
-from lms.audit.models import AuditLog
+from lms.audit.models import AuditLog, UTCDateTime
 from lms.auth.models import User
 from lms.cases.models import WorkProduct
 from lms.db.base import Base
@@ -757,7 +757,7 @@ def all_model_records(db_session: Session) -> list[str]:
     return list(export_jsonl(db_session))
 
 
-def _normalize_timestamp_strings(record: dict[str, Any]) -> dict[str, Any]:
+def _normalize_timestamp_strings(model: type[Base], record: dict[str, Any]) -> dict[str, Any]:
     """Collapse tz-aware/naive ISO timestamp spellings of the same instant.
 
     ``DateTime(timezone=True)`` columns round-trip through SQLite without a
@@ -767,9 +767,14 @@ def _normalize_timestamp_strings(record: dict[str, Any]) -> dict[str, Any]:
     strings keeps the contract test meaningful without asserting on that
     incidental formatting.
     """
+    datetime_fields = {
+        column.key
+        for column in inspect(model).columns
+        if isinstance(column.type, (DateTime, UTCDateTime))
+    }
     normalized = {}
     for key, value in record.items():
-        if isinstance(value, str):
+        if key in datetime_fields and isinstance(value, str):
             try:
                 parsed = datetime.fromisoformat(value)
             except ValueError:
@@ -781,6 +786,20 @@ def _normalize_timestamp_strings(record: dict[str, Any]) -> dict[str, Any]:
         else:
             normalized[key] = value
     return normalized
+
+
+@pytest.mark.parametrize("version", ["2026-06-01", "20260601", "2026-06-01T00:00:00"])
+def test_round_trip_normalization_preserves_non_datetime_strings(version: str) -> None:
+    record = {"policy_version": version}
+    assert _normalize_timestamp_strings(LearningInteractionSkill, record) == record
+
+
+@pytest.mark.parametrize("model, field", [(LLMSession, "created_at"), (AuditLog, "occurred_at")])
+def test_round_trip_normalization_compares_datetime_instants(model: type[Base], field: str) -> None:
+    aware = {field: "2026-06-01T01:00:00+01:00"}
+    naive = {field: "2026-06-01T00:00:00"}
+    assert _normalize_timestamp_strings(model, aware) == naive
+    assert _normalize_timestamp_strings(model, naive) == naive
 
 
 def test_export_import_round_trip_preserves_every_mapped_model(
@@ -812,8 +831,10 @@ def test_export_import_round_trip_preserves_every_mapped_model(
                 assert reloaded["type"] == original["type"]
                 assert reloaded["schema_version"] == original["schema_version"]
                 assert _normalize_timestamp_strings(
-                    reloaded["record"]
-                ) == _normalize_timestamp_strings(original["record"])
+                    MODEL_BY_TYPE[reloaded["type"]], reloaded["record"]
+                ) == _normalize_timestamp_strings(
+                    MODEL_BY_TYPE[original["type"]], original["record"]
+                )
     finally:
         engine.dispose()
 
