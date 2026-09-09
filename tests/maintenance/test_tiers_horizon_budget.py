@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 
@@ -288,6 +289,43 @@ def test_retiring_a_whole_subject_at_once(
 
 
 # --- budget ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("anchor_share", [math.nan, math.inf, -math.inf])
+def test_items_affordable_rejects_non_finite_anchor_share(anchor_share: float) -> None:
+    """Invalid blend inputs fail descriptively before capacity arithmetic."""
+    with pytest.raises(
+        ValueError, match="^anchor_share must be a finite float between 0.0 and 1.0$"
+    ):
+        items_affordable_per_day(BudgetSettings(), anchor_share=anchor_share)
+
+
+@pytest.mark.parametrize("anchor_share", [math.nan, math.inf, -math.inf])
+def test_capacity_estimate_rejects_non_finite_anchor_share(anchor_share: float) -> None:
+    """The public estimate entry point enforces the same blend contract."""
+    with pytest.raises(
+        ValueError, match="^anchor_share must be a finite float between 0.0 and 1.0$"
+    ):
+        estimate_capacity(BudgetSettings(), active_items=0, anchor_share=anchor_share)
+
+
+@pytest.mark.parametrize(
+    ("anchor_share", "expected_items"),
+    [(-1.0, 13), (0.0, 13), (0.5, 18), (1.0, 30), (2.0, 30)],
+)
+def test_finite_anchor_shares_preserve_capacity_and_clamping(
+    anchor_share: float, expected_items: int
+) -> None:
+    """Endpoints, a blend, and finite out-of-range inputs keep their behavior."""
+    settings = BudgetSettings(daily_item_cap=100)
+    assert items_affordable_per_day(settings, anchor_share=anchor_share) == (
+        expected_items,
+        "minutes",
+    )
+    estimate = estimate_capacity(settings, active_items=0, anchor_share=anchor_share)
+    assert estimate.items_per_day == expected_items
+    assert estimate.steady_state_capacity == int(expected_items * EFFECTIVE_INTERVAL_DAYS["warm"])
+    assert estimate.limited_by == "minutes"
 
 
 def test_effective_intervals_match_the_engine() -> None:
