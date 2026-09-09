@@ -9,6 +9,7 @@ not in the source and they decide how the item grades for years.
 from __future__ import annotations
 
 from html import escape
+from math import isfinite
 from typing import Annotated
 from urllib.parse import parse_qs
 
@@ -255,11 +256,17 @@ def _coerce_like(current: object, raw: str) -> object | None:
         return None
     if isinstance(current, bool):
         return text.lower() in {"true", "yes", "1"}
-    if isinstance(current, (int, float)):
+    if isinstance(current, int):
         try:
-            return float(text)
+            return int(text)
         except ValueError:
             return None
+    if isinstance(current, float):
+        try:
+            value = float(text)
+        except ValueError:
+            return None
+        return value if isfinite(value) else None
     if isinstance(current, (list, dict)):
         # Structured fields (extremes) are not editable as free text here.
         return None

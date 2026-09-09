@@ -50,8 +50,46 @@ from lms.maintenance.drafts import (
 )
 from lms.maintenance.models import DraftRejection, MaintenanceItem
 from lms.maintenance.seeds import ipo_surge_2026
+from lms.ui.drafts import _coerce_like
 
 DRAFTS = "/app/learner/maintenance/drafts"
+
+
+@pytest.mark.parametrize("raw, expected", [("5", 5), (" 0 ", 0), ("-2", -2), ("+12", 12)])
+def test_draft_integer_edits_preserve_type(raw: str, expected: int) -> None:
+    result = _coerce_like(4, raw)
+    assert result == expected
+    assert type(result) is int
+
+
+@pytest.mark.parametrize("raw", ["5.0", "5.5", "1e2", "nan", "inf", "-inf", "1e999"])
+def test_draft_integer_edits_ignore_non_integer_text(raw: str) -> None:
+    assert _coerce_like(4, raw) is None
+
+
+@pytest.mark.parametrize("raw", ["nan", "NaN", "inf", "+Infinity", "-inf", "1e999", "-1e999"])
+def test_draft_float_edits_ignore_non_finite_text(raw: str) -> None:
+    assert _coerce_like(4.0, raw) is None
+
+
+@pytest.mark.parametrize(
+    "raw, expected", [("5", 5.0), (" 0 ", 0.0), ("-2.5", -2.5), ("1e2", 100.0)]
+)
+def test_draft_float_edits_preserve_finite_values(raw: str, expected: float) -> None:
+    result = _coerce_like(4.0, raw)
+    assert result == expected
+    assert type(result) is float
+
+
+@pytest.mark.parametrize("current", [4, 4.0])
+@pytest.mark.parametrize("raw", ["", "  ", "invalid"])
+def test_draft_numeric_edits_ignore_blank_or_invalid_text(current: object, raw: str) -> None:
+    assert _coerce_like(current, raw) is None
+
+
+@pytest.mark.parametrize("raw, expected", [("true", True), ("0", False)])
+def test_draft_boolean_edits_remain_boolean(raw: str, expected: bool) -> None:
+    assert _coerce_like(False, raw) is expected
 
 
 @pytest.fixture
@@ -215,6 +253,51 @@ def test_edits_made_during_approval_are_applied_and_attributed(
     assert refreshed.payload["typical_high"] == 180
     assert refreshed.retention_tier == "warm"
     assert refreshed.field_provenance["typical_high"] == "owner-edited"
+
+
+@pytest.mark.parametrize(
+    "current, raw, expected, edited",
+    [
+        (4, "5", 5, True),
+        (4.0, "5.5", 5.5, True),
+        (4, "5.5", 4, False),
+        (4, "nan", 4, False),
+        (4.0, "nan", 4.0, False),
+        (4.0, "inf", 4.0, False),
+        (4.0, "-inf", 4.0, False),
+        (4.0, "1e999", 4.0, False),
+    ],
+)
+def test_approval_persists_numeric_types_and_ignores_invalid_edits(
+    env: tuple[TestClient, sessionmaker[Session], str],
+    current: int | float,
+    raw: str,
+    expected: int | float,
+    edited: bool,
+) -> None:
+    client, factory, _learner = env
+    anchor = _draft(factory, item_type="reference_anchor")
+    with factory() as session:
+        item = session.get(MaintenanceItem, anchor.id)
+        assert item is not None
+        item.payload = {**item.payload, "typical_high": current}
+        original_provenance = item.field_provenance.get("typical_high")
+        session.commit()
+
+    response = client.post(
+        f"{DRAFTS}/approve", data={"item_id": anchor.id, "payload.typical_high": raw}
+    )
+
+    assert response.status_code == 303
+    with factory() as session:
+        refreshed = session.get(MaintenanceItem, anchor.id)
+        assert refreshed is not None
+        assert refreshed.status == "active"
+        assert refreshed.payload["typical_high"] == expected
+        assert type(refreshed.payload["typical_high"]) is type(expected)
+        assert refreshed.field_provenance.get("typical_high") == (
+            "owner-edited" if edited else original_provenance
+        )
 
 
 def test_rejection_discards_the_item_and_keeps_the_reason(
