@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Column, Table, inspect, select
+from sqlalchemy import Column, Table, inspect, select, text
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.types import TypeEngine
 
@@ -375,7 +375,7 @@ DEPENDENCIES = {
     },
     "DraftRejection": {"learner_id": "Learner"},
     # ``subject_id`` is polymorphic (knowledge node or maintenance item), so it has no
-    # single dependency type and is validated by the check constraint instead.
+    # single dependency type; _validate_import resolves and validates its target.
     "ReviewCardState": {"learner_id": "Learner"},
     "LLMFeedbackEvent": {
         "llm_session_id": "LLMSession",
@@ -398,6 +398,12 @@ RELATIONSHIP_KEYS = {
     "LearningGoal": ("target_node_ids",),
     "Prompt": ("source_reference_ids",),
     "CapabilityTarget": ("target_node_ids", "target_competency_ids"),
+    "LLMFeedbackEvent": ("source_reference_ids",),
+}
+
+PERSISTED_RELATIONSHIP_KEYS = {
+    ("FeedbackTemplate", "knowledge_node_ids"),
+    ("LLMFeedbackEvent", "source_reference_ids"),
 }
 
 PII_FIELDS = {"User": {"email"}}
@@ -442,12 +448,20 @@ def export_jsonl(
         include_pii=include_pii,
         confirm_all=confirm_all,
     )
+    exported_llm_session_ids = {
+        row.id
+        for row in session.scalars(select(LLMSession))
+        if _export_llm_session(row, include_llm_traces=include_llm_traces)
+    }
     for model in EXPORT_ORDER:
         statement = _export_statement(model)
         for row in session.scalars(statement):
             record_type = model.__name__
-            if isinstance(row, LLMSession) and not _export_llm_session(
-                row, include_llm_traces=include_llm_traces
+            if isinstance(row, LLMSession) and row.id not in exported_llm_session_ids:
+                continue
+            if (
+                isinstance(row, (LLMFeedbackEvent, LLMProposal))
+                and row.llm_session_id not in exported_llm_session_ids
             ):
                 continue
             payload = _model_to_record(
@@ -455,6 +469,15 @@ def export_jsonl(
                 include_pii=include_pii,
                 include_source_content=include_source_content,
             )
+            # Keep learning evidence and eligible traces, but do not retain optional
+            # links to a private trace that was omitted from the portable export.
+            if isinstance(row, Attempt) and row.llm_session_id not in exported_llm_session_ids:
+                payload["llm_session_id"] = None
+            if (
+                isinstance(row, LLMSession)
+                and row.parent_session_id not in exported_llm_session_ids
+            ):
+                payload["parent_session_id"] = None
             yield json.dumps(
                 {
                     "type": record_type,
@@ -490,8 +513,24 @@ def import_jsonl(
     if dry_run:
         return ImportSummary(dry_run=True, counts=counts)
     try:
+        reseed_audit = (
+            counts.get("AuditLog", 0) > 0 and session.get_bind().dialect.name == "postgresql"
+        )
+        if reseed_audit:
+            # Serialize imports with normal INSERTs before allocating explicit IDs.
+            session.execute(text("LOCK TABLE audit_events IN SHARE ROW EXCLUSIVE MODE"))
         _apply_entries(session, entries)
         session.flush()
+        if reseed_audit:
+            # Explicit PostgreSQL IDs do not advance SERIAL. Never rewind a sequence
+            # already ahead of the rows (e.g. deleted records or rolled-back writes).
+            session.execute(
+                text(
+                    "SELECT setval(pg_get_serial_sequence('audit_events', 'id'), "
+                    "GREATEST((SELECT MAX(id) FROM audit_events), "
+                    "nextval(pg_get_serial_sequence('audit_events', 'id'))), true)"
+                )
+            )
     except Exception:
         session.rollback()
         raise
@@ -620,6 +659,21 @@ def _validate_import(session: Session, entries: Sequence[dict[str, Any]]) -> Non
     for entry in entries:
         record_type = entry["type"]
         record = entry["record"]
+        if record_type == "ReviewCardState":
+            subject_type = record.get("subject_type", "knowledge_node")
+            if subject_type not in ("knowledge_node", "maintenance_item"):
+                raise ExportImportError(f"ReviewCardState:{record['id']} invalid subject_type")
+            dependency_type = (
+                "KnowledgeNode" if subject_type == "knowledge_node" else "MaintenanceItem"
+            )
+            subject_id = record.get("subject_id")
+            if not isinstance(subject_id, str) or not _id_exists(
+                session, dependency_type, subject_id, seen
+            ):
+                raise ExportImportError(
+                    f"ReviewCardState:{record['id']} references missing "
+                    f"{dependency_type}:{subject_id}"
+                )
         for field, dependency_type in DEPENDENCIES.get(record_type, {}).items():
             dependency_id = record.get(field)
             if dependency_id is None:
@@ -671,8 +725,8 @@ def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
         model = MODEL_BY_TYPE[entry["type"]]
         record = dict(entry["record"])
         for key in RELATIONSHIP_KEYS.get(entry["type"], ()):
-            if entry["type"] == "FeedbackTemplate" and key == "knowledge_node_ids":
-                continue  # knowledge_node_ids is a persisted JSON column.
+            if (entry["type"], key) in PERSISTED_RELATIONSHIP_KEYS:
+                continue  # Validate persisted JSON links without removing their values.
             pending_relationships.append(
                 (entry["type"], key, record["id"], list(record.pop(key, [])))
             )

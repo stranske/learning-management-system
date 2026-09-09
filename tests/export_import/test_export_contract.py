@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import Table, create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 from tests.export_import.test_m5_export_contract import _seed_m5_runtime_records
 
@@ -15,6 +18,7 @@ from lms.audit.models import AuditLog
 from lms.auth.models import User
 from lms.cases.models import WorkProduct
 from lms.db.base import Base
+from lms.evidence.models import Attempt
 from lms.export_import import (
     EXPORT_ORDER,
     MODEL_BY_TYPE,
@@ -32,7 +36,7 @@ from lms.feedback.models import (
 )
 from lms.graphs.models import KnowledgeEdge, KnowledgeNode
 from lms.learners.models import LearnerReflection
-from lms.llm.models import LearningInteractionSkill, LLMFeedbackEvent
+from lms.llm.models import LearningInteractionSkill, LLMFeedbackEvent, LLMSession
 from lms.llm.proposals import LLMProposal
 from lms.maintenance.models import DraftRejection, GradeDispute, MaintenanceItem
 from lms.scheduling.models import ReviewCardState
@@ -608,3 +612,223 @@ def test_import_rejects_wrong_id_type_per_model(
                 import_jsonl(destination, path, dry_run=True)
         finally:
             engine.dispose()
+
+
+@pytest.mark.parametrize("trace_class,allowed", [("ephemeral", True), ("evidence-grade", False)])
+@pytest.mark.parametrize("include_all", [False, True])
+def test_export_filters_children_of_excluded_llm_session(
+    maintenance_llm_records: list[str],
+    db_session: Session,
+    tmp_path: Path,
+    trace_class: str,
+    allowed: bool,
+    include_all: bool,
+) -> None:
+    parent = db_session.get(LLMSession, "llm-1")
+    assert parent is not None
+    parent.trace_class = trace_class
+    parent.external_export_allowed = allowed
+    db_session.commit()
+    records = list(
+        export_jsonl(
+            db_session,
+            include_llm_traces="all" if include_all else "evidence-grade-only",
+            confirm_all=include_all,
+        )
+    )
+    types = {json.loads(line)["type"] for line in records}
+    attempt = next(
+        json.loads(line)["record"] for line in records if json.loads(line)["type"] == "Attempt"
+    )
+    assert attempt["llm_session_id"] == ("llm-1" if include_all else None)
+    original = db_session.get(Attempt, "attempt-1")
+    assert original is not None and original.llm_session_id == "llm-1"
+    for record_type in ("LLMSession", "LLMFeedbackEvent", "LLMProposal"):
+        assert (record_type in types) is include_all
+    path = tmp_path / "filtered.jsonl"
+    path.write_text("\n".join(records) + "\n")
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as destination:
+            import_jsonl(destination, path, dry_run=False)
+            destination.commit()
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "record_type,changes",
+    [
+        ("ReviewCardState", {"subject_id": "missing-parent"}),
+        ("ReviewCardState", {"subject_type": "knowledge_node", "subject_id": "missing-parent"}),
+        ("ReviewCardState", {"subject_type": "knowledge_node", "subject_id": "maintenance-item-1"}),
+        ("ReviewCardState", {"subject_type": "invalid"}),
+        ("ReviewCardState", {"subject_id": None}),
+        ("ReviewCardState", {"subject_id": []}),
+        ("LLMFeedbackEvent", {"source_reference_ids": ["source-1", "missing-parent"]}),
+        ("LLMFeedbackEvent", {"source_reference_ids": "source-1"}),
+        ("LLMFeedbackEvent", {"source_reference_ids": [None]}),
+        ("LLMFeedbackEvent", {"source_reference_ids": [[]]}),
+    ],
+)
+def test_import_rejects_invalid_new_soft_links_without_writes(
+    maintenance_llm_records: list[str],
+    tmp_path: Path,
+    record_type: str,
+    changes: dict[str, object],
+) -> None:
+    records = [json.loads(line) for line in maintenance_llm_records]
+    next(r for r in records if r["type"] == record_type)["record"].update(changes)
+    path = tmp_path / "invalid-soft-link.jsonl"
+    path.write_text("\n".join(map(json.dumps, records)) + "\n")
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as destination:
+            for dry_run in (True, False):
+                with pytest.raises(ExportImportError):
+                    import_jsonl(destination, path, dry_run=dry_run)
+                assert destination.get(User, "user-1") is None
+                assert destination.get(AuditLog, 1) is None
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "subject_type,subject_id",
+    [("knowledge_node", "node-1"), ("maintenance_item", "maintenance-item-1")],
+)
+def test_import_preserves_valid_new_soft_links(
+    maintenance_llm_records: list[str],
+    tmp_path: Path,
+    subject_type: str,
+    subject_id: str,
+) -> None:
+    records = [json.loads(line) for line in maintenance_llm_records]
+    next(r for r in records if r["type"] == "ReviewCardState")["record"].update(
+        subject_type=subject_type, subject_id=subject_id
+    )
+    path = tmp_path / "valid-soft-link.jsonl"
+    path.write_text("\n".join(map(json.dumps, records)) + "\n")
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as destination:
+            import_jsonl(destination, path, dry_run=False)
+            destination.commit()
+            destination.expire_all()
+            card = destination.get(ReviewCardState, "review-card-1")
+            feedback = destination.get(LLMFeedbackEvent, "llm-feedback-event-1")
+            assert card is not None and card.subject_id == subject_id
+            assert feedback is not None and feedback.source_reference_ids == ["source-1"]
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("sequence_ahead", [False, True])
+def test_postgres_audit_import_allows_next_generated_insert(
+    tmp_path: Path, sequence_ahead: bool
+) -> None:
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url or make_url(database_url).get_backend_name() != "postgresql":
+        pytest.skip("Set a PostgreSQL DATABASE_URL to exercise audit sequence recovery")
+    schema = f"lms_export_test_{uuid4().hex}"
+    url = make_url(database_url)
+    admin_engine = create_engine(url)
+    engine = create_engine(url.update_query_dict({"options": f"-csearch_path={schema}"}))
+    record = {
+        "id": 1,
+        "actor_id": "author",
+        "action": "update",
+        "entity_type": "KnowledgeNode",
+        "entity_id": "node-1",
+        "source_subsystem": "authoring",
+        "occurred_at": "2026-06-01T00:00:00+00:00",
+    }
+    path = tmp_path / "audit.jsonl"
+    path.write_text(json.dumps({"type": "AuditLog", "schema_version": 1, "record": record}) + "\n")
+    try:
+        with admin_engine.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+        table = AuditLog.__table__
+        assert isinstance(table, Table)
+        table.create(engine)
+        with Session(engine) as destination:
+            if sequence_ahead:
+                destination.execute(
+                    text("SELECT setval(pg_get_serial_sequence('audit_events', 'id'), 50, true)")
+                )
+            import_jsonl(destination, path, dry_run=True)
+            assert destination.get(AuditLog, 1) is None
+            import_jsonl(destination, path, dry_run=False)
+            destination.commit()
+            new_event = AuditLog(
+                actor_id="author",
+                action="create",
+                entity_type="KnowledgeNode",
+                entity_id="node-2",
+                source_subsystem="authoring",
+            )
+            destination.add(new_event)
+            destination.commit()
+            assert new_event.id > (50 if sequence_ahead else 1)
+            assert destination.get(AuditLog, 1) is not None
+    finally:
+        engine.dispose()
+        try:
+            with admin_engine.begin() as conn:
+                conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        finally:
+            admin_engine.dispose()
+
+
+@pytest.mark.parametrize("include_all", [False, True])
+def test_export_retains_eligible_trace_with_optional_excluded_parent(
+    db_session: Session,
+    tmp_path: Path,
+    include_all: bool,
+) -> None:
+    parent = LLMSession(
+        id="z-private",
+        mode="practice",
+        trace_class="ephemeral",
+        provider="fake",
+        model="fake",
+        external_export_allowed=False,
+    )
+    child = LLMSession(
+        id="a-public",
+        mode="practice",
+        trace_class="evidence-grade",
+        provider="fake",
+        model="fake",
+        parent_session_id=parent.id,
+        external_export_allowed=True,
+    )
+    db_session.add(parent)
+    db_session.flush()
+    db_session.add(child)
+    db_session.commit()
+    records = list(
+        export_jsonl(
+            db_session,
+            include_llm_traces="all" if include_all else "evidence-grade-only",
+            confirm_all=include_all,
+        )
+    )
+    exported = [json.loads(line)["record"] for line in records]
+    assert exported[0]["id"] == child.id
+    assert exported[0]["parent_session_id"] == (parent.id if include_all else None)
+    assert len(exported) == (2 if include_all else 1)
+    assert child.parent_session_id == parent.id
+    path = tmp_path / "trace-parent.jsonl"
+    path.write_text("\n".join(records) + "\n")
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as destination:
+            import_jsonl(destination, path, dry_run=False)
+            destination.commit()
+    finally:
+        engine.dispose()
