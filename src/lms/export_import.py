@@ -449,9 +449,11 @@ def export_jsonl(
         confirm_all=confirm_all,
     )
     exported_llm_session_ids = {
-        row.id
-        for row in session.scalars(select(LLMSession))
-        if _export_llm_session(row, include_llm_traces=include_llm_traces)
+        session_id
+        for session_id, trace_class, allowed in session.execute(
+            select(LLMSession.id, LLMSession.trace_class, LLMSession.external_export_allowed)
+        )
+        if _export_llm_session(trace_class, allowed, include_llm_traces=include_llm_traces)
     }
     for model in EXPORT_ORDER:
         statement = _export_statement(model)
@@ -549,10 +551,12 @@ def _validate_redaction_flags(
         raise ExportImportError("redaction value 'all' requires --yes-i-mean-it")
 
 
-def _export_llm_session(session: LLMSession, *, include_llm_traces: str) -> bool:
+def _export_llm_session(
+    trace_class: str, external_export_allowed: bool, *, include_llm_traces: str
+) -> bool:
     if include_llm_traces == ALL_VALUE:
         return True
-    return session.trace_class == "evidence-grade" and session.external_export_allowed
+    return trace_class == "evidence-grade" and external_export_allowed
 
 
 def _export_statement(model: type[Any]) -> Any:
@@ -721,6 +725,7 @@ def _relationship_dependency_type(key: str) -> str:
 
 def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
     pending_relationships: list[tuple[str, str, str, list[str]]] = []
+    pending_session_parents: list[tuple[LLMSession, str]] = []
     for entry in entries:
         model = MODEL_BY_TYPE[entry["type"]]
         record = dict(entry["record"])
@@ -734,7 +739,17 @@ def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
         if not isinstance(table, Table):
             raise ExportImportError(f"{entry['type']} does not map to a concrete table")
         values = _coerce_record(table, record)
-        session.add(model(**values))
+        # JSONL is ordered by ID within each type, so a child may precede its
+        # parent. Insert sessions without the nullable self-reference first,
+        # then restore the validated links after all referenced rows exist.
+        parent_id = values.pop("parent_session_id", None) if model is LLMSession else None
+        row = model(**values)
+        session.add(row)
+        if isinstance(row, LLMSession) and parent_id is not None:
+            pending_session_parents.append((row, parent_id))
+    session.flush()
+    for child, parent_id in pending_session_parents:
+        child.parent_session_id = parent_id
     session.flush()
     for record_type, key, record_id, related_ids in pending_relationships:
         if record_type == "LearningGoal":

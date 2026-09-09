@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import Table, create_engine, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session
 from tests.export_import.test_m5_export_contract import _seed_m5_runtime_records
 
@@ -1054,8 +1055,44 @@ def test_postgres_audit_import_allows_next_generated_insert(
             admin_engine.dispose()
 
 
+@pytest.fixture(params=["sqlite", "postgresql"])
+def foreign_key_import_engine(request: pytest.FixtureRequest) -> Iterator[Engine]:
+    """Exercise imports with real foreign-key enforcement on both backends."""
+    if request.param == "sqlite":
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+            assert conn.scalar(text("PRAGMA foreign_keys")) == 1
+        try:
+            Base.metadata.create_all(engine)
+            yield engine
+        finally:
+            engine.dispose()
+        return
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url or make_url(database_url).get_backend_name() != "postgresql":
+        pytest.skip("Set PostgreSQL DATABASE_URL to exercise session foreign keys")
+    schema = f"lms_parent_test_{uuid4().hex}"
+    url = make_url(database_url)
+    admin_engine = create_engine(url)
+    engine = create_engine(url.update_query_dict({"options": f"-csearch_path={schema}"}))
+    try:
+        with admin_engine.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+        Base.metadata.create_all(engine)
+        yield engine
+    finally:
+        engine.dispose()
+        try:
+            with admin_engine.begin() as conn:
+                conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        finally:
+            admin_engine.dispose()
+
+
 @pytest.mark.parametrize("include_all", [False, True])
 def test_export_retains_eligible_trace_with_optional_excluded_parent(
+    foreign_key_import_engine: Engine,
     db_session: Session,
     tmp_path: Path,
     include_all: bool,
@@ -1095,11 +1132,13 @@ def test_export_retains_eligible_trace_with_optional_excluded_parent(
     assert child.parent_session_id == parent.id
     path = tmp_path / "trace-parent.jsonl"
     path.write_text("\n".join(records) + "\n")
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    try:
-        Base.metadata.create_all(engine)
-        with Session(engine) as destination:
-            import_jsonl(destination, path, dry_run=False)
-            destination.commit()
-    finally:
-        engine.dispose()
+    with Session(foreign_key_import_engine) as destination:
+        import_jsonl(destination, path, dry_run=True)
+        assert destination.get(LLMSession, child.id) is None
+        import_jsonl(destination, path, dry_run=False)
+        destination.commit()
+        destination.expire_all()
+        restored_child = destination.get(LLMSession, child.id)
+        assert restored_child is not None
+        assert restored_child.parent_session_id == (parent.id if include_all else None)
+        assert (destination.get(LLMSession, parent.id) is not None) == include_all
