@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import cast
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -15,6 +16,7 @@ from lms.audit.models import AuditLog
 from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
 from lms.graphs.repository import create_knowledge_node
+from lms.learners.models import LearningGoal
 from lms.learners.repository import create_learner_for_user, create_learning_goal
 from lms.llm import api as llm_api
 from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
@@ -487,7 +489,10 @@ def test_authoring_assist_route_learner_authorization(
     }
     if learner_kind != "omitted":
         payload["learner_id"] = learner_ids[learner_kind]
-    response = client.post("/llm/authoring-assist/propose", json=payload)
+    with patch.object(Session, "get", autospec=True, side_effect=Session.get) as get_record:
+        response = client.post("/llm/authoring-assist/propose", json=payload)
+    if auth_required and learner_kind in {"foreign", "missing", "empty"}:
+        assert all(call.args[1] is not LearningGoal for call in get_record.call_args_list)
     assert response.status_code == expected_status, response.text
     with session_factory() as session:
         sessions = list(session.scalars(select(LLMSession)))

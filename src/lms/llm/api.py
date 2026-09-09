@@ -363,14 +363,20 @@ def authoring_assist_propose_route(
 ) -> AuthoringAssistProposeResponse:
     """Create draft authoring-assist proposals routed through the LLM wrapper."""
     if settings.auth_required:
+        learner_id = payload.learner_id
+        if learner_id is not None:
+            require_learner_ownership(
+                session, user=current_user, settings=settings, learner_id=learner_id
+            )
         goal = session.get(LearningGoal, payload.learning_goal_id)
         if goal is None:
             raise HTTPException(status_code=404, detail="Learner resource not found.")
         # The required goal remains learner-scoped even when attribution is omitted.
-        learner_id = goal.learner_id if payload.learner_id is None else payload.learner_id
-        require_learner_ownership(
-            session, user=current_user, settings=settings, learner_id=learner_id
-        )
+        if learner_id is None:
+            learner_id = goal.learner_id
+            require_learner_ownership(
+                session, user=current_user, settings=settings, learner_id=learner_id
+            )
         if goal.learner_id != learner_id:
             raise HTTPException(status_code=404, detail="Learner resource not found.")
     client = _default_client()
