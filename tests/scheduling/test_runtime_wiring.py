@@ -201,10 +201,10 @@ def test_complete_review_queue_route_rejects_non_success_reason(
 
 
 def test_complete_review_queue_route_rejects_other_learners_item(
-    scheduling_api_client: tuple[TestClient, sessionmaker[Session], User],
+    deployed_scheduling_api_client: tuple[TestClient, sessionmaker[Session], User],
 ) -> None:
     """A caller cannot complete a queue item for a learner they do not own."""
-    client, session_factory, _current_user = scheduling_api_client
+    client, session_factory, _current_user = deployed_scheduling_api_client
     other_user = User(id="user-other", username="other", display_name="Other")
     item_id = _queue_item_for_user(
         session_factory,
@@ -215,7 +215,7 @@ def test_complete_review_queue_route_rejects_other_learners_item(
 
     response = client.post(f"/review-queue/{item_id}/complete")
 
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_complete_review_queue_route_returns_404_for_missing_item(
@@ -256,9 +256,9 @@ def _rubric(db_session: Session) -> tuple[str, str, str]:
 
 
 @pytest.fixture
-def scheduling_api_client() -> (
-    Generator[tuple[TestClient, sessionmaker[Session], User], None, None]
-):
+def scheduling_api_client() -> Generator[
+    tuple[TestClient, sessionmaker[Session], User], None, None
+]:
     """Provide a FastAPI client with a stable authenticated test user."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -344,9 +344,9 @@ def _queue_item_for_user(
 
 
 @pytest.fixture
-def deployed_scheduling_api_client() -> (
-    Generator[tuple[TestClient, sessionmaker[Session], User], None, None]
-):
+def deployed_scheduling_api_client() -> Generator[
+    tuple[TestClient, sessionmaker[Session], User], None, None
+]:
     """Provide a deployed-mode client that enforces learner ownership."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",

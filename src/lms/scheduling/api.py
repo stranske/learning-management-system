@@ -11,7 +11,6 @@ from lms.auth.login import SettingsDep, require_authenticated_user
 from lms.auth.models import User
 from lms.db.session import get_session
 from lms.learners.identity import require_learner_ownership, resolve_learner_id
-from lms.learners.models import Learner
 from lms.scheduling.models import ReviewQueueItem
 from lms.scheduling.repository import (
     complete_review_queue_item,
@@ -116,20 +115,18 @@ def complete_review_queue_item_route(
     review_queue_item_id: str,
     session: SessionDep,
     current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> ReviewQueueItemRead:
     """Mark a due review satisfied so future scheduling can advance the ramp."""
     existing = session.get(ReviewQueueItem, review_queue_item_id)
     if existing is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Review queue item not found.",
+            detail="Learner resource not found.",
         )
-    learner = session.get(Learner, existing.learner_id)
-    if learner is None or learner.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Review queue item does not belong to the current user.",
-        )
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=existing.learner_id
+    )
     try:
         item = complete_review_queue_item(
             session,
@@ -142,7 +139,7 @@ def complete_review_queue_item_route(
     if item is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Review queue item not found.",
+            detail="Learner resource not found.",
         )
     session.commit()
     session.refresh(item)
