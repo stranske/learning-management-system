@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import HTTPException
+from typing import cast
+from unittest.mock import patch
+
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from lms.audit.models import AuditLog
+from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
 from lms.graphs.repository import create_knowledge_node
+from lms.learners.models import LearningGoal
 from lms.learners.repository import create_learner_for_user, create_learning_goal
 from lms.llm import api as llm_api
 from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
@@ -17,7 +24,9 @@ from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
 from lms.llm.config import DEFAULT_MODE_MODELS, LLMConfig
 from lms.llm.models import LLMSession
+from lms.llm.proposals import LLMProposal
 from lms.llm.providers import FakeProvider
+from lms.settings import Settings, get_settings
 from lms.sources.models import SourceReference
 from lms.sources.repository import create_source_reference
 
@@ -319,6 +328,8 @@ def test_authoring_assist_route_uses_source_safe_fake_provider(db_session: Sessi
             learner_id=ids["learner_id"],
         ),
         db_session,
+        current_user=User(id="user-bea"),
+        settings=Settings(auth_required=False),
     )
 
     assert response.llm_model == "fake-learning-policy"
@@ -348,6 +359,8 @@ def test_authoring_assist_route_validation_errors_are_422(
                 prompt_expected_answer_form="short-text",
             ),
             db_session,
+            current_user=User(id="user-bea"),
+            settings=Settings(auth_required=False),
         )
     except HTTPException as exc:
         assert exc.status_code == 422
@@ -381,8 +394,116 @@ def test_authoring_assist_route_validation_errors_are_422(
                 prompt_expected_answer_form="short-text",
             ),
             db_session,
+            current_user=User(id="user-bea"),
+            settings=Settings(auth_required=False),
         )
     except HTTPException as exc:
         assert exc.status_code == 422
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("expected HTTPException")
+
+
+@pytest.mark.parametrize(
+    ("auth_required", "learner_kind", "goal_kind", "expected_status"),
+    [
+        (True, "own", "own", 200),
+        (True, "omitted", "own", 200),
+        (True, "null", "own", 200),
+        (True, "foreign", "own", 404),
+        (True, "missing", "own", 404),
+        (True, "empty", "own", 404),
+        (True, "own", "foreign", 404),
+        (True, "second-own", "own", 404),
+        (True, "omitted", "foreign", 404),
+        (True, "null", "foreign", 404),
+        (True, "own", "missing", 404),
+        (False, "foreign", "own", 200),
+        (False, "omitted", "foreign", 200),
+    ],
+)
+def test_authoring_assist_route_learner_authorization(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: MonkeyPatch,
+    auth_required: bool,
+    learner_kind: str,
+    goal_kind: str,
+    expected_status: int,
+) -> None:
+    """Authorize both attribution and goal before provider access or draft writes."""
+    client, session_factory = api_client
+    with session_factory() as session:
+        ids = _seed_proposal_dependencies(session)
+        owner = session.get(User, "user-bea")
+        assert owner is not None
+        outsider = User(
+            id="user-other", email="other@example.test", username="other", display_name="Other"
+        )
+        session.add(outsider)
+        session.flush()
+        foreign_learner = create_learner_for_user(
+            session, user_id=outsider.id, display_name="Other"
+        )
+        second_learner = create_learner_for_user(session, user_id=owner.id, display_name="Second")
+        foreign_goal = create_learning_goal(
+            session,
+            learner_id=foreign_learner.id,
+            title="Other goal",
+            knowledge_type="conceptual",
+            target_node_ids=[ids["node_id"]],
+            ownership_scope="personal",
+        )
+        session.commit()
+        learner_ids = {
+            "own": ids["learner_id"],
+            "foreign": foreign_learner.id,
+            "second-own": second_learner.id,
+            "missing": "missing-learner",
+            "empty": "",
+            "null": None,
+        }
+        goal_ids = {"own": ids["goal_id"], "foreign": foreign_goal.id, "missing": "missing-goal"}
+
+    app = cast(FastAPI, client.app)
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=auth_required)
+    app.dependency_overrides[require_authenticated_user] = lambda: owner
+    provider_calls: list[bool] = []
+
+    def build_client() -> LLMClient:
+        provider_calls.append(True)
+        assert expected_status == 200, "unauthorized request reached the provider"
+        return _build_client()
+
+    monkeypatch.setattr(llm_api, "_default_client", build_client)
+    payload: dict[str, object] = {
+        "source_reference_id": ids["source_id"],
+        "target_node_id": ids["node_id"],
+        "learning_goal_id": goal_ids[goal_kind],
+        "actor_id": "user:bea",
+        "related_node_title": "Retrieval interval calibration",
+        "related_node_knowledge_type": "conceptual",
+        "prompt_body": "Explain how interval calibration extends retention.",
+        "prompt_knowledge_type": "conceptual",
+        "prompt_intended_cognitive_action": "explain",
+        "prompt_demand_level": "medium",
+        "prompt_expected_answer_form": "short-text",
+    }
+    if learner_kind != "omitted":
+        payload["learner_id"] = learner_ids[learner_kind]
+    with patch.object(Session, "get", autospec=True, side_effect=Session.get) as get_record:
+        response = client.post("/llm/authoring-assist/propose", json=payload)
+    if auth_required and learner_kind in {"foreign", "missing", "empty"}:
+        assert all(call.args[1] is not LearningGoal for call in get_record.call_args_list)
+    assert response.status_code == expected_status, response.text
+    with session_factory() as session:
+        sessions = list(session.scalars(select(LLMSession)))
+        proposals = list(session.scalars(select(LLMProposal)))
+        if expected_status == 404:
+            assert response.json() == {"detail": "Learner resource not found."}
+            assert provider_calls == []
+            assert sessions == []
+            assert proposals == []
+        else:
+            assert provider_calls == [True]
+            assert len(sessions) == len(proposals) == 1
+            assert sessions[0].learner_id == payload.get("learner_id")
+            assert response.json()["node_status"] == "draft"

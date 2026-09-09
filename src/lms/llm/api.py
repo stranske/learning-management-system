@@ -16,6 +16,7 @@ from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
 from lms.feedback.models import FeedbackRecord
 from lms.learners.identity import CurrentUserDep, require_learner_ownership, resolve_learner_id
+from lms.learners.models import LearningGoal
 from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
@@ -357,8 +358,27 @@ def _validate_skill_consistency(
 def authoring_assist_propose_route(
     payload: AuthoringAssistProposeRequest,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
 ) -> AuthoringAssistProposeResponse:
     """Create draft authoring-assist proposals routed through the LLM wrapper."""
+    if settings.auth_required:
+        learner_id = payload.learner_id
+        if learner_id is not None:
+            require_learner_ownership(
+                session, user=current_user, settings=settings, learner_id=learner_id
+            )
+        goal = session.get(LearningGoal, payload.learning_goal_id)
+        if goal is None:
+            raise HTTPException(status_code=404, detail="Learner resource not found.")
+        # The required goal remains learner-scoped even when attribution is omitted.
+        if learner_id is None:
+            learner_id = goal.learner_id
+            require_learner_ownership(
+                session, user=current_user, settings=settings, learner_id=learner_id
+            )
+        if goal.learner_id != learner_id:
+            raise HTTPException(status_code=404, detail="Learner resource not found.")
     client = _default_client()
     try:
         result = propose_authoring_drafts(
