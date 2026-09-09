@@ -24,14 +24,16 @@ import lms.llm.models  # noqa: F401  # register Base.metadata
 import lms.prompts.models  # noqa: F401  # register Base.metadata
 import lms.scheduling.models  # noqa: F401  # register Base.metadata
 import lms.sources.models  # noqa: F401  # register Base.metadata
-from lms.auth.models import utc_now
+from lms.auth.login import require_authenticated_user
+from lms.auth.models import User, utc_now
 from lms.db.base import Base
 from lms.db.session import get_session
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.evidence.repository import create_attempt, create_evidence_record
+from lms.learners.models import Learner
 from lms.main import create_app
 from lms.scheduling import fsrs_engine
-from lms.scheduling.models import ReviewQueueItem
+from lms.scheduling.models import ReviewQueueItem, ReviewSchedule
 from lms.scheduling.repository import (
     count_review_queue_for_learner,
     create_review_queue_item,
@@ -45,7 +47,7 @@ from lms.scheduling.service import (
     schedule_from_attempt,
     seed_new_learning_item,
 )
-from lms.settings import get_settings
+from lms.settings import Settings, get_settings
 
 
 def _make_attempt(
@@ -452,6 +454,77 @@ def test_review_queue_endpoint_returns_items_with_reasons() -> None:
         client.close()
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+@pytest.mark.parametrize("auth_required", [True, False])
+@pytest.mark.parametrize("learner_kind", ["own", "foreign", "missing"])
+def test_complete_review_queue_ownership(
+    db_session: Session, auth_required: bool, learner_kind: str
+) -> None:
+    """Deployed denials hide existence and preserve state; dev fixtures still work."""
+    user = User(id="completion-user", username="completion-user", display_name="Current")
+    other = User(id="other-user", username="other-user", display_name="Other")
+    db_session.add_all([user, other])
+    if learner_kind != "missing":
+        db_session.add(
+            Learner(
+                id="completion-learner",
+                user_id=user.id if learner_kind == "own" else other.id,
+                display_name="Completion learner",
+            )
+        )
+    item = create_review_queue_item(
+        db_session,
+        learner_id="completion-learner",
+        knowledge_node_id="completion-node",
+        reason_code="due-review",
+        reason_explanation="Complete this review.",
+        due_at=utc_now(),
+        decision_log={"rule": "test"},
+    )
+    schedule = ReviewSchedule(
+        learner_id=item.learner_id,
+        knowledge_node_id=item.knowledge_node_id,
+        review_queue_item_id=item.id,
+        reason_code=item.reason_code,
+        due_at=item.due_at,
+        policy_version="test",
+    )
+    db_session.add(schedule)
+    db_session.commit()
+    item_id = item.id
+
+    request_session_factory = sessionmaker(bind=db_session.get_bind(), expire_on_commit=False)
+
+    def override_session() -> Generator[Session, None, None]:
+        with request_session_factory() as request_session:
+            yield request_session
+
+    app = create_app(enable_local_identity_routes=False)
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=auth_required)
+    app.dependency_overrides[require_authenticated_user] = lambda: user
+    with TestClient(app) as client:
+        missing = client.post("/review-queue/missing-item/complete")
+        assert missing.status_code == 404
+        response = client.post(f"/review-queue/{item_id}/complete")
+        denied = auth_required and learner_kind != "own"
+        assert response.status_code == (404 if denied else 200), response.text
+        db_session.refresh(item)
+        db_session.refresh(schedule)
+        if denied:
+            assert response.json() == missing.json() == {"detail": "Learner resource not found."}
+            assert item.status == "pending"
+            assert item.decision_log == {"rule": "test"}
+            assert schedule.schedule_state == "scheduled"
+        else:
+            assert response.json()["status"] == item.status == "completed"
+            assert schedule.schedule_state == "completed"
+            assert item.decision_log["events"][0]["actor_id"] == user.id
+            repeat = client.post(f"/review-queue/{item_id}/complete")
+            assert repeat.status_code == 200
+            db_session.refresh(item)
+            assert len(item.decision_log["events"]) == 1
 
 
 def test_review_queue_item_table_constraints_block_bad_priority(db_session: Session) -> None:

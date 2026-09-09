@@ -201,10 +201,10 @@ def test_complete_review_queue_route_rejects_non_success_reason(
 
 
 def test_complete_review_queue_route_rejects_other_learners_item(
-    scheduling_api_client: tuple[TestClient, sessionmaker[Session], User],
+    deployed_scheduling_api_client: tuple[TestClient, sessionmaker[Session], User],
 ) -> None:
     """A caller cannot complete a queue item for a learner they do not own."""
-    client, session_factory, _current_user = scheduling_api_client
+    client, session_factory, _current_user = deployed_scheduling_api_client
     other_user = User(id="user-other", username="other", display_name="Other")
     item_id = _queue_item_for_user(
         session_factory,
@@ -215,7 +215,7 @@ def test_complete_review_queue_route_rejects_other_learners_item(
 
     response = client.post(f"/review-queue/{item_id}/complete")
 
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_complete_review_queue_route_returns_404_for_missing_item(
@@ -255,10 +255,9 @@ def _rubric(db_session: Session) -> tuple[str, str, str]:
     return rubric.id, rubric.criteria[0].id, node.id
 
 
-@pytest.fixture
-def scheduling_api_client() -> (
-    Generator[tuple[TestClient, sessionmaker[Session], User], None, None]
-):
+def _scheduling_api_client(
+    *, auth_required: bool
+) -> Generator[tuple[TestClient, sessionmaker[Session], User], None, None]:
     """Provide a FastAPI client with a stable authenticated test user."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -291,6 +290,7 @@ def scheduling_api_client() -> (
     app = create_app()
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[require_authenticated_user] = override_current_user
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=auth_required)
     try:
         with TestClient(app) as client:
             yield client, session_factory, current_user
@@ -344,49 +344,19 @@ def _queue_item_for_user(
 
 
 @pytest.fixture
-def deployed_scheduling_api_client() -> (
-    Generator[tuple[TestClient, sessionmaker[Session], User], None, None]
-):
+def scheduling_api_client() -> Generator[
+    tuple[TestClient, sessionmaker[Session], User], None, None
+]:
+    """Provide the local development client using the shared request lifecycle."""
+    yield from _scheduling_api_client(auth_required=False)
+
+
+@pytest.fixture
+def deployed_scheduling_api_client() -> Generator[
+    tuple[TestClient, sessionmaker[Session], User], None, None
+]:
     """Provide a deployed-mode client that enforces learner ownership."""
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(
-        bind=engine,
-        autoflush=False,
-        autocommit=False,
-        expire_on_commit=False,
-    )
-    current_user = User(id="user-current", username="current", display_name="Current")
-    with session_factory() as session:
-        session.add(current_user)
-        session.commit()
-
-    def override_get_session() -> Generator[Session, None, None]:
-        request_session = session_factory()
-        try:
-            yield request_session
-        finally:
-            request_session.close()
-
-    def override_current_user() -> User:
-        return current_user
-
-    app = create_app()
-    app.dependency_overrides[get_session] = override_get_session
-    app.dependency_overrides[require_authenticated_user] = override_current_user
-    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
-    try:
-        with TestClient(app) as client:
-            yield client, session_factory, current_user
-    finally:
-        app.dependency_overrides.clear()
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+    yield from _scheduling_api_client(auth_required=True)
 
 
 def test_deployed_review_queue_allows_owner_and_rejects_foreign_learner(
