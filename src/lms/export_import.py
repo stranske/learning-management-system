@@ -9,8 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Column, Table, inspect, select
+from sqlalchemy import Column, Table, inspect, select, text
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.types import TypeEngine
 
 import lms.audit.models  # noqa: F401  # register metadata
 import lms.capability.models  # noqa: F401  # register metadata
@@ -21,9 +22,12 @@ import lms.feedback.models  # noqa: F401  # register metadata
 import lms.graphs.models  # noqa: F401  # register metadata
 import lms.learners.models  # noqa: F401  # register metadata
 import lms.llm.models  # noqa: F401  # register metadata
+import lms.llm.proposals  # noqa: F401  # register metadata
+import lms.maintenance.models  # noqa: F401  # register metadata
 import lms.prompts.models  # noqa: F401  # register metadata
 import lms.scheduling.models  # noqa: F401  # register metadata
 import lms.sources.models  # noqa: F401  # register metadata
+from lms.audit.models import AuditLog
 from lms.auth.models import User
 from lms.capability.models import (
     CapabilityEstimate,
@@ -52,10 +56,13 @@ from lms.feedback.models import (
 )
 from lms.graphs.models import KnowledgeEdge, KnowledgeNode
 from lms.learners.models import Learner, LearnerReflection, LearningGoal, learning_goal_nodes
-from lms.llm.models import LLMSession
+from lms.llm.models import LearningInteractionSkill, LLMFeedbackEvent, LLMSession
+from lms.llm.proposals import LLMProposal
+from lms.maintenance.models import DraftRejection, GradeDispute, MaintenanceItem
 from lms.prompts.models import Prompt, PromptVersion, prompt_source_references
 from lms.scheduling.models import (
     RemediationTrigger,
+    ReviewCardState,
     ReviewPolicy,
     ReviewQueueItem,
     ReviewSchedule,
@@ -106,7 +113,49 @@ MODEL_BY_TYPE = {
     "RevisionRequest": RevisionRequest,
     "WorkProduct": WorkProduct,
     "LearnerReflection": LearnerReflection,
+    "LearningInteractionSkill": LearningInteractionSkill,
+    "AuditLog": AuditLog,
+    "MaintenanceItem": MaintenanceItem,
+    "GradeDispute": GradeDispute,
+    "DraftRejection": DraftRejection,
+    "ReviewCardState": ReviewCardState,
+    "LLMFeedbackEvent": LLMFeedbackEvent,
+    "LLMProposal": LLMProposal,
 }
+
+
+def _column_python_type(column: Column[Any]) -> type[Any] | None:
+    """Resolve a column's Python type, unwrapping ``TypeDecorator`` layers.
+
+    ``TypeDecorator`` does not implement ``python_type``, so a decorated column
+    such as the audit log's ``UTCDateTime`` would otherwise look untyped and skip
+    the datetime coercion an import needs.
+    """
+    column_type: TypeEngine[Any] = column.type
+    while True:
+        try:
+            return column_type.python_type
+        except NotImplementedError:
+            impl = getattr(column_type, "impl", None)
+            if not isinstance(impl, TypeEngine):
+                return None
+            column_type = impl
+
+
+def _has_integer_primary_key(model: type[Any]) -> bool:
+    """Return True when ``model`` is keyed by a single integer column."""
+    columns = list(model.__table__.primary_key.columns)
+    if len(columns) != 1:
+        return False
+    return _column_python_type(columns[0]) is int
+
+
+# Almost every entity is keyed by a UUID string, but the audit log uses an
+# autoincrementing integer, so ``record.id`` validation is keyed by model
+# rather than assuming ``str`` for every type.
+INTEGER_ID_TYPES: frozenset[str] = frozenset(
+    record_type for record_type, model in MODEL_BY_TYPE.items() if _has_integer_primary_key(model)
+)
 
 EXPORT_ORDER = (
     User,
@@ -149,6 +198,14 @@ EXPORT_ORDER = (
     RevisionRequest,
     WorkProduct,
     LearnerReflection,
+    LearningInteractionSkill,
+    AuditLog,
+    MaintenanceItem,
+    GradeDispute,
+    DraftRejection,
+    ReviewCardState,
+    LLMFeedbackEvent,
+    LLMProposal,
 )
 
 DEPENDENCIES = {
@@ -307,6 +364,33 @@ DEPENDENCIES = {
         "gap_analysis_id": "GapAnalysis",
         "learner_id": "Learner",
     },
+    "MaintenanceItem": {
+        "learner_id": "Learner",
+        "source_reference_id": "SourceReference",
+    },
+    "GradeDispute": {
+        "learner_id": "Learner",
+        "maintenance_item_id": "MaintenanceItem",
+        "evidence_record_id": "EvidenceRecord",
+    },
+    "DraftRejection": {"learner_id": "Learner"},
+    # ``subject_id`` is polymorphic (knowledge node or maintenance item), so it has no
+    # single dependency type; _validate_import resolves and validates its target.
+    "ReviewCardState": {"learner_id": "Learner"},
+    "LLMFeedbackEvent": {
+        "llm_session_id": "LLMSession",
+        "learner_id": "Learner",
+        "skill_id": "LearningInteractionSkill",
+        "feedback_record_id": "FeedbackRecord",
+        "evidence_record_id": "EvidenceRecord",
+    },
+    "LLMProposal": {
+        "llm_session_id": "LLMSession",
+        "knowledge_node_id": "KnowledgeNode",
+        "knowledge_edge_id": "KnowledgeEdge",
+        "prompt_id": "Prompt",
+        "source_reference_id": "SourceReference",
+    },
 }
 
 RELATIONSHIP_KEYS = {
@@ -314,6 +398,12 @@ RELATIONSHIP_KEYS = {
     "LearningGoal": ("target_node_ids",),
     "Prompt": ("source_reference_ids",),
     "CapabilityTarget": ("target_node_ids", "target_competency_ids"),
+    "LLMFeedbackEvent": ("source_reference_ids",),
+}
+
+PERSISTED_RELATIONSHIP_KEYS = {
+    ("FeedbackTemplate", "knowledge_node_ids"),
+    ("LLMFeedbackEvent", "source_reference_ids"),
 }
 
 PII_FIELDS = {"User": {"email"}}
@@ -358,12 +448,22 @@ def export_jsonl(
         include_pii=include_pii,
         confirm_all=confirm_all,
     )
+    exported_llm_session_ids = {
+        session_id
+        for session_id, trace_class, allowed in session.execute(
+            select(LLMSession.id, LLMSession.trace_class, LLMSession.external_export_allowed)
+        )
+        if _export_llm_session(trace_class, allowed, include_llm_traces=include_llm_traces)
+    }
     for model in EXPORT_ORDER:
         statement = _export_statement(model)
         for row in session.scalars(statement):
             record_type = model.__name__
-            if isinstance(row, LLMSession) and not _export_llm_session(
-                row, include_llm_traces=include_llm_traces
+            if isinstance(row, LLMSession) and row.id not in exported_llm_session_ids:
+                continue
+            if (
+                isinstance(row, (LLMFeedbackEvent, LLMProposal))
+                and row.llm_session_id not in exported_llm_session_ids
             ):
                 continue
             payload = _model_to_record(
@@ -371,6 +471,15 @@ def export_jsonl(
                 include_pii=include_pii,
                 include_source_content=include_source_content,
             )
+            # Keep learning evidence and eligible traces, but do not retain optional
+            # links to a private trace that was omitted from the portable export.
+            if isinstance(row, Attempt) and row.llm_session_id not in exported_llm_session_ids:
+                payload["llm_session_id"] = None
+            if (
+                isinstance(row, LLMSession)
+                and row.parent_session_id not in exported_llm_session_ids
+            ):
+                payload["parent_session_id"] = None
             yield json.dumps(
                 {
                     "type": record_type,
@@ -406,8 +515,24 @@ def import_jsonl(
     if dry_run:
         return ImportSummary(dry_run=True, counts=counts)
     try:
+        reseed_audit = (
+            counts.get("AuditLog", 0) > 0 and session.get_bind().dialect.name == "postgresql"
+        )
+        if reseed_audit:
+            # Serialize imports with normal INSERTs before allocating explicit IDs.
+            session.execute(text("LOCK TABLE audit_events IN SHARE ROW EXCLUSIVE MODE"))
         _apply_entries(session, entries)
         session.flush()
+        if reseed_audit:
+            # Explicit PostgreSQL IDs do not advance SERIAL. Never rewind a sequence
+            # already ahead of the rows (e.g. deleted records or rolled-back writes).
+            session.execute(
+                text(
+                    "SELECT setval(pg_get_serial_sequence('audit_events', 'id'), "
+                    "GREATEST((SELECT MAX(id) FROM audit_events), "
+                    "nextval(pg_get_serial_sequence('audit_events', 'id'))), true)"
+                )
+            )
     except Exception:
         session.rollback()
         raise
@@ -426,10 +551,12 @@ def _validate_redaction_flags(
         raise ExportImportError("redaction value 'all' requires --yes-i-mean-it")
 
 
-def _export_llm_session(session: LLMSession, *, include_llm_traces: str) -> bool:
+def _export_llm_session(
+    trace_class: str, external_export_allowed: bool, *, include_llm_traces: str
+) -> bool:
     if include_llm_traces == ALL_VALUE:
         return True
-    return session.trace_class == "evidence-grade" and session.external_export_allowed
+    return trace_class == "evidence-grade" and external_export_allowed
 
 
 def _export_statement(model: type[Any]) -> Any:
@@ -512,12 +639,16 @@ def _validate_entry_shape(entry: Any, *, line_number: int) -> None:
     record = entry.get("record")
     if not isinstance(record, dict):
         raise ExportImportError(f"line {line_number}: record must be an object")
-    if not isinstance(record.get("id"), str):
+    record_id = record.get("id")
+    if record_type in INTEGER_ID_TYPES:
+        if not isinstance(record_id, int) or isinstance(record_id, bool):
+            raise ExportImportError(f"line {line_number}: record.id must be an integer")
+    elif not isinstance(record_id, str):
         raise ExportImportError(f"line {line_number}: record.id must be a string")
 
 
 def _validate_import(session: Session, entries: Sequence[dict[str, Any]]) -> None:
-    seen: dict[str, set[str]] = {record_type: set() for record_type in MODEL_BY_TYPE}
+    seen: dict[str, set[Any]] = {record_type: set() for record_type in MODEL_BY_TYPE}
     for entry in entries:
         record_type = entry["type"]
         record = entry["record"]
@@ -532,6 +663,21 @@ def _validate_import(session: Session, entries: Sequence[dict[str, Any]]) -> Non
     for entry in entries:
         record_type = entry["type"]
         record = entry["record"]
+        if record_type == "ReviewCardState":
+            subject_type = record.get("subject_type", "knowledge_node")
+            if subject_type not in ("knowledge_node", "maintenance_item"):
+                raise ExportImportError(f"ReviewCardState:{record['id']} invalid subject_type")
+            dependency_type = (
+                "KnowledgeNode" if subject_type == "knowledge_node" else "MaintenanceItem"
+            )
+            subject_id = record.get("subject_id")
+            if not isinstance(subject_id, str) or not _id_exists(
+                session, dependency_type, subject_id, seen
+            ):
+                raise ExportImportError(
+                    f"ReviewCardState:{record['id']} references missing "
+                    f"{dependency_type}:{subject_id}"
+                )
         for field, dependency_type in DEPENDENCIES.get(record_type, {}).items():
             dependency_id = record.get(field)
             if dependency_id is None:
@@ -559,8 +705,8 @@ def _validate_import(session: Session, entries: Sequence[dict[str, Any]]) -> Non
 def _id_exists(
     session: Session,
     record_type: str,
-    record_id: str,
-    imported: dict[str, set[str]],
+    record_id: Any,
+    imported: dict[str, set[Any]],
 ) -> bool:
     if record_id in imported[record_type]:
         return True
@@ -579,12 +725,13 @@ def _relationship_dependency_type(key: str) -> str:
 
 def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
     pending_relationships: list[tuple[str, str, str, list[str]]] = []
+    pending_session_parents: list[tuple[LLMSession, str]] = []
     for entry in entries:
         model = MODEL_BY_TYPE[entry["type"]]
         record = dict(entry["record"])
         for key in RELATIONSHIP_KEYS.get(entry["type"], ()):
-            if entry["type"] == "FeedbackTemplate" and key == "knowledge_node_ids":
-                continue  # knowledge_node_ids is a persisted JSON column.
+            if (entry["type"], key) in PERSISTED_RELATIONSHIP_KEYS:
+                continue  # Validate persisted JSON links without removing their values.
             pending_relationships.append(
                 (entry["type"], key, record["id"], list(record.pop(key, [])))
             )
@@ -592,7 +739,17 @@ def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
         if not isinstance(table, Table):
             raise ExportImportError(f"{entry['type']} does not map to a concrete table")
         values = _coerce_record(table, record)
-        session.add(model(**values))
+        # JSONL is ordered by ID within each type, so a child may precede its
+        # parent. Insert sessions without the nullable self-reference first,
+        # then restore the validated links after all referenced rows exist.
+        parent_id = values.pop("parent_session_id", None) if model is LLMSession else None
+        row = model(**values)
+        session.add(row)
+        if isinstance(row, LLMSession) and parent_id is not None:
+            pending_session_parents.append((row, parent_id))
+    session.flush()
+    for child, parent_id in pending_session_parents:
+        child.parent_session_id = parent_id
     session.flush()
     for record_type, key, record_id, related_ids in pending_relationships:
         if record_type == "LearningGoal":
@@ -649,12 +806,7 @@ def _coerce_record(table: Table, record: dict[str, Any]) -> dict[str, Any]:
 def _coerce_value(column: Column[Any], value: Any) -> Any:
     if value is None:
         return None
-    python_type: type[Any] | None
-    try:
-        python_type = column.type.python_type
-    except NotImplementedError:
-        python_type = None
-    if python_type is datetime and isinstance(value, str):
+    if _column_python_type(column) is datetime and isinstance(value, str):
         return datetime.fromisoformat(value)
     return value
 
