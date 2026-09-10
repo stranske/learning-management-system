@@ -311,15 +311,25 @@ def test_decision_log_captures_inputs_and_output(db_session: Session) -> None:
     assert log["output"]["reason_code"] == item.reason_code
 
 
-def test_queue_item_check_constraints_reject_invalid_state(db_session: Session) -> None:
+@pytest.mark.parametrize(
+    ("reason_code", "status", "constraint"),
+    [
+        ("not-a-real-code", "pending", "reason_code_valid"),
+        ("due-review", "not-a-real-status", "status_valid"),
+    ],
+)
+def test_queue_item_check_constraints_reject_invalid_state(
+    db_session: Session, reason_code: str, status: str, constraint: str
+) -> None:
     """The reason_code and status check constraints reject unknown values."""
     fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
-    with pytest.raises(IntegrityError):
+    with pytest.raises(IntegrityError, match=constraint):
         db_session.add(
             ReviewQueueItem(
                 learner_id="learner-z",
                 knowledge_node_id="node-z",
-                reason_code="not-a-real-code",
+                reason_code=reason_code,
+                status=status,
                 reason_explanation="bad",
                 due_at=fixed_now,
                 decision_log={"rule": "test"},
