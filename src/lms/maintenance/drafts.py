@@ -189,17 +189,18 @@ def prepare_draft(
 
     if spec.get("item_type") == "reference_anchor":
         central = payload.get("central_value")
-        if central is not None:
-            try:
-                central_value = float(central)
-            except (TypeError, ValueError, OverflowError) as exc:
-                raise ValueError("central_value must be a finite number") from exc
-            if not math.isfinite(central_value):
-                raise ValueError("central_value must be a finite number")
-            if payload.get("typical_low") is None or payload.get("typical_high") is None:
-                low, high = default_band(central_value)
-                payload.setdefault("typical_low", low)
-                payload.setdefault("typical_high", high)
+        if central is None:
+            raise ValueError("central_value must be a finite number")
+        try:
+            central_value = float(central)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("central_value must be a finite number") from exc
+        if not math.isfinite(central_value):
+            raise ValueError("central_value must be a finite number")
+        if payload.get("typical_low") is None or payload.get("typical_high") is None:
+            low, high = default_band(central_value)
+            payload.setdefault("typical_low", low)
+            payload.setdefault("typical_high", high)
         for field in payload:
             provenance.setdefault(
                 field, "inferred" if field in INFERRED_ANCHOR_FIELDS else "source"

@@ -447,6 +447,30 @@ def test_prepare_draft_rejects_invalid_central_values(
     assert payload == original
 
 
+@pytest.mark.parametrize("missing", [False, True])
+@pytest.mark.parametrize("supplied_band", [False, True])
+def test_prepare_draft_requires_central_value(missing: bool, supplied_band: bool) -> None:
+    payload: dict[str, object] = {"metric": "m", "unit": "u"}
+    if not missing:
+        payload["central_value"] = None
+    if supplied_band:
+        payload.update(typical_low=60.0, typical_high=100.0)
+    original = payload.copy()
+
+    with pytest.raises(ValueError, match="central_value must be a finite number"):
+        prepare_draft(
+            {
+                "item_type": "reference_anchor",
+                "title": "Invalid",
+                "prompt": "?",
+                "payload": payload,
+            },
+            learner_id="L1",
+        )
+
+    assert payload == original
+
+
 @pytest.mark.parametrize("central_value", [80, 80.0, "80"])
 @pytest.mark.parametrize("supplied_band", [False, True])
 def test_prepare_draft_preserves_finite_central_values(
