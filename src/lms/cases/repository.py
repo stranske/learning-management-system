@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from typing import Any
 
@@ -383,15 +384,15 @@ def score_work_product(
             "scoring a work product requires a knowledge node from the case, rubric, "
             "or an explicit knowledge_node_id"
         )
-    if max_score <= 0:
-        raise ValueError("max_score must be positive")
-    if raw_score < 0:
-        raise ValueError("raw_score must be non-negative")
+    if not math.isfinite(max_score) or max_score <= 0:
+        raise ValueError("max_score must be a finite positive number")
+    if not math.isfinite(raw_score) or raw_score < 0:
+        raise ValueError("raw_score must be a finite non-negative number")
     computed_normalized = (
         normalized_score if normalized_score is not None else raw_score / max_score
     )
-    if not 0.0 <= computed_normalized <= 1.0:
-        raise ValueError("normalized_score must be within the unit interval")
+    if not math.isfinite(computed_normalized) or not 0.0 <= computed_normalized <= 1.0:
+        raise ValueError("normalized_score must be a finite number within the unit interval")
 
     # Local imports mirror the lazy cross-module repository pattern and avoid cycles.
     from lms.evidence.models import EvidenceRecord

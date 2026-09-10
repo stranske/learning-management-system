@@ -4,13 +4,22 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.cases.models import WorkProduct
-from lms.cases.repository import create_case
+from lms.cases.repository import (
+    create_case,
+    create_work_product,
+    request_work_product_revision,
+    score_work_product,
+)
 from lms.db.session import get_session
+from lms.evidence.models import Attempt, EvidenceRecord
 from lms.evidence.repository import get_evidence_record
+from lms.feedback.models import RubricScore
 from lms.feedback.repository import create_rubric
 from lms.graphs.repository import create_knowledge_node
 from lms.main import create_app
@@ -201,3 +210,157 @@ def test_score_case_work_product_rejects_second_terminal_score(db_session: Sessi
     assert first.status_code == 201, first.text
     assert second.status_code == 422, second.text
     assert "not in a scoreable state" in second.text
+
+
+@pytest.mark.parametrize("revision", [False, True], ids=["initial", "revision"])
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        (field, value, message)
+        for field, message, values in [
+            ("max_score", "max_score must be a finite positive number", [0.0, -1.0]),
+            ("raw_score", "raw_score must be a finite non-negative number", [-1.0]),
+            (
+                "normalized_score",
+                "normalized_score must be a finite number within the unit interval",
+                [-0.1, 1.1],
+            ),
+        ]
+        for value in [float("nan"), float("inf"), float("-inf"), *values]
+    ],
+)
+def test_score_rejects_invalid_numbers_before_mutation(
+    db_session: Session, revision: bool, field: str, value: float, message: str
+) -> None:
+    """Invalid scores preserve prior revision evidence and leave the session usable."""
+    case_id, rubric_id = _seed_case(db_session)
+    product = create_work_product(
+        db_session,
+        case_id=case_id,
+        learner_id="learner-1",
+        submission_type="memo",
+        rubric_id=rubric_id,
+        body="Recommend granting the exception.",
+    )
+    valid_scores = {"raw_score": 0.0, "max_score": 4.0, "normalized_score": 0.0}
+    if revision:
+        score_work_product(
+            db_session,
+            product,
+            scorer_type="rubric-self",
+            criterion_scores=[],
+            raw_score=valid_scores["raw_score"],
+            max_score=valid_scores["max_score"],
+            normalized_score=valid_scores["normalized_score"],
+        )
+        request_work_product_revision(db_session, product)
+    db_session.commit()
+    prior_status, prior_score_id = product.status, product.rubric_score_id
+    before = {
+        model: list(db_session.scalars(select(model.id)))
+        for model in (Attempt, EvidenceRecord, RubricScore)
+    }
+
+    invalid_scores: dict[str, float] = {**valid_scores, field: value}
+    with pytest.raises(ValueError, match=message):
+        score_work_product(
+            db_session,
+            product,
+            scorer_type="rubric-self",
+            criterion_scores=[],
+            raw_score=invalid_scores["raw_score"],
+            max_score=invalid_scores["max_score"],
+            normalized_score=invalid_scores["normalized_score"],
+        )
+
+    # Commit without rollback so pending inserts/deletes cannot hide behind rollback.
+    db_session.commit()
+    db_session.refresh(product)
+    assert (product.status, product.rubric_score_id) == (prior_status, prior_score_id)
+    for model, ids in before.items():
+        assert list(db_session.scalars(select(model.id))) == ids
+    score = score_work_product(
+        db_session,
+        product,
+        scorer_type="rubric-self",
+        criterion_scores=[],
+        raw_score=valid_scores["raw_score"],
+        max_score=valid_scores["max_score"],
+        normalized_score=valid_scores["normalized_score"],
+    )
+    db_session.commit()
+    assert product.rubric_score_id == score.id
+    assert product.status == "scored"
+
+
+@pytest.mark.parametrize("field", ["max_score", "raw_score", "normalized_score"])
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_score_api_rejects_nonfinite_numbers(db_session: Session, field: str, value: str) -> None:
+    """JSON string numbers reach validation without nonstandard JSON float tokens."""
+    case_id, rubric_id = _seed_case(db_session)
+    product = create_work_product(
+        db_session,
+        case_id=case_id,
+        learner_id="learner-1",
+        submission_type="memo",
+        rubric_id=rubric_id,
+        body="Recommend granting the exception.",
+    )
+    db_session.commit()
+    client = _client(db_session)
+    payload: dict[str, Any] = {
+        "scorer_type": "rubric-self",
+        "criterion_scores": [],
+        "raw_score": 0.0,
+        "max_score": 4.0,
+        "normalized_score": 0.0,
+        field: value,
+    }
+    response = client.post(f"/work-products/{product.id}/score", json=payload)
+    assert response.status_code == 422, response.text
+    assert field in response.text
+    db_session.refresh(product)
+    assert product.status == "submitted"
+    assert product.rubric_score_id is None
+    assert list(db_session.scalars(select(EvidenceRecord))) == []
+    assert list(db_session.scalars(select(RubricScore))) == []
+    assert list(db_session.scalars(select(Attempt))) == []
+
+
+@pytest.mark.parametrize(
+    ("raw_score", "max_score", "normalized_score", "expected"),
+    [(0.0, 4.0, None, 0.0), (4.0, 4.0, None, 1.0), (2.0, 4.0, 0.0, 0.0), (2.0, 4.0, 1.0, 1.0)],
+)
+def test_score_preserves_finite_boundaries(
+    db_session: Session,
+    raw_score: float,
+    max_score: float,
+    normalized_score: float | None,
+    expected: float,
+) -> None:
+    """Zero, full-credit, and explicit normalized endpoints remain valid."""
+    case_id, rubric_id = _seed_case(db_session)
+    product = create_work_product(
+        db_session,
+        case_id=case_id,
+        learner_id="learner-1",
+        submission_type="memo",
+        rubric_id=rubric_id,
+        body="Recommend granting the exception.",
+    )
+    score = score_work_product(
+        db_session,
+        product,
+        scorer_type="rubric-self",
+        criterion_scores=[],
+        raw_score=raw_score,
+        max_score=max_score,
+        normalized_score=normalized_score,
+    )
+    db_session.commit()
+    assert score.evidence_record_id is not None
+    evidence = get_evidence_record(db_session, score.evidence_record_id)
+    assert evidence is not None
+    assert score.normalized_score == evidence.normalized_score == expected
+    assert evidence.max_score == max_score
+    assert evidence.raw_score == raw_score
