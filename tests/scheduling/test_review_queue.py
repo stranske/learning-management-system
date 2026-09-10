@@ -340,6 +340,9 @@ def test_queue_item_check_constraints_reject_invalid_state(db_session: Session) 
         ({"priority": float("nan")}, "priority must be a finite float"),
         ({"priority": float("inf")}, "priority must be a finite float"),
         ({"priority": float("-inf")}, "priority must be a finite float"),
+        ({"priority": None}, "priority must be a finite float"),
+        ({"priority": "0.5"}, "priority must be a finite float"),
+        ({"priority": "invalid"}, "priority must be a finite float"),
     ],
 )
 def test_queue_repository_rejects_invalid_values_without_rollback(

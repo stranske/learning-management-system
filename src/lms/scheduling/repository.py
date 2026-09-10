@@ -45,7 +45,11 @@ def create_review_queue_item(
         raise ValueError(f"unknown reason_code {reason_code!r}; expected one of {REASON_CODES}")
     if status not in QUEUE_STATUSES:
         raise ValueError(f"unknown status {status!r}; expected one of {QUEUE_STATUSES}")
-    if not math.isfinite(priority) or not 0.0 <= priority <= 1.0:
+    try:
+        valid_priority = math.isfinite(priority) and 0.0 <= priority <= 1.0
+    except (TypeError, OverflowError):
+        valid_priority = False
+    if not valid_priority:
         raise ValueError("priority must be a finite float between 0.0 and 1.0")
     item = ReviewQueueItem(
         learner_id=learner_id,
