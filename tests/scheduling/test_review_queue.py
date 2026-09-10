@@ -33,7 +33,7 @@ from lms.evidence.repository import create_attempt, create_evidence_record
 from lms.learners.models import Learner
 from lms.main import create_app
 from lms.scheduling import fsrs_engine
-from lms.scheduling.models import ReviewQueueItem, ReviewSchedule
+from lms.scheduling.models import QUEUE_STATUSES, REASON_CODES, ReviewQueueItem, ReviewSchedule
 from lms.scheduling.repository import (
     count_review_queue_for_learner,
     create_review_queue_item,
@@ -315,16 +315,82 @@ def test_queue_item_check_constraints_reject_invalid_state(db_session: Session) 
     """The reason_code and status check constraints reject unknown values."""
     fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
     with pytest.raises(IntegrityError):
-        create_review_queue_item(
-            db_session,
-            learner_id="learner-z",
-            knowledge_node_id="node-z",
-            reason_code="not-a-real-code",
-            reason_explanation="bad",
-            due_at=fixed_now,
-            decision_log={"rule": "test"},
+        db_session.add(
+            ReviewQueueItem(
+                learner_id="learner-z",
+                knowledge_node_id="node-z",
+                reason_code="not-a-real-code",
+                reason_explanation="bad",
+                due_at=fixed_now,
+                decision_log={"rule": "test"},
+            )
         )
         db_session.flush()
+
+
+@pytest.mark.parametrize(
+    ("invalid", "message"),
+    [
+        ({"reason_code": "invalid"}, "unknown reason_code"),
+        ({"reason_code": ""}, "unknown reason_code"),
+        ({"status": "invalid"}, "unknown status"),
+        ({"status": ""}, "unknown status"),
+        ({"priority": -0.1}, "priority must be a finite float"),
+        ({"priority": 1.5}, "priority must be a finite float"),
+        ({"priority": float("nan")}, "priority must be a finite float"),
+        ({"priority": float("inf")}, "priority must be a finite float"),
+        ({"priority": float("-inf")}, "priority must be a finite float"),
+    ],
+)
+def test_queue_repository_rejects_invalid_values_without_rollback(
+    db_session: Session, invalid: dict[str, Any], message: str
+) -> None:
+    """Bad input leaves existing work intact and the session usable."""
+    arguments: dict[str, Any] = {
+        "learner_id": "learner-validation",
+        "knowledge_node_id": "node-validation",
+        "reason_code": "due-review",
+        "reason_explanation": "Review is due.",
+        "due_at": utc_now(),
+        "decision_log": {"rule": "test"},
+    }
+    existing = create_review_queue_item(db_session, **arguments)
+    with pytest.raises(ValueError, match=message):
+        create_review_queue_item(db_session, **(arguments | invalid))
+
+    assert db_session.is_active
+    assert not db_session.new
+    assert not db_session.dirty
+    assert list_review_queue_for_learner(db_session, learner_id="learner-validation") == [existing]
+    valid = create_review_queue_item(db_session, **arguments)
+    db_session.commit()
+    db_session.refresh(existing)
+    db_session.refresh(valid)
+    assert existing.decision_log == {"rule": "test"}
+    assert count_review_queue_for_learner(db_session, learner_id="learner-validation") == 2
+
+
+@pytest.mark.parametrize("reason_code", REASON_CODES)
+@pytest.mark.parametrize("status", QUEUE_STATUSES)
+@pytest.mark.parametrize("priority", [0.0, 0.5, 1.0])
+def test_queue_repository_accepts_supported_values(
+    db_session: Session, reason_code: str, status: str, priority: float
+) -> None:
+    """Every supported enum and both priority endpoints remain persistable."""
+    item = create_review_queue_item(
+        db_session,
+        learner_id="learner-valid",
+        knowledge_node_id="node-valid",
+        reason_code=reason_code,
+        status=status,
+        priority=priority,
+        reason_explanation="Valid queue input.",
+        due_at=utc_now(),
+        decision_log={"rule": "test"},
+    )
+    db_session.commit()
+    db_session.refresh(item)
+    assert (item.reason_code, item.status, item.priority) == (reason_code, status, priority)
 
 
 def test_alembic_upgrade_head_creates_review_queue_items_table(
