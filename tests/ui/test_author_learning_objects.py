@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from lms.audit.models import AuditLog
 from lms.auth.login import require_authenticated_user
 from lms.auth.models import User
+from lms.feedback.models import Rubric, RubricCriterion
 from lms.graphs.models import KnowledgeNode
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.models import LearningGoal
@@ -281,3 +282,48 @@ def test_author_goal_form_checks_deployed_learner_ownership(
             assert response.status_code == 404
             assert response.json() == {"detail": "Learner resource not found."}
             assert goals == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "notice"),
+    [
+        ("max_points", "nan", "max_points must be a finite number"),
+        ("max_points", "inf", "max_points must be a finite number"),
+        ("max_points", "-inf", "max_points must be a finite number"),
+        ("max_points", "0", "max_points must be a finite positive number"),
+        ("max_points", "-5", "max_points must be a finite positive number"),
+        ("criterion_order", "0", "criterion_order must be greater than or equal to 1"),
+        ("criterion_order", "-1", "criterion_order must be greater than or equal to 1"),
+    ],
+)
+def test_author_rubric_invalid_numbers_render_notice_without_partial_data(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    field: str,
+    value: str,
+    notice: str,
+) -> None:
+    """Malformed numbers render a notice and leave subsequent valid requests usable."""
+    client, session_factory = api_client
+    form = {
+        "title": "Numeric rubric",
+        "ownership_scope": "personal",
+        "status": "draft",
+        "authoring_actor": "user:alice",
+        "criterion_order": "1",
+        "criterion_description": "Uses evidence",
+        "max_points": "0.5",
+    }
+    response = client.post("/app/author/rubrics", data={**form, field: value})
+    assert response.status_code == 200
+    assert notice in response.text
+    assert "Rubric created." not in response.text
+    with session_factory() as session:
+        assert session.query(Rubric).count() == 0
+        assert session.query(RubricCriterion).count() == 0
+    response = client.post("/app/author/rubrics", data=form)
+    assert response.status_code == 200
+    assert "Rubric created." in response.text
+    with session_factory() as session:
+        assert session.query(Rubric).count() == 1
+        criterion = session.query(RubricCriterion).one()
+        assert (criterion.criterion_order, criterion.max_points) == (1, 0.5)

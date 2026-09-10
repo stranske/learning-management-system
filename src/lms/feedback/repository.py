@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 from itertools import islice
+from math import isfinite
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -864,6 +865,8 @@ def create_rubric(
         knowledge_node_id=knowledge_node_id,
     )
     _require_unique_criterion_orders(criteria or [])
+    for criterion_data in criteria or []:
+        _validate_criterion_numbers(criterion_data["criterion_order"], criterion_data["max_points"])
     rubric = Rubric(
         title=title,
         description=description,
@@ -958,6 +961,13 @@ def archive_rubric(session: Session, rubric: Rubric) -> Rubric:
     return rubric
 
 
+def _validate_criterion_numbers(criterion_order: int, max_points: float) -> None:
+    if criterion_order < 1:
+        raise ValueError("criterion_order must be greater than or equal to 1")
+    if not isfinite(max_points) or max_points <= 0:
+        raise ValueError("max_points must be a finite positive number")
+
+
 def create_rubric_criterion(
     session: Session,
     *,
@@ -970,6 +980,7 @@ def create_rubric_criterion(
     status: str = "active",
 ) -> RubricCriterion:
     """Create one criterion for an existing rubric."""
+    _validate_criterion_numbers(criterion_order, max_points)
     if session.get(Rubric, rubric_id) is None:
         raise ValueError("referenced rubric was not found")
     _require_criterion_order_available(session, rubric_id, criterion_order)
@@ -999,6 +1010,10 @@ def update_rubric_criterion(
     status: str | None = None,
 ) -> RubricCriterion:
     """Update mutable criterion fields."""
+    _validate_criterion_numbers(
+        criterion_order if criterion_order is not None else criterion.criterion_order,
+        max_points if max_points is not None else criterion.max_points,
+    )
     if criterion_order is not None and criterion_order != criterion.criterion_order:
         _require_criterion_order_available(session, criterion.rubric_id, criterion_order)
         criterion.criterion_order = criterion_order
