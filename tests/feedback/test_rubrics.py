@@ -44,6 +44,13 @@ def test_rubric_criteria_order_and_score_bounds(db_session: Session) -> None:
     assert [criterion.criterion_order for criterion in stored.criteria] == [1, 2]
     assert [criterion.max_points for criterion in stored.criteria] == [1, 2]
 
+    criterion = stored.criteria[0]
+    update_rubric_criterion(db_session, criterion, description="Clarifies the conclusion.")
+    db_session.commit()
+    db_session.refresh(criterion)
+    assert criterion.description == "Clarifies the conclusion."
+    assert (criterion.criterion_order, criterion.max_points) == (1, 1)
+
     with pytest.raises(ValueError, match="criterion order must be unique"):
         create_rubric(
             db_session,
