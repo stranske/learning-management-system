@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Generator
 from pathlib import Path
 
@@ -15,6 +16,39 @@ from lms.audit.models import AuditLog
 from lms.db.base import Base
 from lms.db.session import get_session
 from lms.main import create_app
+from lms.sources.repository import compute_source_hash
+
+
+@pytest.mark.parametrize("passage_range", ["5-0", "5-1", "0-5"])
+def test_create_reference_preserves_normalized_passage_hash(
+    api_client: tuple[TestClient, Session], tmp_path: Path, passage_range: str
+) -> None:
+    """Client-computed equivalent range hashes persist in the API and audit log."""
+    client, session = api_client
+    note = tmp_path / "passages.md"
+    note.write_text("one\ntwo\nthree\nfour\nfive\nsix", encoding="utf-8")
+    digest = compute_source_hash(markdown_path=note, passage_range=passage_range)
+    expected = hashlib.sha256(b"one\ntwo\nthree\nfour\nfive\n").hexdigest()
+    assert digest == expected
+
+    response = client.post(
+        "/source-references",
+        json={
+            "source_type": "markdown-file",
+            "stable_locator": "docs/passages.md",
+            "passage_range": passage_range,
+            "content_hash": digest,
+            "actor_id": "user:alice",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["passage_range"] == passage_range
+    assert payload["content_hash"] == expected
+    audit = session.query(AuditLog).filter_by(entity_id=payload["id"]).one()
+    assert audit.after_summary is not None
+    assert audit.after_summary["content_hash"] == expected
 
 
 @pytest.fixture

@@ -391,10 +391,12 @@ def _select_passage(text: str, passage_range: str | None) -> str:
     match = _LINE_RANGE_PATTERN.match(passage_range.strip())
     if match is None:
         return text
-    start = max(int(match.group("start")), 1)
+    start = int(match.group("start"))
     end = int(match.group("end") or start)
     if end < start:
         start, end = end, start
+    start = max(start, 1)
+    end = max(end, 1)
     lines = text.splitlines(keepends=True)
     return "".join(lines[start - 1 : end])
 
