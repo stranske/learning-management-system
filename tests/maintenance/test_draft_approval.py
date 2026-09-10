@@ -381,6 +381,116 @@ def test_default_band_is_a_visible_rule_not_a_hidden_guess() -> None:
     assert item.field_provenance["central_value"] == "source"
 
 
+@pytest.mark.parametrize("central_value", [float("nan"), float("inf"), float("-inf")])
+def test_default_band_rejects_non_finite_central_values(central_value: float) -> None:
+    with pytest.raises(ValueError, match="central_value must be finite"):
+        default_band(central_value)
+
+
+@pytest.mark.parametrize("fraction", [float("nan"), float("inf"), float("-inf"), 0.0, -0.25])
+def test_default_band_rejects_invalid_fractions(fraction: float) -> None:
+    with pytest.raises(ValueError, match="fraction must be a positive finite float"):
+        default_band(100, fraction=fraction)
+
+
+@pytest.mark.parametrize(
+    ("central_value", "fraction"), [(1e308, 2.0), (-1e308, 2.0), (1.7e308, 0.25)]
+)
+def test_default_band_rejects_overflow(central_value: float, fraction: float) -> None:
+    with pytest.raises(ValueError, match="default band bounds must be finite"):
+        default_band(central_value, fraction=fraction)
+
+
+@pytest.mark.parametrize(
+    ("central_value", "expected"),
+    [(100.0, (90.0, 110.0)), (-100.0, (-110.0, -90.0)), (0.0, (0.0, 0.0))],
+)
+def test_default_band_preserves_finite_values(
+    central_value: float, expected: tuple[float, float]
+) -> None:
+    assert default_band(central_value, fraction=0.1) == expected
+
+
+@pytest.mark.parametrize(
+    "central_value",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        "nan",
+        "Infinity",
+        "-Infinity",
+        "1e999",
+        "invalid",
+        [],
+        pytest.param(10**1000, id="overflowing-integer"),
+    ],
+)
+@pytest.mark.parametrize("supplied_band", [False, True])
+def test_prepare_draft_rejects_invalid_central_values(
+    central_value: object, supplied_band: bool
+) -> None:
+    payload = {"central_value": central_value, "metric": "m", "unit": "u"}
+    if supplied_band:
+        payload.update(typical_low=60.0, typical_high=100.0)
+    original = payload.copy()
+    with pytest.raises(ValueError, match="central_value must be a finite number"):
+        prepare_draft(
+            {
+                "item_type": "reference_anchor",
+                "title": "Invalid",
+                "prompt": "?",
+                "payload": payload,
+            },
+            learner_id="L1",
+        )
+    assert payload == original
+
+
+@pytest.mark.parametrize("missing", [False, True])
+@pytest.mark.parametrize("supplied_band", [False, True])
+def test_prepare_draft_requires_central_value(missing: bool, supplied_band: bool) -> None:
+    payload: dict[str, object] = {"metric": "m", "unit": "u"}
+    if not missing:
+        payload["central_value"] = None
+    if supplied_band:
+        payload.update(typical_low=60.0, typical_high=100.0)
+    original = payload.copy()
+
+    with pytest.raises(ValueError, match="central_value must be a finite number"):
+        prepare_draft(
+            {
+                "item_type": "reference_anchor",
+                "title": "Invalid",
+                "prompt": "?",
+                "payload": payload,
+            },
+            learner_id="L1",
+        )
+
+    assert payload == original
+
+
+@pytest.mark.parametrize("central_value", [80, 80.0, "80"])
+@pytest.mark.parametrize("supplied_band", [False, True])
+def test_prepare_draft_preserves_finite_central_values(
+    central_value: object, supplied_band: bool
+) -> None:
+    payload = {"central_value": central_value, "metric": "m", "unit": "u"}
+    if supplied_band:
+        payload.update(typical_low=70.0, typical_high=90.0)
+    original = payload.copy()
+    item = prepare_draft(
+        {"item_type": "reference_anchor", "title": "Finite", "prompt": "?", "payload": payload},
+        learner_id="L1",
+    )
+    assert item.payload["central_value"] == central_value
+    assert (item.payload["typical_low"], item.payload["typical_high"]) == (
+        (70.0, 90.0) if supplied_band else (60.0, 100.0)
+    )
+    assert payload == original
+
+
 def test_prepare_draft_sets_an_expiry() -> None:
     """Every draft is born with a deadline."""
     now = datetime(2026, 8, 6, 12, 0, tzinfo=UTC)
