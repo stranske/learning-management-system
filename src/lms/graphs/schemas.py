@@ -92,6 +92,26 @@ class KnowledgeEdgeCreate(BaseModel):
     actor_id: str = Field(default="system:api", min_length=1, max_length=255)
 
 
+class KnowledgeEdgeUpdate(BaseModel):
+    """Mutable edge fields; endpoints and ownership scopes stay fixed.
+
+    ``extra="forbid"`` is load-bearing rather than stylistic. With Pydantic's
+    default ``extra="ignore"`` a PATCH naming an immutable endpoint field
+    (``source_node_id``/``target_node_id``) or a misspelled field is silently
+    discarded, so the route commits an empty change, records an ``update``
+    audit event and answers ``200`` as though the edit had been applied.
+    Forbidding extras turns that into a ``422`` naming the offending field.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    edge_type: EdgeType | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    status: EdgeStatus | None = None
+    notes: str | None = None
+    actor_id: str = Field(default="system:api", min_length=1, max_length=255)
+
+
 class KnowledgeEdgeRead(BaseModel):
     """Serializable knowledge edge."""
 

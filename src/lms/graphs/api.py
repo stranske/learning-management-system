@@ -17,6 +17,7 @@ from lms.graphs.repository import (
     get_knowledge_node,
     list_knowledge_edges,
     list_knowledge_nodes,
+    update_knowledge_edge,
     update_knowledge_node,
 )
 from lms.graphs.schemas import (
@@ -24,6 +25,7 @@ from lms.graphs.schemas import (
     EdgeType,
     KnowledgeEdgeCreate,
     KnowledgeEdgeRead,
+    KnowledgeEdgeUpdate,
     KnowledgeNodeCreate,
     KnowledgeNodeRead,
     KnowledgeNodeUpdate,
@@ -251,6 +253,42 @@ def get_edge_route(
             detail="Knowledge edge not found in this scope.",
         )
     return KnowledgeEdgeRead.model_validate(edge)
+
+
+@router.patch("/edges/{edge_id}", response_model=KnowledgeEdgeRead)
+def update_edge_route(
+    edge_id: str,
+    payload: KnowledgeEdgeUpdate,
+    session: SessionDep,
+    scope: ScopeQuery,
+) -> KnowledgeEdgeRead:
+    """Update an edge within its scope, rejecting prerequisite cycles."""
+    edge = get_knowledge_edge(session, edge_id, scope=scope)
+    if edge is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge edge not found in this scope.",
+        )
+    # exclude_unset, not exclude_none: an explicit ``null`` for a nullable field
+    # (notes/confidence) is a request to clear it, and exclude_none would drop
+    # that instruction while leaving no way to express it. Omitted fields stay
+    # unset and are therefore left unchanged.
+    changes = payload.model_dump(exclude={"actor_id"}, exclude_unset=True)
+    if not changes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="at least one mutable edge field is required",
+        )
+    try:
+        updated = update_knowledge_edge(session, edge, actor_id=payload.actor_id, **changes)
+        session.commit()
+        session.refresh(updated)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return KnowledgeEdgeRead.model_validate(updated)
 
 
 @router.delete("/edges/{edge_id}", status_code=status.HTTP_204_NO_CONTENT)
