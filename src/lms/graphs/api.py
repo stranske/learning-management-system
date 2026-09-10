@@ -274,6 +274,11 @@ def update_edge_route(
     # that instruction while leaving no way to express it. Omitted fields stay
     # unset and are therefore left unchanged.
     changes = payload.model_dump(exclude={"actor_id"}, exclude_unset=True)
+    if not changes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="at least one mutable edge field is required",
+        )
     try:
         updated = update_knowledge_edge(session, edge, actor_id=payload.actor_id, **changes)
         session.commit()

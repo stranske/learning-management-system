@@ -40,6 +40,7 @@ ORDERING_EDGE_TYPES: tuple[str, ...] = (
 # cleared by an explicit ``null`` in a PATCH. Every other field is
 # ``nullable=False``, so an explicit null there is a client error, not a clear.
 CLEARABLE_EDGE_FIELDS: frozenset[str] = frozenset({"confidence", "notes"})
+MUTABLE_EDGE_FIELDS: frozenset[str] = frozenset({"edge_type", "confidence", "status", "notes"})
 
 
 def _require_scope(scope: str | None) -> str:
@@ -442,6 +443,12 @@ def update_knowledge_edge(
     invalid graph behind.
     """
     before = _edge_summary(edge)
+    unknown = set(changes) - MUTABLE_EDGE_FIELDS
+    if unknown:
+        raise ValueError(
+            f"unknown or immutable field(s) {sorted(unknown)}; "
+            f"allowed: {sorted(MUTABLE_EDGE_FIELDS)}"
+        )
     for field, value in changes.items():
         if value is None:
             if field not in CLEARABLE_EDGE_FIELDS:

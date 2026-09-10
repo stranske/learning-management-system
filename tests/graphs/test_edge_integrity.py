@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from lms.audit.models import AuditLog
 from lms.graphs.repository import (
     CLEARABLE_EDGE_FIELDS,
+    MUTABLE_EDGE_FIELDS,
     ORDERING_EDGE_TYPES,
     _ordering_edge_closes_cycle,
     create_knowledge_edge,
@@ -343,6 +344,44 @@ def test_update_clears_nullable_fields_on_explicit_none(db_session: Session, fie
     # The field NOT cleared this round is untouched, so clearing is per-field.
     other = next(iter(CLEARABLE_EDGE_FIELDS - {field}))
     assert getattr(edge, other) is not None
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"source_node_id": "hijacked"},
+        {"target_node_id": "hijacked"},
+        {"source_scope": "institutional"},
+        {"target_scope": "institutional"},
+        {"id": "replaced"},
+        {"notez": "typo"},
+    ],
+)
+def test_update_rejects_immutable_and_unknown_fields(
+    db_session: Session, changes: dict[str, str]
+) -> None:
+    """Direct repository callers cannot mutate endpoints, scopes, id, or unknown keys."""
+    a, b = _seed_nodes(db_session, 2)
+    edge = create_knowledge_edge(
+        db_session,
+        source_node_id=a,
+        target_node_id=b,
+        edge_type="analogy",
+        scope="personal",
+        actor_id="user:alice",
+        notes="original",
+    )
+    db_session.commit()
+    audit_count = db_session.query(AuditLog).count()
+    before = (edge.source_node_id, edge.target_node_id, edge.notes)
+
+    with pytest.raises(ValueError, match="unknown or immutable field"):
+        update_knowledge_edge(db_session, edge, actor_id="user:alice", **changes)
+    assert (edge.source_node_id, edge.target_node_id, edge.notes) == before
+    assert db_session.is_active
+    assert not db_session.dirty
+    assert db_session.query(AuditLog).count() == audit_count
+    assert set(changes).isdisjoint(MUTABLE_EDGE_FIELDS)
 
 
 @pytest.mark.parametrize("field", ["edge_type", "status"])

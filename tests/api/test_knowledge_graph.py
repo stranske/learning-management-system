@@ -492,6 +492,25 @@ def test_patch_edge_clears_nullable_fields_with_explicit_null(
     assert session.query(AuditLog).filter_by(entity_id=edge["id"], action="update").count() == 3
 
 
+@pytest.mark.parametrize("payload", [{}, {"actor_id": "user:alice"}])
+def test_patch_edge_rejects_empty_or_actor_only_payload(
+    api_client: tuple[TestClient, Session], payload: dict[str, Any]
+) -> None:
+    """An empty PATCH or one naming only actor_id is a 422 with no update audit."""
+    client, session = api_client
+    a = _post_node(client, title="A", scope="personal")
+    b = _post_node(client, title="B", scope="personal")
+    edge = _post_edge(client, a["id"], b["id"], "analogy")
+    response = client.patch(
+        f"/knowledge/edges/{edge['id']}", params={"scope": "personal"}, json=payload
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "at least one mutable edge field is required"
+    persisted = client.get(f"/knowledge/edges/{edge['id']}", params={"scope": "personal"})
+    assert persisted.json() == edge
+    assert session.query(AuditLog).filter_by(entity_id=edge["id"], action="update").count() == 0
+
+
 @pytest.mark.parametrize(
     "payload",
     [
