@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from html import escape
 from importlib.resources import files
 from json import JSONDecodeError, loads
+from math import isfinite
 from typing import Annotated, Any
 from urllib.parse import parse_qs, quote_plus
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -1975,9 +1976,12 @@ def _required_int(form: dict[str, str], key: str) -> int:
 
 def _required_float(form: dict[str, str], key: str) -> float:
     try:
-        return float(_required_text(form, key))
+        value = float(_required_text(form, key))
     except ValueError as exc:
         raise ValueError(f"{key} must be a number") from exc
+    if not isfinite(value):
+        raise ValueError(f"{key} must be a finite number")
+    return value
 
 
 def _json_object(value: str | None) -> dict[str, object]:

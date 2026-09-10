@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -270,3 +271,52 @@ def test_openapi_schema_includes_rubric_routes(db_session: Session) -> None:
 
     assert "/rubrics" in paths
     assert "/rubric-criteria" in paths
+
+
+@pytest.mark.parametrize("operation", ["nested", "create", "update"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("criterion_order", 0),
+        ("criterion_order", -1),
+        ("max_points", 0),
+        ("max_points", -5),
+        ("max_points", "nan"),
+        ("max_points", "inf"),
+        ("max_points", "-inf"),
+    ],
+)
+def test_rubric_routes_reject_invalid_criterion_numbers(
+    db_session: Session, operation: str, field: str, value: object
+) -> None:
+    """Nested, standalone, and update routes reject invalid points/order with 422."""
+    client = _client(db_session)
+    rubric = _create_rubric(
+        client,
+        criteria=[{"criterion_order": 1, "description": "Original", "max_points": 2}],
+    )
+    criterion = {"criterion_order": 2, "description": "Invalid", "max_points": 1}
+    payload: dict[str, object] = {**criterion, field: value}
+    if operation == "nested":
+        response = client.post(
+            "/rubrics",
+            json={
+                "title": "Invalid rubric",
+                "ownership_scope": "personal",
+                "authoring_actor": "user:alice",
+                "criteria": [payload],
+            },
+        )
+    elif operation == "create":
+        response = client.post(f"/rubrics/{rubric['id']}/criteria", json=payload)
+    else:
+        response = client.patch(
+            f"/rubrics/{rubric['id']}/criteria/{rubric['criteria'][0]['id']}",
+            json=payload,
+        )
+    assert response.status_code == 422, response.text
+    stored = client.get(f"/rubrics/{rubric['id']}").json()
+    assert len(stored["criteria"]) == 1
+    assert stored["criteria"][0]["criterion_order"] == 1
+    assert stored["criteria"][0]["max_points"] == 2
+    assert stored["criteria"][0]["description"] == "Original"
