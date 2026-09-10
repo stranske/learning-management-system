@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session, selectinload
 from lms.auth.models import utc_now
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.feedback.models import (
+    HINT_SUPPORT_LEVELS,
+    REVEAL_POLICIES,
     FeedbackAction,
     FeedbackRecord,
     FeedbackTemplate,
@@ -633,6 +635,16 @@ def create_hint(
     source_citation_metadata: dict[str, Any] | None = None,
 ) -> Hint:
     """Create one ordered hint for a prompt."""
+    if isinstance(reveal_order, bool) or not isinstance(reveal_order, int) or reveal_order < 1:
+        raise ValueError("reveal_order must be an integer greater than or equal to 1")
+    if support_level not in HINT_SUPPORT_LEVELS:
+        raise ValueError(
+            f"unknown support level {support_level!r}; expected one of {HINT_SUPPORT_LEVELS}"
+        )
+    if reveal_policy not in REVEAL_POLICIES:
+        raise ValueError(
+            f"unknown reveal policy {reveal_policy!r}; expected one of {REVEAL_POLICIES}"
+        )
     if session.get(Prompt, prompt_id) is None:
         raise ValueError("referenced prompt was not found")
     hint = Hint(
@@ -712,6 +724,10 @@ def create_model_answer(
     source_citation_metadata: dict[str, Any] | None = None,
 ) -> ModelAnswer:
     """Create one model answer for a prompt."""
+    if reveal_policy not in REVEAL_POLICIES:
+        raise ValueError(
+            f"unknown reveal policy {reveal_policy!r}; expected one of {REVEAL_POLICIES}"
+        )
     if session.get(Prompt, prompt_id) is None:
         raise ValueError("referenced prompt was not found")
     if rubric_id is not None and session.get(Rubric, rubric_id) is None:

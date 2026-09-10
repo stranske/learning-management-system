@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
 from lms.evidence.repository import create_attempt
+from lms.feedback.models import Hint, ModelAnswer
 from lms.main import create_app
 from lms.prompts.models import Prompt, PromptVersion
 from lms.sources.repository import create_source_reference
@@ -159,3 +162,33 @@ def test_model_answer_api_requires_attempt_before_reveal(db_session: Session) ->
     )
     assert reveal_response.status_code == 200, reveal_response.text
     assert "same multiplier" in reveal_response.json()["answer_body"]
+
+
+@pytest.mark.parametrize(
+    ("route", "invalid"),
+    [
+        ("/hints", {"reveal_order": 0}),
+        ("/hints", {"reveal_order": -1}),
+        ("/hints", {"support_level": "unsupported"}),
+        ("/hints", {"reveal_policy": "invalid"}),
+        ("/model-answers", {"reveal_policy": "invalid"}),
+    ],
+)
+def test_invalid_hint_and_answer_api_inputs_leave_no_rows(
+    db_session: Session, route: str, invalid: dict[str, Any]
+) -> None:
+    """Invalid authoring requests return 422 and do not persist partial records."""
+    prompt = _prompt(db_session)
+    db_session.commit()
+    payload: dict[str, Any] = {"prompt_id": prompt.id, "authoring_actor": "user:alice"}
+    if route == "/hints":
+        payload.update(hint_text="Valid hint", reveal_order=1)
+    else:
+        payload["answer_body"] = "Valid answer"
+    client = _client(db_session)
+    response = client.post(route, json={**payload, **invalid})
+    assert response.status_code == 422, response.text
+    assert list(db_session.scalars(select(Hint))) == []
+    assert list(db_session.scalars(select(ModelAnswer))) == []
+    valid_response = client.post(route, json=payload)
+    assert valid_response.status_code == 201, valid_response.text
