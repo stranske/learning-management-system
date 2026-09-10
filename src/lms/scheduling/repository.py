@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -14,6 +15,9 @@ from lms.auth.models import utc_now
 from lms.feedback.models import MisconceptionPattern
 from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeNode
 from lms.scheduling.models import (
+    QUEUE_STATUSES,
+    REASON_CODES,
+    REMEDIATION_TRIGGER_TYPES,
     RemediationTrigger,
     ReviewPolicy,
     ReviewQueueItem,
@@ -36,7 +40,17 @@ def create_review_queue_item(
     source_attempt_id: str | None = None,
     source_evidence_record_id: str | None = None,
 ) -> ReviewQueueItem:
-    """Persist a review queue item."""
+    """Validate and persist a review queue item without poisoning the session."""
+    if reason_code not in REASON_CODES:
+        raise ValueError(f"unknown reason_code {reason_code!r}; expected one of {REASON_CODES}")
+    if status not in QUEUE_STATUSES:
+        raise ValueError(f"unknown status {status!r}; expected one of {QUEUE_STATUSES}")
+    try:
+        valid_priority = math.isfinite(priority) and 0.0 <= priority <= 1.0
+    except (TypeError, OverflowError):
+        valid_priority = False
+    if not valid_priority:
+        raise ValueError("priority must be a finite float between 0.0 and 1.0")
     item = ReviewQueueItem(
         learner_id=learner_id,
         knowledge_node_id=knowledge_node_id,
@@ -336,6 +350,10 @@ def create_remediation_trigger(
     is_active: bool = True,
 ) -> RemediationTrigger:
     """Persist one active remediation trigger rule."""
+    if trigger_type not in REMEDIATION_TRIGGER_TYPES:
+        raise ValueError(
+            f"unknown trigger_type {trigger_type!r}; expected one of {REMEDIATION_TRIGGER_TYPES}"
+        )
     if ownership_scope not in OWNERSHIP_SCOPES:
         raise ValueError(
             f"unknown ownership scope {ownership_scope!r}; expected one of {OWNERSHIP_SCOPES}"
