@@ -51,6 +51,7 @@ RUBRIC_STATUSES: tuple[str, ...] = ("draft", "published", "archived")
 RUBRIC_CRITERION_STATUSES: tuple[str, ...] = ("active", "archived")
 MISCONCEPTION_ACTION_TYPES: tuple[str, ...] = FEEDBACK_ACTION_TYPES
 FEEDBACK_TEMPLATE_STATUSES: tuple[str, ...] = ("draft", "published", "archived")
+HINT_SUPPORT_LEVELS: tuple[str, ...] = ("hint", "reference", "worked-example", "coach")
 REVEAL_POLICIES: tuple[str, ...] = (
     "after-attempt",
     "always",
@@ -293,7 +294,7 @@ class Hint(Base):
     __table_args__ = (
         CheckConstraint("reveal_order >= 1", name="hint_reveal_order_positive"),
         CheckConstraint(
-            f"support_level IN ({_sql_values(('hint', 'reference', 'worked-example', 'coach'))})",
+            f"support_level IN ({_sql_values(HINT_SUPPORT_LEVELS)})",
             name="hint_support_level_valid",
         ),
         CheckConstraint(

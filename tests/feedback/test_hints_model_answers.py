@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.evidence.repository import create_attempt
+from lms.feedback.models import Hint, ModelAnswer
 from lms.feedback.repository import (
     create_hint,
     create_model_answer,
@@ -161,3 +165,126 @@ def test_ordered_hints_hide_local_only_source_locators(db_session: Session) -> N
         citation["stable_locator"] == "/Users/teacher/private/fractions.md"
         for citation in citations
     )
+
+
+@pytest.mark.parametrize(
+    ("invalid", "message"),
+    [
+        ({"reveal_order": 0}, "reveal_order"),
+        ({"reveal_order": -1}, "reveal_order"),
+        ({"reveal_order": 1.5}, "reveal_order"),
+        ({"reveal_order": float("nan")}, "reveal_order"),
+        ({"reveal_order": None}, "reveal_order"),
+        ({"reveal_order": True}, "reveal_order"),
+        ({"support_level": "unsupported"}, "support level"),
+        ({"support_level": "none"}, "support level"),
+        ({"reveal_policy": "invalid"}, "reveal policy"),
+    ],
+)
+def test_create_hint_rejects_invalid_input_without_poisoning_session(
+    db_session: Session, invalid: dict[str, Any], message: str
+) -> None:
+    """Invalid input preserves pending work and allows a valid write without rollback."""
+    prompt = _prompt(db_session)
+    db_session.commit()
+    pending = Hint(
+        prompt_id=prompt.id,
+        hint_text="Keep this pending hint",
+        reveal_order=1,
+        authoring_actor="user:alice",
+    )
+    db_session.add(pending)
+    values: dict[str, Any] = {
+        "prompt_id": prompt.id,
+        "hint_text": "Rejected hint",
+        "reveal_order": 2,
+        "authoring_actor": "user:alice",
+    }
+    values.update(invalid)
+
+    with pytest.raises(ValueError, match=message):
+        create_hint(db_session, **values)
+
+    assert db_session.is_active
+    assert pending in db_session.new
+    assert pending.id is None
+    valid = create_hint(
+        db_session,
+        prompt_id=prompt.id,
+        hint_text="Valid hint",
+        reveal_order=2,
+        authoring_actor="user:alice",
+    )
+    db_session.commit()
+    assert list(db_session.scalars(select(Hint).order_by(Hint.reveal_order))) == [pending, valid]
+
+
+def test_create_model_answer_rejects_policy_without_poisoning_session(
+    db_session: Session,
+) -> None:
+    """Invalid model-answer policies leave prior pending writes usable."""
+    prompt = _prompt(db_session)
+    db_session.commit()
+    pending = ModelAnswer(
+        prompt_id=prompt.id,
+        answer_body="Keep this pending answer",
+        authoring_actor="user:alice",
+    )
+    db_session.add(pending)
+
+    with pytest.raises(ValueError, match="reveal policy"):
+        create_model_answer(
+            db_session,
+            prompt_id=prompt.id,
+            answer_body="Rejected answer",
+            authoring_actor="user:alice",
+            reveal_policy="invalid",
+        )
+
+    assert db_session.is_active
+    assert pending in db_session.new
+    assert pending.id is None
+    valid = create_model_answer(
+        db_session,
+        prompt_id=prompt.id,
+        answer_body="Valid answer",
+        authoring_actor="user:alice",
+    )
+    db_session.commit()
+    assert set(db_session.scalars(select(ModelAnswer))) == {pending, valid}
+
+
+@pytest.mark.parametrize("support_level", ["hint", "reference", "worked-example", "coach"])
+@pytest.mark.parametrize(
+    "reveal_policy", ["after-attempt", "always", "instructor-only", "system-triggered"]
+)
+def test_hint_and_model_answer_choices_persist(
+    db_session: Session, support_level: str, reveal_policy: str
+) -> None:
+    """Every supported choice and the minimum reveal order remain valid."""
+    prompt = _prompt(db_session)
+    hint = create_hint(
+        db_session,
+        prompt_id=prompt.id,
+        hint_text="Valid hint",
+        reveal_order=1,
+        support_level=support_level,
+        reveal_policy=reveal_policy,
+        authoring_actor="user:alice",
+    )
+    answer = create_model_answer(
+        db_session,
+        prompt_id=prompt.id,
+        answer_body="Valid answer",
+        reveal_policy=reveal_policy,
+        authoring_actor="user:alice",
+    )
+    db_session.commit()
+    db_session.refresh(hint)
+    db_session.refresh(answer)
+    assert (hint.reveal_order, hint.support_level, hint.reveal_policy) == (
+        1,
+        support_level,
+        reveal_policy,
+    )
+    assert answer.reveal_policy == reveal_policy
