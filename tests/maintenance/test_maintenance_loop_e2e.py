@@ -32,6 +32,7 @@ from lms.db.base import Base
 from lms.db.session import get_session
 from lms.learners.repository import create_learner_for_user
 from lms.main import create_app
+from lms.maintenance.drafts import list_pending_drafts, prepare_draft
 from lms.maintenance.models import GradeDispute, MaintenanceItem
 from lms.maintenance.seeds import ipo_surge_2026
 from lms.scheduling.models import SUBJECT_MAINTENANCE_ITEM, ReviewCardState
@@ -119,6 +120,41 @@ def test_due_list_shows_never_reviewed_items(
     assert "US IPO count per year" in response.text
     assert "reference anchor" in response.text
     assert "6 of 6 item(s) due" in response.text
+
+
+@pytest.mark.parametrize("central_value", [float("nan"), float("inf"), "-Infinity", "invalid"])
+@pytest.mark.parametrize("supplied_band", [False, True])
+def test_invalid_anchor_draft_preserves_review_queue(
+    client_and_items: tuple[TestClient, sessionmaker[Session], str],
+    central_value: object,
+    supplied_band: bool,
+) -> None:
+    client, factory, learner_id = client_and_items
+    spec = next(s for s in ipo_surge_2026.all_items() if s["item_type"] == "reference_anchor")
+    with factory() as session:
+        existing = prepare_draft(spec, learner_id=learner_id)
+        session.add(existing)
+        session.commit()
+        original = existing.payload.copy()
+        invalid_payload = dict(original, central_value=central_value)
+        if not supplied_band:
+            invalid_payload.pop("typical_low", None)
+            invalid_payload.pop("typical_high", None)
+        with pytest.raises(ValueError, match="central_value must be a finite number"):
+            session.add(prepare_draft(dict(spec, payload=invalid_payload), learner_id=learner_id))
+        # Rejection must not require a rollback or poison a subsequent valid write.
+        session.add(prepare_draft(spec, learner_id=learner_id))
+        session.commit()
+        session.expire_all()
+        drafts = list_pending_drafts(session, learner_id=learner_id)
+        assert len(drafts) == 2
+        assert all(draft.item.payload == original for draft in drafts)
+        assert existing.payload == original
+
+    queue = client.get(f"{MAINTENANCE}/drafts")
+    assert queue.status_code == 200
+    assert spec["title"] in queue.text
+    assert client.get(MAINTENANCE).status_code == 200
 
 
 def test_anchor_review_grades_deterministically_and_schedules(

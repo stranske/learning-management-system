@@ -23,6 +23,7 @@ idea items can be approved in bulk (a weak key point degrades gracefully).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -59,9 +60,16 @@ INFERRED_ANCHOR_FIELDS: tuple[str, ...] = (
 def default_band(
     central_value: float, *, fraction: float = DEFAULT_BAND_FRACTION
 ) -> tuple[float, float]:
-    """Return the default typical band around a central value."""
+    """Return a finite typical band around a finite central value."""
+    if not math.isfinite(central_value):
+        raise ValueError(f"central_value must be finite; got {central_value!r}")
+    if not math.isfinite(fraction) or fraction <= 0:
+        raise ValueError("fraction must be a positive finite float")
     spread = abs(central_value) * fraction
-    return (central_value - spread, central_value + spread)
+    low, high = central_value - spread, central_value + spread
+    if not math.isfinite(low) or not math.isfinite(high):
+        raise ValueError("default band bounds must be finite")
+    return low, high
 
 
 @dataclass(frozen=True)
@@ -181,12 +189,17 @@ def prepare_draft(
 
     if spec.get("item_type") == "reference_anchor":
         central = payload.get("central_value")
-        if central is not None and (
-            payload.get("typical_low") is None or payload.get("typical_high") is None
-        ):
-            low, high = default_band(float(central))
-            payload.setdefault("typical_low", low)
-            payload.setdefault("typical_high", high)
+        if central is not None:
+            try:
+                central_value = float(central)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("central_value must be a finite number") from exc
+            if not math.isfinite(central_value):
+                raise ValueError("central_value must be a finite number")
+            if payload.get("typical_low") is None or payload.get("typical_high") is None:
+                low, high = default_band(central_value)
+                payload.setdefault("typical_low", low)
+                payload.setdefault("typical_high", high)
         for field in payload:
             provenance.setdefault(
                 field, "inferred" if field in INFERRED_ANCHOR_FIELDS else "source"
