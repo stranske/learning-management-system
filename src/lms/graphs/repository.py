@@ -29,7 +29,7 @@ from lms.graphs.models import (
 
 # Edge types that impose a learning order between nodes. A cycle among these
 # leaves a prerequisite graph with no valid topological order, so the
-# edge-creation path rejects any new edge that would close such a cycle.
+# edge creation and type updates reject edges that would close such a cycle.
 ORDERING_EDGE_TYPES: tuple[str, ...] = (
     "prerequisite",
     "key-prerequisite",
@@ -248,6 +248,7 @@ def _ordering_edge_closes_cycle(
     source_node_id: str,
     target_node_id: str,
     scope: str,
+    exclude_edge_id: str | None = None,
 ) -> bool:
     """Return True if an ordering edge ``source -> target`` would close a cycle.
 
@@ -262,6 +263,8 @@ def _ordering_edge_closes_cycle(
         KnowledgeEdge.source_scope == scope,
         KnowledgeEdge.edge_type.in_(ORDERING_EDGE_TYPES),
     )
+    if exclude_edge_id is not None:
+        statement = statement.where(KnowledgeEdge.id != exclude_edge_id)
     for edge in session.scalars(statement):
         adjacency.setdefault(edge.source_node_id, []).append(edge.target_node_id)
 
@@ -424,7 +427,7 @@ def update_knowledge_edge(
     source_subsystem: str = "api",
     **changes: Any,
 ) -> KnowledgeEdge:
-    """Update mutable edge fields and record one audit event."""
+    """Validate edge changes before mutation and record one audit event."""
     before = _edge_summary(edge)
     for field, value in changes.items():
         if value is None:
@@ -435,7 +438,17 @@ def update_knowledge_edge(
             _require_choice(value, EDGE_STATUSES, "status")
         elif field == "confidence" and not 0.0 <= value <= 1.0:
             raise ValueError("confidence must be between 0.0 and 1.0 (inclusive)")
-        setattr(edge, field, value)
+    if changes.get("edge_type") in ORDERING_EDGE_TYPES and _ordering_edge_closes_cycle(
+        session,
+        source_node_id=edge.source_node_id,
+        target_node_id=edge.target_node_id,
+        scope=edge.source_scope,
+        exclude_edge_id=edge.id,
+    ):
+        raise ValueError("edge would create a prerequisite cycle")
+    for field, value in changes.items():
+        if value is not None:
+            setattr(edge, field, value)
     session.flush()
     record_audit_event(
         session,

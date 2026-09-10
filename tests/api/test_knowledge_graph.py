@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from lms.audit.models import AuditLog
 from lms.db.base import Base
 from lms.db.session import get_session
+from lms.graphs.repository import ORDERING_EDGE_TYPES
 from lms.main import create_app
 
 
@@ -329,3 +330,103 @@ def test_delete_edge_route_returns_404_for_missing(
     client, _session = api_client
     response = client.delete("/knowledge/edges/ghost", params={"scope": "personal"})
     assert response.status_code == 404
+
+
+def _post_edge(client: TestClient, source: str, target: str, edge_type: str) -> dict[str, Any]:
+    response = client.post(
+        "/knowledge/edges",
+        json={
+            "source_node_id": source,
+            "target_node_id": target,
+            "edge_type": edge_type,
+            "ownership_scope": "personal",
+            "actor_id": "user:alice",
+            "notes": "original",
+        },
+    )
+    assert response.status_code == 201, response.text
+    return cast(dict[str, Any], response.json())
+
+
+@pytest.mark.parametrize("edge_type", ORDERING_EDGE_TYPES)
+@pytest.mark.parametrize("path_length", [2, 3])
+def test_patch_edge_rejects_ordering_cycle(
+    api_client: tuple[TestClient, Session], edge_type: str, path_length: int
+) -> None:
+    """PATCH returns 422 without changing persisted edge fields or its audit trail."""
+    client, session = api_client
+    nodes = [_post_node(client, title=f"Node {i}", scope="personal") for i in range(path_length)]
+    for index, (source, target) in enumerate(zip(nodes, nodes[1:], strict=False)):
+        _post_edge(client, source["id"], target["id"], ORDERING_EDGE_TYPES[index])
+    edge = _post_edge(client, nodes[-1]["id"], nodes[0]["id"], "analogy")
+    response = client.patch(
+        f"/knowledge/edges/{edge['id']}",
+        params={"scope": "personal"},
+        json={"notes": "must not persist", "edge_type": edge_type},
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "edge would create a prerequisite cycle"
+    persisted = client.get(f"/knowledge/edges/{edge['id']}", params={"scope": "personal"})
+    assert persisted.json() == edge
+    assert session.query(AuditLog).filter_by(entity_id=edge["id"]).count() == 1
+    # Rejection must not prevent a later legitimate edit of the non-ordering edge.
+    response = client.patch(
+        f"/knowledge/edges/{edge['id']}",
+        params={"scope": "personal"},
+        json={"status": "published", "edge_type": "contrast", "actor_id": "user:bob"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["edge_type"] == "contrast"
+    audit = session.query(AuditLog).filter_by(entity_id=edge["id"], action="update").one()
+    assert audit.actor_id == "user:bob"
+    assert audit.before_summary is not None and audit.after_summary is not None
+    assert audit.before_summary["edge_type"] == "analogy"
+    assert audit.after_summary["edge_type"] == "contrast"
+
+
+@pytest.mark.parametrize("edge_type", ORDERING_EDGE_TYPES)
+def test_patch_edge_accepts_acyclic_ordering_update(
+    api_client: tuple[TestClient, Session], edge_type: str
+) -> None:
+    """The HTTP path accepts a valid ordering edge type and preserves its endpoints."""
+    client, session = api_client
+    a = _post_node(client, title="A", scope="personal")
+    b = _post_node(client, title="B", scope="personal")
+    edge = _post_edge(client, a["id"], b["id"], "analogy")
+    response = client.patch(
+        f"/knowledge/edges/{edge['id']}",
+        params={"scope": "personal"},
+        json={"edge_type": edge_type, "confidence": 0.7},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["edge_type"], body["confidence"]) == (edge_type, 0.7)
+    assert (body["source_node_id"], body["target_node_id"]) == (a["id"], b["id"])
+    assert session.query(AuditLog).filter_by(entity_id=edge["id"], action="update").count() == 1
+
+
+def test_patch_edge_requires_scope_and_hides_other_scope(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """Edge mutation follows the same required scope boundary as graph reads."""
+    client, session = api_client
+    a = _post_node(client, title="A", scope="personal")
+    b = _post_node(client, title="B", scope="personal")
+    edge = _post_edge(client, a["id"], b["id"], "analogy")
+    url = f"/knowledge/edges/{edge['id']}"
+    assert client.patch(url, json={"notes": "no scope"}).status_code == 422
+    assert (
+        client.patch(
+            url, params={"scope": "institutional"}, json={"notes": "wrong scope"}
+        ).status_code
+        == 404
+    )
+    assert (
+        client.patch(
+            "/knowledge/edges/missing", params={"scope": "personal"}, json={"notes": "missing"}
+        ).status_code
+        == 404
+    )
+    persisted = client.get(url, params={"scope": "personal"})
+    assert persisted.json() == edge
+    assert session.query(AuditLog).filter_by(entity_id=edge["id"]).count() == 1

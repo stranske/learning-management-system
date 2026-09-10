@@ -11,7 +11,13 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.orm import Session
 
-from lms.graphs.repository import create_knowledge_edge, create_knowledge_node
+from lms.audit.models import AuditLog
+from lms.graphs.repository import (
+    ORDERING_EDGE_TYPES,
+    create_knowledge_edge,
+    create_knowledge_node,
+    update_knowledge_edge,
+)
 
 
 def _seed_nodes(session: Session, count: int, *, scope: str = "personal") -> list[str]:
@@ -140,3 +146,87 @@ def test_duplicate_edge_rejected(db_session: Session) -> None:
             scope="personal",
             actor_id="user:alice",
         )
+
+
+@pytest.mark.parametrize("scope", ["personal", "institutional"])
+@pytest.mark.parametrize("path_length", [2, 3])
+@pytest.mark.parametrize(
+    ("old_type", "new_type"),
+    [
+        ("analogy", "prerequisite"),
+        ("contrast", "key-prerequisite"),
+        ("transfer-context", "encompassing"),
+    ],
+)
+def test_update_rejects_ordering_cycle_without_mutation(
+    db_session: Session, scope: str, path_length: int, old_type: str, new_type: str
+) -> None:
+    """Rejected type changes preserve pending work and leave the session usable."""
+    nodes = _seed_nodes(db_session, path_length, scope=scope)
+    for index, (source, target) in enumerate(zip(nodes, nodes[1:], strict=False)):
+        create_knowledge_edge(
+            db_session,
+            source_node_id=source,
+            target_node_id=target,
+            edge_type=ORDERING_EDGE_TYPES[index],
+            scope=scope,
+            actor_id="user:alice",
+        )
+    edge = create_knowledge_edge(
+        db_session,
+        source_node_id=nodes[-1],
+        target_node_id=nodes[0],
+        edge_type=old_type,
+        scope=scope,
+        actor_id="user:alice",
+        notes="original",
+    )
+    audit_count = db_session.query(AuditLog).count()
+    with pytest.raises(ValueError, match="edge would create a prerequisite cycle"):
+        update_knowledge_edge(
+            db_session,
+            edge,
+            actor_id="user:alice",
+            notes="must not persist",
+            edge_type=new_type,
+        )
+    assert (edge.edge_type, edge.notes) == (old_type, "original")
+    assert db_session.is_active
+    assert not db_session.dirty
+    assert db_session.query(AuditLog).count() == audit_count
+    # No rollback: prior uncommitted edges and audit events must survive.
+    update_knowledge_edge(db_session, edge, actor_id="user:alice", status="published")
+    db_session.commit()
+    db_session.refresh(edge)
+    assert (edge.edge_type, edge.notes, edge.status) == (old_type, "original", "published")
+    assert db_session.query(AuditLog).count() == audit_count + 1
+
+
+@pytest.mark.parametrize("edge_type", ORDERING_EDGE_TYPES)
+def test_update_allows_acyclic_ordering_changes(db_session: Session, edge_type: str) -> None:
+    """Converting an edge and reapplying its ordering type both remain valid."""
+    a, b = _seed_nodes(db_session, 2)
+    edge = create_knowledge_edge(
+        db_session,
+        source_node_id=a,
+        target_node_id=b,
+        edge_type="analogy",
+        scope="personal",
+        actor_id="user:alice",
+    )
+    update_knowledge_edge(db_session, edge, actor_id="user:alice", edge_type=edge_type)
+    update_knowledge_edge(
+        db_session,
+        edge,
+        actor_id="user:alice",
+        edge_type=edge_type,
+        notes="updated",
+    )
+    db_session.commit()
+    db_session.refresh(edge)
+    assert (edge.edge_type, edge.notes) == (edge_type, "updated")
+    audits = db_session.query(AuditLog).filter_by(entity_id=edge.id, action="update").all()
+    assert len(audits) == 2
+    assert audits[0].before_summary is not None and audits[0].after_summary is not None
+    assert audits[0].before_summary["edge_type"] == "analogy"
+    assert audits[0].after_summary["edge_type"] == edge_type

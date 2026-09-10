@@ -92,6 +92,16 @@ class KnowledgeEdgeCreate(BaseModel):
     actor_id: str = Field(default="system:api", min_length=1, max_length=255)
 
 
+class KnowledgeEdgeUpdate(BaseModel):
+    """Mutable edge fields; endpoints and ownership scopes stay fixed."""
+
+    edge_type: EdgeType | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    status: EdgeStatus | None = None
+    notes: str | None = None
+    actor_id: str = Field(default="system:api", min_length=1, max_length=255)
+
+
 class KnowledgeEdgeRead(BaseModel):
     """Serializable knowledge edge."""
 
