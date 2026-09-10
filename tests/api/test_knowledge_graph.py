@@ -430,3 +430,113 @@ def test_patch_edge_requires_scope_and_hides_other_scope(
     persisted = client.get(url, params={"scope": "personal"})
     assert persisted.json() == edge
     assert session.query(AuditLog).filter_by(entity_id=edge["id"]).count() == 1
+
+
+def test_patch_edge_rejects_duplicate_edge_type(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """PATCH refuses a type change that would duplicate a sibling edge."""
+    client, session = api_client
+    a = _post_node(client, title="A", scope="personal")
+    b = _post_node(client, title="B", scope="personal")
+    _post_edge(client, a["id"], b["id"], "prerequisite")
+    parallel = _post_edge(client, a["id"], b["id"], "analogy")
+    response = client.patch(
+        f"/knowledge/edges/{parallel['id']}",
+        params={"scope": "personal"},
+        json={"edge_type": "prerequisite", "notes": "must not persist"},
+    )
+    assert response.status_code == 422, response.text
+    assert "duplicate knowledge edge" in response.json()["detail"]
+    persisted = client.get(f"/knowledge/edges/{parallel['id']}", params={"scope": "personal"})
+    assert persisted.json() == parallel
+    assert session.query(AuditLog).filter_by(entity_id=parallel["id"], action="update").count() == 0
+
+
+def test_patch_edge_clears_nullable_fields_with_explicit_null(
+    api_client: tuple[TestClient, Session],
+) -> None:
+    """An explicit ``null`` clears notes/confidence; an omitted field is unchanged."""
+    client, session = api_client
+    a = _post_node(client, title="A", scope="personal")
+    b = _post_node(client, title="B", scope="personal")
+    edge = _post_edge(client, a["id"], b["id"], "analogy")
+    seeded = client.patch(
+        f"/knowledge/edges/{edge['id']}",
+        params={"scope": "personal"},
+        json={"confidence": 0.4},
+    )
+    assert seeded.status_code == 200, seeded.text
+    assert (seeded.json()["confidence"], seeded.json()["notes"]) == (0.4, "original")
+
+    cleared = client.patch(
+        f"/knowledge/edges/{edge['id']}",
+        params={"scope": "personal"},
+        json={"notes": None},
+    )
+    assert cleared.status_code == 200, cleared.text
+    body = cleared.json()
+    # notes cleared by the explicit null; confidence omitted and therefore kept.
+    assert body["notes"] is None
+    assert body["confidence"] == 0.4
+
+    cleared_confidence = client.patch(
+        f"/knowledge/edges/{edge['id']}",
+        params={"scope": "personal"},
+        json={"confidence": None},
+    )
+    assert cleared_confidence.status_code == 200, cleared_confidence.text
+    assert cleared_confidence.json()["confidence"] is None
+    persisted = client.get(f"/knowledge/edges/{edge['id']}", params={"scope": "personal"})
+    assert (persisted.json()["notes"], persisted.json()["confidence"]) == (None, None)
+    assert session.query(AuditLog).filter_by(entity_id=edge["id"], action="update").count() == 3
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"source_node_id": "hijacked"},
+        {"target_node_id": "hijacked"},
+        {"ownership_scope": "institutional"},
+        {"notez": "typo"},
+    ],
+)
+def test_patch_edge_rejects_immutable_and_unknown_fields(
+    api_client: tuple[TestClient, Session], payload: dict[str, Any]
+) -> None:
+    """A PATCH naming an immutable endpoint or an unknown field is a 422, not a silent 200."""
+    client, session = api_client
+    a = _post_node(client, title="A", scope="personal")
+    b = _post_node(client, title="B", scope="personal")
+    edge = _post_edge(client, a["id"], b["id"], "analogy")
+    response = client.patch(
+        f"/knowledge/edges/{edge['id']}", params={"scope": "personal"}, json=payload
+    )
+    assert response.status_code == 422, response.text
+    offending = next(iter(payload))
+    assert any(
+        offending in detail.get("loc", ()) for detail in response.json()["detail"]
+    ), response.text
+    persisted = client.get(f"/knowledge/edges/{edge['id']}", params={"scope": "personal"})
+    assert persisted.json() == edge
+    # The rejected request must not leave an ``update`` audit event behind.
+    assert session.query(AuditLog).filter_by(entity_id=edge["id"], action="update").count() == 0
+
+
+@pytest.mark.parametrize("field", ["edge_type", "status"])
+def test_patch_edge_rejects_clearing_a_required_field(
+    api_client: tuple[TestClient, Session], field: str
+) -> None:
+    """An explicit ``null`` for a non-nullable column is refused rather than skipped."""
+    client, session = api_client
+    a = _post_node(client, title="A", scope="personal")
+    b = _post_node(client, title="B", scope="personal")
+    edge = _post_edge(client, a["id"], b["id"], "analogy")
+    response = client.patch(
+        f"/knowledge/edges/{edge['id']}", params={"scope": "personal"}, json={field: None}
+    )
+    assert response.status_code == 422, response.text
+    assert f"{field} cannot be cleared" in response.json()["detail"]
+    persisted = client.get(f"/knowledge/edges/{edge['id']}", params={"scope": "personal"})
+    assert persisted.json() == edge
+    assert session.query(AuditLog).filter_by(entity_id=edge["id"], action="update").count() == 0

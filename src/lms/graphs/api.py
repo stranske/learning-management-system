@@ -269,7 +269,11 @@ def update_edge_route(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Knowledge edge not found in this scope.",
         )
-    changes = payload.model_dump(exclude={"actor_id"}, exclude_none=True)
+    # exclude_unset, not exclude_none: an explicit ``null`` for a nullable field
+    # (notes/confidence) is a request to clear it, and exclude_none would drop
+    # that instruction while leaving no way to express it. Omitted fields stay
+    # unset and are therefore left unchanged.
+    changes = payload.model_dump(exclude={"actor_id"}, exclude_unset=True)
     try:
         updated = update_knowledge_edge(session, edge, actor_id=payload.actor_id, **changes)
         session.commit()

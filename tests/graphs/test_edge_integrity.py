@@ -13,7 +13,9 @@ from sqlalchemy.orm import Session
 
 from lms.audit.models import AuditLog
 from lms.graphs.repository import (
+    CLEARABLE_EDGE_FIELDS,
     ORDERING_EDGE_TYPES,
+    _ordering_edge_closes_cycle,
     create_knowledge_edge,
     create_knowledge_node,
     update_knowledge_edge,
@@ -230,3 +232,138 @@ def test_update_allows_acyclic_ordering_changes(db_session: Session, edge_type: 
     assert audits[0].before_summary is not None and audits[0].after_summary is not None
     assert audits[0].before_summary["edge_type"] == "analogy"
     assert audits[0].after_summary["edge_type"] == edge_type
+
+
+def test_update_rejects_duplicate_edge_type_a_cycle_check_cannot_see(
+    db_session: Session,
+) -> None:
+    """Retyping a parallel edge onto a sibling's type is refused as a duplicate.
+
+    Two edges may share endpoints while differing in type. Retyping one onto the
+    other's type reaches a state ``create_knowledge_edge`` refuses, and the cycle
+    check cannot substitute for the duplicate check here: both edges run
+    ``source -> target``, so no cycle is closed and reachability reports False.
+    """
+    a, b = _seed_nodes(db_session, 2)
+    kept = create_knowledge_edge(
+        db_session,
+        source_node_id=a,
+        target_node_id=b,
+        edge_type="prerequisite",
+        scope="personal",
+        actor_id="user:alice",
+    )
+    parallel = create_knowledge_edge(
+        db_session,
+        source_node_id=a,
+        target_node_id=b,
+        edge_type="analogy",
+        scope="personal",
+        actor_id="user:alice",
+        notes="original",
+    )
+    audit_count = db_session.query(AuditLog).count()
+
+    # The cycle check on its own does not object: the sibling points the same way.
+    assert not _ordering_edge_closes_cycle(
+        db_session,
+        source_node_id=parallel.source_node_id,
+        target_node_id=parallel.target_node_id,
+        scope=parallel.source_scope,
+        exclude_edge_id=parallel.id,
+    )
+    with pytest.raises(ValueError, match="duplicate knowledge edge"):
+        update_knowledge_edge(
+            db_session,
+            parallel,
+            actor_id="user:alice",
+            edge_type="prerequisite",
+            notes="must not persist",
+        )
+    assert (parallel.edge_type, parallel.notes) == ("analogy", "original")
+    assert kept.edge_type == "prerequisite"
+    assert db_session.is_active
+    assert not db_session.dirty
+    assert db_session.query(AuditLog).count() == audit_count
+
+    # A type no sibling holds still applies normally.
+    update_knowledge_edge(db_session, parallel, actor_id="user:alice", edge_type="contrast")
+    db_session.commit()
+    db_session.refresh(parallel)
+    assert parallel.edge_type == "contrast"
+    assert db_session.query(AuditLog).count() == audit_count + 1
+
+
+def test_update_reapplying_an_unchanged_edge_type_is_not_a_duplicate(
+    db_session: Session,
+) -> None:
+    """The duplicate check keys off a *change* of type, never off the edge itself."""
+    a, b = _seed_nodes(db_session, 2)
+    edge = create_knowledge_edge(
+        db_session,
+        source_node_id=a,
+        target_node_id=b,
+        edge_type="prerequisite",
+        scope="personal",
+        actor_id="user:alice",
+    )
+    update_knowledge_edge(
+        db_session,
+        edge,
+        actor_id="user:alice",
+        edge_type="prerequisite",
+        notes="unchanged type",
+    )
+    db_session.commit()
+    db_session.refresh(edge)
+    assert (edge.edge_type, edge.notes) == ("prerequisite", "unchanged type")
+
+
+@pytest.mark.parametrize("field", sorted(CLEARABLE_EDGE_FIELDS))
+def test_update_clears_nullable_fields_on_explicit_none(db_session: Session, field: str) -> None:
+    """An explicit ``None`` clears a nullable column instead of being skipped."""
+    a, b = _seed_nodes(db_session, 2)
+    edge = create_knowledge_edge(
+        db_session,
+        source_node_id=a,
+        target_node_id=b,
+        edge_type="analogy",
+        scope="personal",
+        actor_id="user:alice",
+        confidence=0.5,
+        notes="original",
+    )
+    db_session.commit()
+    assert getattr(edge, field) is not None
+
+    update_knowledge_edge(db_session, edge, actor_id="user:alice", **{field: None})
+    db_session.commit()
+    db_session.refresh(edge)
+    assert getattr(edge, field) is None
+    # The field NOT cleared this round is untouched, so clearing is per-field.
+    other = next(iter(CLEARABLE_EDGE_FIELDS - {field}))
+    assert getattr(edge, other) is not None
+
+
+@pytest.mark.parametrize("field", ["edge_type", "status"])
+def test_update_rejects_clearing_a_required_field(db_session: Session, field: str) -> None:
+    """``edge_type`` and ``status`` are ``nullable=False``; clearing them is an error."""
+    a, b = _seed_nodes(db_session, 2)
+    edge = create_knowledge_edge(
+        db_session,
+        source_node_id=a,
+        target_node_id=b,
+        edge_type="analogy",
+        scope="personal",
+        actor_id="user:alice",
+    )
+    db_session.commit()
+    audit_count = db_session.query(AuditLog).count()
+    before = (edge.edge_type, edge.status)
+
+    with pytest.raises(ValueError, match=f"{field} cannot be cleared"):
+        update_knowledge_edge(db_session, edge, actor_id="user:alice", **{field: None})
+    assert (edge.edge_type, edge.status) == before
+    assert db_session.is_active
+    assert not db_session.dirty
+    assert db_session.query(AuditLog).count() == audit_count

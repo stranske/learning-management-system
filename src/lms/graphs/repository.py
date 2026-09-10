@@ -36,6 +36,11 @@ ORDERING_EDGE_TYPES: tuple[str, ...] = (
     "encompassing",
 )
 
+# Edge columns that are nullable in ``KnowledgeEdge`` and may therefore be
+# cleared by an explicit ``null`` in a PATCH. Every other field is
+# ``nullable=False``, so an explicit null there is a client error, not a clear.
+CLEARABLE_EDGE_FIELDS: frozenset[str] = frozenset({"confidence", "notes"})
+
 
 def _require_scope(scope: str | None) -> str:
     """Validate that callers pass an explicit ownership scope."""
@@ -427,10 +432,20 @@ def update_knowledge_edge(
     source_subsystem: str = "api",
     **changes: Any,
 ) -> KnowledgeEdge:
-    """Validate edge changes before mutation and record one audit event."""
+    """Validate edge changes before mutation and record one audit event.
+
+    A field present in ``changes`` with a value of ``None`` clears that column
+    when the column is nullable, and is rejected otherwise; to leave a field
+    unchanged, omit it. Every invariant that ``create_knowledge_edge`` enforces
+    for the fields this function can mutate is enforced here too, because a
+    PATCH that reaches a state creation would have refused leaves the same
+    invalid graph behind.
+    """
     before = _edge_summary(edge)
     for field, value in changes.items():
         if value is None:
+            if field not in CLEARABLE_EDGE_FIELDS:
+                raise ValueError(f"{field} cannot be cleared; omit the field to leave it unchanged")
             continue
         if field == "edge_type":
             _require_choice(value, EDGE_TYPES, "edge type")
@@ -438,7 +453,31 @@ def update_knowledge_edge(
             _require_choice(value, EDGE_STATUSES, "status")
         elif field == "confidence" and not 0.0 <= value <= 1.0:
             raise ValueError("confidence must be between 0.0 and 1.0 (inclusive)")
-    if changes.get("edge_type") in ORDERING_EDGE_TYPES and _ordering_edge_closes_cycle(
+
+    new_edge_type = changes.get("edge_type")
+    if new_edge_type is not None and new_edge_type != edge.edge_type:
+        # Endpoints and scopes are immutable, so only a type change can collide
+        # with a sibling edge. Without this, retyping one of two parallel edges
+        # onto the other's type persists a pair that ``create_knowledge_edge``
+        # rejects as a duplicate -- and for an ordering type the cycle check
+        # cannot catch it, because a same-direction sibling closes no cycle.
+        duplicate = session.scalars(
+            select(KnowledgeEdge).where(
+                KnowledgeEdge.id != edge.id,
+                KnowledgeEdge.source_node_id == edge.source_node_id,
+                KnowledgeEdge.target_node_id == edge.target_node_id,
+                KnowledgeEdge.edge_type == new_edge_type,
+                KnowledgeEdge.source_scope == edge.source_scope,
+                KnowledgeEdge.target_scope == edge.target_scope,
+            )
+        ).first()
+        if duplicate is not None:
+            raise ValueError(
+                "duplicate knowledge edge: an identical "
+                f"{new_edge_type!r} edge already exists in scope {edge.source_scope!r}"
+            )
+
+    if new_edge_type in ORDERING_EDGE_TYPES and _ordering_edge_closes_cycle(
         session,
         source_node_id=edge.source_node_id,
         target_node_id=edge.target_node_id,
@@ -447,8 +486,7 @@ def update_knowledge_edge(
     ):
         raise ValueError("edge would create a prerequisite cycle")
     for field, value in changes.items():
-        if value is not None:
-            setattr(edge, field, value)
+        setattr(edge, field, value)
     session.flush()
     record_audit_event(
         session,
