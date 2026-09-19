@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -107,11 +109,27 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
     ("feedback_threshold", "remediation_threshold", "message"),
     [
         (value, 0.5, "feedback_threshold must be a finite number between 0.0 and 1.0")
-        for value in [float("nan"), float("inf"), float("-inf"), -0.1, 1.1]
+        for value in [
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            -0.1,
+            1.1,
+            math.nextafter(0.0, -math.inf),
+            math.nextafter(1.0, math.inf),
+        ]
     ]
     + [
         (0.85, value, "remediation_threshold must be a finite number between 0.0 and 1.0")
-        for value in [float("nan"), float("inf"), float("-inf"), -0.1, 1.1]
+        for value in [
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            -0.1,
+            1.1,
+            math.nextafter(0.0, -math.inf),
+            math.nextafter(1.0, math.inf),
+        ]
     ]
     + [
         (feedback, remediation, "remediation_threshold cannot exceed feedback_threshold")
