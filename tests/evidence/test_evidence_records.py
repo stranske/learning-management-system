@@ -6,11 +6,11 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lms.auth.models import User
 from lms.evidence.api import list_evidence_records_route
+from lms.evidence.models import EVIDENCE_KINDS, EvidenceRecord
 from lms.evidence.repository import create_attempt, create_evidence_record, list_evidence_records
 from lms.evidence.schemas import AttemptCreate, AttemptEvidenceCreate, EvidenceRecordRead
 from lms.settings import Settings
@@ -185,8 +185,8 @@ def test_binary_and_partial_credit_records_roundtrip(db_session: Session) -> Non
 
 
 def test_scorer_type_check_constraint_rejects_invalid(db_session: Session) -> None:
-    """Evidence scorer type must stay within the design-backed enum."""
-    with pytest.raises(IntegrityError):
+    """Repository validation rejects invalid scorer types before persistence."""
+    with pytest.raises(ValueError, match="unknown scorer_type 'unknown-scorer'"):
         create_evidence_record(
             db_session,
             learner_id="learner-1",
@@ -196,7 +196,63 @@ def test_scorer_type_check_constraint_rejects_invalid(db_session: Session) -> No
             scorer_type="unknown-scorer",
         )
 
-    db_session.rollback()
+    assert db_session.is_active
+    assert not db_session.new
+    assert db_session.query(EvidenceRecord).count() == 0
+
+
+def _evidence_record_kwargs(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "learner_id": "learner-1",
+        "knowledge_node_id": "node-1",
+        "evidence_kind": "observed",
+    }
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("raw_score", -1.0, "raw_score must be non-negative"),
+        ("raw_score", float("nan"), "raw_score must be non-negative"),
+        ("max_score", 0.0, "max_score must be a positive number"),
+        ("max_score", -2.0, "max_score must be a positive number"),
+        ("evidence_kind", "invalid", "unknown evidence_kind 'invalid'"),
+        ("item_difficulty_estimate", 1.5, "item_difficulty_estimate must be between 0.0 and 1.0"),
+        ("item_difficulty_estimate", -0.1, "item_difficulty_estimate must be between 0.0 and 1.0"),
+        ("demand_level", "extreme", "unknown demand_level 'extreme'"),
+        ("knowledge_type", "mystery", "unknown knowledge_type 'mystery'"),
+        ("scoring_method", "curve", "unknown scoring_method 'curve'"),
+        ("support_level", "invalid", "unknown support_level 'invalid'"),
+        ("confidence_rating", 0, "confidence_rating must be between 1 and 5"),
+        (
+            "time_since_last_attempt_seconds",
+            -1,
+            "time_since_last_attempt_seconds must be non-negative",
+        ),
+        ("response_time_seconds", -3, "response_time_seconds must be non-negative"),
+    ],
+)
+def test_create_evidence_record_rejects_invalid_metadata_without_poisoning_session(
+    db_session: Session, field: str, value: object, message: str
+) -> None:
+    """Direct repository callers get a domain error before any persistence."""
+    kwargs = _evidence_record_kwargs(**{field: value})
+
+    with pytest.raises(ValueError, match=message) as exc_info:
+        create_evidence_record(db_session, **kwargs)
+
+    if field == "evidence_kind":
+        assert f"expected one of {EVIDENCE_KINDS}" in str(exc_info.value)
+    assert db_session.is_active
+    assert not db_session.new
+    assert db_session.query(EvidenceRecord).count() == 0
+
+    valid = create_evidence_record(db_session, **_evidence_record_kwargs())
+    db_session.commit()
+    assert valid.id is not None
+    assert db_session.query(EvidenceRecord).count() == 1
 
 
 def test_attempt_evidence_validation_rejects_invalid_scores() -> None:
