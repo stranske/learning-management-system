@@ -169,7 +169,9 @@ def test_goal_progress_rejects_invalid_threshold_before_session_access(threshold
     [
         (0.0, 3),
         (math.nextafter(0.0, math.inf), 2),
+        (math.nextafter(0.5, -math.inf), 2),
         (0.5, 2),
+        (math.nextafter(0.5, math.inf), 1),
         (0.8, 1),
         (math.nextafter(1.0, -math.inf), 1),
         (1.0, 1),
