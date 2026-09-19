@@ -48,7 +48,7 @@ from lms.maintenance.service import (
     tier_counts,
 )
 from lms.scheduling import fsrs_engine
-from lms.scheduling.card_state import get_card_state
+from lms.scheduling.card_state import get_card_state, get_or_seed_card_state
 from lms.scheduling.models import SUBJECT_MAINTENANCE_ITEM
 
 MAINTENANCE = "/app/learner/maintenance"
@@ -93,16 +93,20 @@ def env() -> Generator[tuple[TestClient, sessionmaker[Session], str], None, None
 
 def _any_item(factory: sessionmaker[Session]) -> MaintenanceItem:
     with factory() as session:
-        return session.scalars(
+        item = session.scalars(
             select(MaintenanceItem).where(MaintenanceItem.status == "active")
         ).first()
+        assert item is not None
+        return item
 
 
 # --- per-item tier editing ------------------------------------------------
 
 
+@pytest.mark.parametrize("retention_tier", fsrs_engine.RETENTION_TIERS)
 def test_changing_tier_updates_the_live_card_too(
     env: tuple[TestClient, sessionmaker[Session], str],
+    retention_tier: str,
 ) -> None:
     """The tier lives on the item but scheduling reads the card — keep both in step."""
     _client, factory, learner_id = env
@@ -110,6 +114,7 @@ def test_changing_tier_updates_the_live_card_too(
 
     with factory() as session:
         fresh = session.get(MaintenanceItem, item.id)
+        assert fresh is not None
         submit_review(session, item=fresh, answer="about 100")
         session.commit()
         before = get_card_state(
@@ -119,10 +124,10 @@ def test_changing_tier_updates_the_live_card_too(
             subject_type=SUBJECT_MAINTENANCE_ITEM,
         )
         assert before is not None
-        original = before.retention_tier
-
-        set_item_tier(session, item=fresh, retention_tier="hot")
+        set_item_tier(session, item=fresh, retention_tier=retention_tier)
         session.commit()
+        session.expire_all()
+        assert fresh.retention_tier == retention_tier
 
         after = get_card_state(
             session,
@@ -130,9 +135,96 @@ def test_changing_tier_updates_the_live_card_too(
             subject_id=item.id,
             subject_type=SUBJECT_MAINTENANCE_ITEM,
         )
-    assert original != "hot"
     assert after is not None
-    assert after.retention_tier == "hot", "card must follow the item's tier"
+    assert after.retention_tier == retention_tier, "card must follow the item's tier"
+
+
+@pytest.mark.parametrize("has_card", [False, True])
+@pytest.mark.parametrize("retention_tier", ["ultra-hot", "invalid", "", "HOT", " warm "])
+def test_invalid_tier_leaves_item_card_and_session_unchanged(
+    env: tuple[TestClient, sessionmaker[Session], str],
+    retention_tier: str,
+    has_card: bool,
+) -> None:
+    _client, factory, learner_id = env
+    item_id = _any_item(factory).id
+    with factory() as session:
+        item = session.get(MaintenanceItem, item_id)
+        assert item is not None
+        if has_card:
+            get_or_seed_card_state(
+                session,
+                learner_id=learner_id,
+                subject_id=item_id,
+                subject_type=SUBJECT_MAINTENANCE_ITEM,
+                retention_tier=item.retention_tier,
+            )
+        session.commit()
+        card = get_card_state(
+            session,
+            learner_id=learner_id,
+            subject_id=item_id,
+            subject_type=SUBJECT_MAINTENANCE_ITEM,
+        )
+        original_tier = item.retention_tier
+        original_card_tier = card.retention_tier if card is not None else None
+
+        with pytest.raises(ValueError) as error:
+            set_item_tier(session, item=item, retention_tier=retention_tier)
+
+        assert str(error.value) == (
+            f"unknown retention_tier {retention_tier!r}; expected one of ('hot', 'warm', 'cold')"
+        )
+        assert item.retention_tier == original_tier
+        assert (card.retention_tier if card is not None else None) == original_card_tier
+        assert not session.dirty
+        assert not session.new
+        # No rollback: callers may catch invalid input and commit other work.
+        session.commit()
+        session.expire_all()
+        assert item.retention_tier == original_tier
+        assert (card.retention_tier if card is not None else None) == original_card_tier
+        set_item_tier(session, item=item, retention_tier="warm")
+        session.commit()
+        session.expire_all()
+        assert item.retention_tier == "warm"
+        if card is not None:
+            assert card.retention_tier == "warm"
+        else:
+            assert (
+                get_card_state(
+                    session,
+                    learner_id=learner_id,
+                    subject_id=item_id,
+                    subject_type=SUBJECT_MAINTENANCE_ITEM,
+                )
+                is None
+            )
+
+
+@pytest.mark.parametrize("retention_tier", fsrs_engine.RETENTION_TIERS)
+def test_changing_tier_without_a_card(
+    env: tuple[TestClient, sessionmaker[Session], str],
+    retention_tier: str,
+) -> None:
+    _client, factory, learner_id = env
+    item_id = _any_item(factory).id
+    with factory() as session:
+        item = session.get(MaintenanceItem, item_id)
+        assert item is not None
+        assert set_item_tier(session, item=item, retention_tier=retention_tier) is item
+        session.commit()
+        session.expire_all()
+        assert item.retention_tier == retention_tier
+        assert (
+            get_card_state(
+                session,
+                learner_id=learner_id,
+                subject_id=item_id,
+                subject_type=SUBJECT_MAINTENANCE_ITEM,
+            )
+            is None
+        )
 
 
 def test_item_settings_page_saves_tier_precision_and_horizon(
