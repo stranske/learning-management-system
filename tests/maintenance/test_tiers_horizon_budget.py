@@ -141,17 +141,20 @@ def test_changing_tier_updates_the_live_card_too(
 
 
 @pytest.mark.parametrize("has_card", [False, True])
+@pytest.mark.parametrize("original_tier", fsrs_engine.RETENTION_TIERS)
 @pytest.mark.parametrize("retention_tier", ["ultra-hot", "invalid", "", "HOT", " warm "])
 def test_invalid_tier_leaves_item_card_and_session_unchanged(
     env: tuple[TestClient, sessionmaker[Session], str],
     retention_tier: str,
     has_card: bool,
+    original_tier: str,
 ) -> None:
     _client, factory, learner_id = env
     item_id = _any_item(factory).id
     with factory() as session:
         item = session.get(MaintenanceItem, item_id)
         assert item is not None
+        item.retention_tier = original_tier
         if has_card:
             get_or_seed_card_state(
                 session,
@@ -167,7 +170,6 @@ def test_invalid_tier_leaves_item_card_and_session_unchanged(
             subject_id=item_id,
             subject_type=SUBJECT_MAINTENANCE_ITEM,
         )
-        original_tier = item.retention_tier
         original_card_tier = card.retention_tier if card is not None else None
 
         with pytest.raises(ValueError) as error:
