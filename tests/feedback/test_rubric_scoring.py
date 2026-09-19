@@ -133,7 +133,15 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
     ]
     + [
         (feedback, remediation, "remediation_threshold cannot exceed feedback_threshold")
-        for feedback, remediation in [(0.4, 0.8), (0.0, 0.5), (0.85, 1.0)]
+        for feedback, remediation in [
+            (0.4, 0.8),
+            (0.0, 0.5),
+            (0.85, 1.0),
+            # Even adjacent floats must respect threshold ordering.
+            (0.0, math.nextafter(0.0, math.inf)),
+            (0.5, math.nextafter(0.5, math.inf)),
+            (math.nextafter(1.0, 0.0), 1.0),
+        ]
     ],
 )
 def test_rubric_scoring_rejects_invalid_thresholds_without_writes(
