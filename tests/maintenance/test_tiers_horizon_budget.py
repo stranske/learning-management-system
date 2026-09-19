@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -200,6 +201,52 @@ def test_invalid_tier_leaves_item_card_and_session_unchanged(
                 )
                 is None
             )
+
+
+@pytest.mark.parametrize("autoflush", [False, True])
+@pytest.mark.parametrize("has_card", [False, True])
+def test_invalid_tier_preserves_pending_work_without_flushing(
+    env: tuple[TestClient, sessionmaker[Session], str],
+    autoflush: bool,
+    has_card: bool,
+) -> None:
+    _client, factory, learner_id = env
+    item_id = _any_item(factory).id
+    with factory(autoflush=autoflush) as session:
+        item = session.get(MaintenanceItem, item_id)
+        learner = session.get(Learner, learner_id)
+        assert item is not None
+        assert learner is not None
+        if has_card:
+            get_or_seed_card_state(
+                session,
+                learner_id=learner_id,
+                subject_id=item_id,
+                subject_type=SUBJECT_MAINTENANCE_ITEM,
+                retention_tier=item.retention_tier,
+            )
+        session.commit()
+        learner.display_name = "Pending name change"
+        transaction = session.get_transaction()
+        assert transaction is not None
+
+        with patch.object(session, "flush", wraps=session.flush) as flush:
+            with pytest.raises(ValueError, match="unknown retention_tier 'ultra-hot'"):
+                set_item_tier(session, item=item, retention_tier="ultra-hot")
+            flush.assert_not_called()
+
+        assert session.is_active
+        assert session.get_transaction() is transaction
+        assert set(session.dirty) == {learner}
+        assert not session.new
+        assert not session.deleted
+        assert learner.display_name == "Pending name change"
+        session.commit()
+
+    with factory() as session:
+        persisted_learner = session.get(Learner, learner_id)
+        assert persisted_learner is not None
+        assert persisted_learner.display_name == "Pending name change"
 
 
 @pytest.mark.parametrize("retention_tier", fsrs_engine.RETENTION_TIERS)
