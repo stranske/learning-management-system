@@ -82,6 +82,17 @@ def score_attempt_with_rubric(
     The caller commits on success and rolls back on failure, including any
     evidence or scheduling writes made before a scheduling error.
     """
+    if not math.isfinite(feedback_threshold) or not 0.0 <= feedback_threshold <= 1.0:
+        raise InvalidRubricScoringError(
+            "feedback_threshold must be a finite number between 0.0 and 1.0"
+        )
+    if not math.isfinite(remediation_threshold) or not 0.0 <= remediation_threshold <= 1.0:
+        raise InvalidRubricScoringError(
+            "remediation_threshold must be a finite number between 0.0 and 1.0"
+        )
+    if remediation_threshold > feedback_threshold:
+        raise InvalidRubricScoringError("remediation_threshold cannot exceed feedback_threshold")
+
     attempt = session.get(Attempt, attempt_id)
     if attempt is None:
         raise AttemptNotFoundError("referenced attempt was not found")

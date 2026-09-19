@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_attempt, get_evidence_record
+from lms.feedback.models import FeedbackAction, FeedbackRecord, RubricScore
 from lms.feedback.repository import create_rubric, get_feedback_record, list_feedback_actions
 from lms.feedback.scoring import (
     AttemptNotFoundError,
@@ -15,6 +17,7 @@ from lms.feedback.scoring import (
     score_attempt_with_rubric,
 )
 from lms.graphs.repository import create_knowledge_node
+from lms.scheduling.models import ReviewCardState, ReviewQueueItem
 
 
 def _attempt(db_session: Session) -> str:
@@ -98,6 +101,130 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
     assert evidence.scorer_version == "rubric-v1"
     assert evidence.partial_credit_dimensions["rubric_id"] == rubric_id
     assert evidence.partial_credit_dimensions["criterion_scores"][1]["points"] == 2
+
+
+@pytest.mark.parametrize(
+    ("feedback_threshold", "remediation_threshold", "message"),
+    [
+        (value, 0.5, "feedback_threshold must be a finite number between 0.0 and 1.0")
+        for value in [float("nan"), float("inf"), float("-inf"), -0.1, 1.1]
+    ]
+    + [
+        (0.85, value, "remediation_threshold must be a finite number between 0.0 and 1.0")
+        for value in [float("nan"), float("inf"), float("-inf"), -0.1, 1.1]
+    ]
+    + [
+        (feedback, remediation, "remediation_threshold cannot exceed feedback_threshold")
+        for feedback, remediation in [(0.4, 0.8), (0.0, 0.5), (0.85, 1.0)]
+    ],
+)
+def test_rubric_scoring_rejects_invalid_thresholds_without_writes(
+    db_session: Session,
+    feedback_threshold: float,
+    remediation_threshold: float,
+    message: str,
+) -> None:
+    """Rejected thresholds leave no durable scoring side effects, even without rollback."""
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+    criterion_scores = [
+        {"criterion_id": criterion_ids[0], "points": 2},
+        {"criterion_id": criterion_ids[1], "points": 3},
+    ]
+    db_session.commit()
+    tables = [
+        model.__table__
+        for model in (
+            EvidenceRecord,
+            RubricScore,
+            FeedbackRecord,
+            FeedbackAction,
+            ReviewQueueItem,
+            ReviewCardState,
+        )
+    ]
+    before = [db_session.scalar(select(func.count()).select_from(table)) for table in tables]
+
+    with pytest.raises(InvalidRubricScoringError) as exc_info:
+        score_attempt_with_rubric(
+            db_session,
+            rubric_id=rubric_id,
+            attempt_id=attempt_id,
+            scorer_type="human",
+            criterion_scores=criterion_scores,
+            feedback_threshold=feedback_threshold,
+            remediation_threshold=remediation_threshold,
+        )
+    assert str(exc_info.value) == message
+    assert exc_info.value.http_status == 422
+    db_session.commit()
+    assert [
+        db_session.scalar(select(func.count()).select_from(table)) for table in tables
+    ] == before
+
+    # The same attempt can still be scored correctly in the same session.
+    score = score_attempt_with_rubric(
+        db_session,
+        rubric_id=rubric_id,
+        attempt_id=attempt_id,
+        scorer_type="human",
+        criterion_scores=criterion_scores,
+    )
+    db_session.commit()
+    assert score.normalized_score == 1.0
+    assert score.feedback_record_id is None
+    assert score.evidence_record_id is not None
+    evidence = get_evidence_record(db_session, score.evidence_record_id)
+    assert evidence is not None
+    assert evidence.correctness is True
+
+
+@pytest.mark.parametrize(
+    ("feedback_threshold", "remediation_threshold", "points", "expected_level"),
+    [
+        (0.0, 0.0, (0, 0), None),
+        (1.0, 1.0, (2, 3), None),
+        (1.0, 1.0, (1, 1), "remediation"),
+        (1.0, 0.0, (1, 1), "review"),
+        (0.8, 0.4, (2, 2), None),
+        (0.8, 0.4, (1, 1), "review"),
+        (0.8, 0.4, (1, 0), "remediation"),
+    ],
+)
+def test_rubric_scoring_accepts_threshold_boundaries(
+    db_session: Session,
+    feedback_threshold: float,
+    remediation_threshold: float,
+    points: tuple[int, int],
+    expected_level: str | None,
+) -> None:
+    """Inclusive and equal thresholds preserve correctness and feedback boundaries."""
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+    score = score_attempt_with_rubric(
+        db_session,
+        rubric_id=rubric_id,
+        attempt_id=attempt_id,
+        scorer_type="human",
+        criterion_scores=[
+            {"criterion_id": criterion_ids[0], "points": points[0]},
+            {"criterion_id": criterion_ids[1], "points": points[1]},
+        ],
+        feedback_threshold=feedback_threshold,
+        remediation_threshold=remediation_threshold,
+    )
+    db_session.commit()
+    assert score.evidence_record_id is not None
+    evidence = get_evidence_record(db_session, score.evidence_record_id)
+    assert evidence is not None
+    assert evidence.correctness is (expected_level is None)
+    if expected_level is None:
+        assert score.feedback_record_id is None
+    else:
+        assert score.feedback_record_id is not None
+        feedback = get_feedback_record(db_session, score.feedback_record_id)
+        assert feedback is not None
+        assert feedback.feedback_level == expected_level
 
 
 def test_low_rubric_score_creates_revision_or_remediation_feedback_action(
