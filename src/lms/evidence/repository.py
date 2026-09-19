@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -9,8 +10,17 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lms.evidence.models import SUPPORT_LEVELS, Attempt, EvidenceRecord
+from lms.evidence.models import (
+    DEMAND_LEVELS,
+    EVIDENCE_KINDS,
+    SCORER_TYPES,
+    SCORING_METHODS,
+    SUPPORT_LEVELS,
+    Attempt,
+    EvidenceRecord,
+)
 from lms.evidence.scoring import resolved_normalized_score
+from lms.graphs.models import KNOWLEDGE_TYPES
 from lms.learners.models import Learner
 
 
@@ -47,6 +57,78 @@ def _resolved_normalized_score(
     )
 
 
+def _validate_evidence_metadata(
+    *,
+    evidence_kind: str = "observed",
+    demand_level: str | None = None,
+    knowledge_type: str | None = None,
+    scorer_type: str | None = None,
+    scoring_method: str | None = None,
+    support_level: str = "none",
+    confidence_rating: int | None = None,
+    raw_score: float | None = None,
+    max_score: float | None = None,
+    item_difficulty_estimate: float | None = None,
+    time_since_last_attempt_seconds: int | None = None,
+    response_time_seconds: int | None = None,
+) -> None:
+    """Reject invalid metadata before any attempt or evidence ORM mutation."""
+    if evidence_kind not in EVIDENCE_KINDS:
+        raise ValueError(
+            f"unknown evidence_kind {evidence_kind!r}; expected one of {EVIDENCE_KINDS}"
+        )
+    if demand_level is not None and demand_level not in DEMAND_LEVELS:
+        raise ValueError(f"unknown demand_level {demand_level!r}; expected one of {DEMAND_LEVELS}")
+    if knowledge_type is not None and knowledge_type not in KNOWLEDGE_TYPES:
+        raise ValueError(
+            f"unknown knowledge_type {knowledge_type!r}; expected one of {KNOWLEDGE_TYPES}"
+        )
+    if scorer_type is not None and scorer_type not in SCORER_TYPES:
+        raise ValueError(f"unknown scorer_type {scorer_type!r}; expected one of {SCORER_TYPES}")
+    if scoring_method is not None and scoring_method not in SCORING_METHODS:
+        raise ValueError(
+            f"unknown scoring_method {scoring_method!r}; expected one of {SCORING_METHODS}"
+        )
+    if support_level not in SUPPORT_LEVELS:
+        raise ValueError(
+            f"unknown support_level {support_level!r}; expected one of {SUPPORT_LEVELS}"
+        )
+    if confidence_rating is not None and (
+        isinstance(confidence_rating, bool) or not isinstance(confidence_rating, int)
+    ):
+        raise ValueError("confidence_rating must be an integer between 1 and 5")
+    if confidence_rating is not None and not 1 <= confidence_rating <= 5:
+        raise ValueError("confidence_rating must be between 1 and 5")
+    for name, value in (
+        ("raw_score", raw_score),
+        ("max_score", max_score),
+        ("item_difficulty_estimate", item_difficulty_estimate),
+    ):
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            raise ValueError(f"{name} must be a number")
+    for name, value in (
+        ("time_since_last_attempt_seconds", time_since_last_attempt_seconds),
+        ("response_time_seconds", response_time_seconds),
+    ):
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise ValueError(f"{name} must be a non-negative integer")
+    if raw_score is not None and (not math.isfinite(raw_score) or raw_score < 0):
+        raise ValueError("raw_score must be non-negative")
+    if max_score is not None and (not math.isfinite(max_score) or max_score <= 0):
+        raise ValueError("max_score must be a positive number")
+    if item_difficulty_estimate is not None and (
+        not math.isfinite(item_difficulty_estimate) or not 0.0 <= item_difficulty_estimate <= 1.0
+    ):
+        raise ValueError("item_difficulty_estimate must be between 0.0 and 1.0")
+    if time_since_last_attempt_seconds is not None and time_since_last_attempt_seconds < 0:
+        raise ValueError("time_since_last_attempt_seconds must be non-negative")
+    if response_time_seconds is not None and response_time_seconds < 0:
+        raise ValueError("response_time_seconds must be non-negative")
+
+    if raw_score is not None and max_score is not None and raw_score > max_score:
+        raise ValueError("raw_score must not exceed max_score")
+
+
 def create_attempt(
     session: Session,
     *,
@@ -80,6 +162,24 @@ def create_attempt(
         raise ValueError("elapsed_seconds must be a non-negative integer")
     if elapsed_seconds is not None and elapsed_seconds < 0:
         raise ValueError("elapsed_seconds must be non-negative")
+
+    if evidence is not None and _has_scoring_signal(evidence):
+        _validate_evidence_metadata(
+            evidence_kind=evidence.get("evidence_kind", "observed"),
+            demand_level=evidence.get("demand_level"),
+            knowledge_type=evidence.get("knowledge_type"),
+            scorer_type=evidence.get("scorer_type"),
+            scoring_method=evidence.get("scoring_method"),
+            support_level=support_level,
+            confidence_rating=confidence_rating,
+            raw_score=evidence.get("raw_score"),
+            max_score=evidence.get("max_score"),
+            item_difficulty_estimate=evidence.get("item_difficulty_estimate"),
+            time_since_last_attempt_seconds=evidence.get("time_since_last_attempt_seconds"),
+            response_time_seconds=_value_or_default(
+                evidence.get("response_time_seconds"), elapsed_seconds
+            ),
+        )
 
     attempt = Attempt(
         learner_id=learner_id,
@@ -196,7 +296,22 @@ def create_evidence_record(
     validity_scope: str | None = None,
     answer_artifact_ref: str | None = None,
 ) -> EvidenceRecord:
-    """Persist a verbose observed or inferred evidence signal."""
+    """Validate evidence metadata before persisting an observed or inferred signal."""
+    _validate_evidence_metadata(
+        evidence_kind=evidence_kind,
+        demand_level=demand_level,
+        knowledge_type=knowledge_type,
+        scorer_type=scorer_type,
+        scoring_method=scoring_method,
+        support_level=support_level,
+        confidence_rating=confidence_rating,
+        raw_score=raw_score,
+        max_score=max_score,
+        item_difficulty_estimate=item_difficulty_estimate,
+        time_since_last_attempt_seconds=time_since_last_attempt_seconds,
+        response_time_seconds=response_time_seconds,
+    )
+
     resolved_normalized_score = _resolved_normalized_score(
         normalized_score=normalized_score,
         raw_score=raw_score,
