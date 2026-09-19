@@ -138,6 +138,9 @@ def _source_kwargs(**changes: Any) -> dict[str, Any]:
         ("source_type", "invalid", SOURCE_TYPES),
         ("source_visibility", "hidden", SOURCE_VISIBILITIES),
         ("multi_source_role", "invalid", MULTI_SOURCE_ROLES),
+        ("source_type", "public", SOURCE_TYPES),
+        ("source_visibility", "internal-note", SOURCE_VISIBILITIES),
+        ("multi_source_role", "current", MULTI_SOURCE_ROLES),
         ("source_type", "", SOURCE_TYPES),
         ("source_visibility", "", SOURCE_VISIBILITIES),
         ("multi_source_role", "", MULTI_SOURCE_ROLES),
@@ -154,6 +157,7 @@ def test_create_rejects_source_enums_before_persistence(
         kwargs["content_hash"] = "precomputed"
     with pytest.raises(ValueError, match=field) as error:
         create_source_reference(db_session, **kwargs)
+    assert repr(value) in str(error.value)
     assert f"expected one of {allowed}" in str(error.value)
     assert db_session.is_active
     assert not db_session.new
@@ -173,6 +177,10 @@ def test_create_rejects_source_enums_before_persistence(
         ("source_visibility", "hidden", SOURCE_VISIBILITIES),
         ("drift_status", "unknown", DRIFT_STATUSES),
         ("multi_source_role", "invalid", MULTI_SOURCE_ROLES),
+        ("source_type", "public", SOURCE_TYPES),
+        ("source_visibility", "internal-note", SOURCE_VISIBILITIES),
+        ("drift_status", "primary", DRIFT_STATUSES),
+        ("multi_source_role", "current", MULTI_SOURCE_ROLES),
         ("source_type", "", SOURCE_TYPES),
         ("source_visibility", "", SOURCE_VISIBILITIES),
         ("drift_status", "", DRIFT_STATUSES),
@@ -194,6 +202,7 @@ def test_update_rejects_source_enums_before_any_mutation(
             content="must-not-be-hashed",
             **{field: value},
         )
+    assert repr(value) in str(error.value)
     assert f"expected one of {allowed}" in str(error.value)
     assert db_session.is_active
     assert not db_session.dirty
