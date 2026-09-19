@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import func, select
@@ -208,6 +209,35 @@ def test_rubric_scoring_rejects_invalid_thresholds_without_writes(
     evidence = get_evidence_record(db_session, score.evidence_record_id)
     assert evidence is not None
     assert evidence.correctness is True
+
+
+@pytest.mark.parametrize(
+    ("feedback_threshold", "remediation_threshold", "message"),
+    [
+        (math.nan, 0.5, "feedback_threshold must be a finite number between 0.0 and 1.0"),
+        (0.85, math.nan, "remediation_threshold must be a finite number between 0.0 and 1.0"),
+        (0.4, 0.8, "remediation_threshold cannot exceed feedback_threshold"),
+    ],
+)
+def test_invalid_thresholds_are_rejected_before_database_access(
+    feedback_threshold: float, remediation_threshold: float, message: str
+) -> None:
+    """Invalid configuration must fail before a lookup can trigger ORM autoflush."""
+    session = Mock(spec=Session)
+
+    with pytest.raises(InvalidRubricScoringError) as exc_info:
+        score_attempt_with_rubric(
+            session,
+            rubric_id="unused-rubric",
+            attempt_id="unused-attempt",
+            scorer_type="human",
+            criterion_scores=[],
+            feedback_threshold=feedback_threshold,
+            remediation_threshold=remediation_threshold,
+        )
+
+    assert str(exc_info.value) == message
+    assert session.mock_calls == []
 
 
 @pytest.mark.parametrize(
