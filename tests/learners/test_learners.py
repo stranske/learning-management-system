@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -111,6 +112,25 @@ def test_goal_progress_rejects_invalid_mastery_threshold(
     assert progress["covered_count"] == 3
     assert progress["mastered_count"] == 1
     assert progress["progress"] == pytest.approx(1 / 3, abs=1e-4)
+
+
+@pytest.mark.parametrize("threshold", [float("nan"), float("inf"), float("-inf"), -0.1, 1.1])
+def test_goal_progress_rejects_invalid_threshold_before_session_access(threshold: float) -> None:
+    """Invalid input must fail before any database query or session mutation."""
+    session = Mock(spec=Session)
+
+    with pytest.raises(ValueError) as error:
+        goal_progress_for_learner(
+            session,
+            learner_id="unused-learner",
+            goal_id="unused-goal",
+            mastery_threshold=threshold,
+        )
+
+    assert str(error.value) == (
+        "mastery_threshold must be a finite float between 0.0 and 1.0 (inclusive)"
+    )
+    assert session.mock_calls == []
 
 
 @pytest.mark.parametrize(
