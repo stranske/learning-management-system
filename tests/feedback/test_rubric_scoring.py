@@ -223,6 +223,10 @@ def test_rubric_scoring_rejects_invalid_thresholds_without_writes(
     ]
     + [
         (0.4, 0.8, "remediation_threshold cannot exceed feedback_threshold"),
+        # Report the feedback error first when both thresholds are invalid,
+        # including cases where a premature ordering check would also fail.
+        (math.nan, math.nan, "feedback_threshold must be a finite number between 0.0 and 1.0"),
+        (-0.1, 1.1, "feedback_threshold must be a finite number between 0.0 and 1.0"),
     ],
 )
 def test_invalid_thresholds_are_rejected_before_database_access(
