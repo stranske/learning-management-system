@@ -133,6 +133,39 @@ def _source_kwargs(**changes: Any) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_type", "invalid"),
+        ("source_visibility", "hidden"),
+        ("multi_source_role", "invalid"),
+    ],
+)
+def test_create_invalid_enum_preserves_pending_session_work(
+    db_session: Session, field: str, value: str
+) -> None:
+    """Enum rejection must not flush or discard another caller's pending work."""
+    pending = SourceReference(
+        source_type="internal-note",
+        stable_locator="note:pending",
+        content_hash="precomputed",
+        source_visibility="public",
+    )
+    db_session.add(pending)
+
+    with pytest.raises(ValueError, match=field):
+        create_source_reference(db_session, **_source_kwargs(**{field: value}))
+
+    assert db_session.is_active
+    assert inspect(pending).pending
+    assert set(db_session.new) == {pending}
+
+    # The caller can persist its original work without rolling back the session.
+    db_session.commit()
+    assert db_session.query(SourceReference).one() is pending
+    assert db_session.query(AuditLog).count() == 0
+
+
+@pytest.mark.parametrize(
     ("field", "value", "allowed"),
     [
         ("source_type", "invalid", SOURCE_TYPES),
