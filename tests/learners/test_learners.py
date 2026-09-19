@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 from sqlalchemy.orm import Session
 
@@ -70,7 +72,19 @@ def goal_with_mastery(db_session: Session) -> tuple[str, str]:
     return learner.id, goal.id
 
 
-@pytest.mark.parametrize("threshold", [float("nan"), float("inf"), float("-inf"), -0.1, 1.1, 1.5])
+@pytest.mark.parametrize(
+    "threshold",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        -0.1,
+        1.1,
+        1.5,
+        math.nextafter(0.0, -math.inf),
+        math.nextafter(1.0, math.inf),
+    ],
+)
 @pytest.mark.parametrize("existing_goal", [True, False])
 def test_goal_progress_rejects_invalid_mastery_threshold(
     db_session: Session,
@@ -99,7 +113,17 @@ def test_goal_progress_rejects_invalid_mastery_threshold(
     assert progress["progress"] == pytest.approx(1 / 3, abs=1e-4)
 
 
-@pytest.mark.parametrize("threshold, mastered", [(0.0, 3), (0.5, 2), (0.8, 1), (1.0, 1)])
+@pytest.mark.parametrize(
+    "threshold, mastered",
+    [
+        (0.0, 3),
+        (math.nextafter(0.0, math.inf), 2),
+        (0.5, 2),
+        (0.8, 1),
+        (math.nextafter(1.0, -math.inf), 1),
+        (1.0, 1),
+    ],
+)
 def test_goal_progress_accepts_unit_interval_thresholds(
     db_session: Session,
     goal_with_mastery: tuple[str, str],
