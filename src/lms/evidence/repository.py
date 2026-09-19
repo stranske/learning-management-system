@@ -64,12 +64,20 @@ def create_attempt(
     evidence: dict[str, Any] | None = None,
 ) -> Attempt:
     """Validate attempt metadata before persisting structured feedback."""
+    if confidence_rating is not None and (
+        isinstance(confidence_rating, bool) or not isinstance(confidence_rating, int)
+    ):
+        raise ValueError("confidence_rating must be an integer between 1 and 5")
     if confidence_rating is not None and not 1 <= confidence_rating <= 5:
         raise ValueError("confidence_rating must be between 1 and 5")
     if support_level not in SUPPORT_LEVELS:
         raise ValueError(
             f"unknown support_level {support_level!r}; expected one of {SUPPORT_LEVELS}"
         )
+    if elapsed_seconds is not None and (
+        isinstance(elapsed_seconds, bool) or not isinstance(elapsed_seconds, int)
+    ):
+        raise ValueError("elapsed_seconds must be a non-negative integer")
     if elapsed_seconds is not None and elapsed_seconds < 0:
         raise ValueError("elapsed_seconds must be non-negative")
 

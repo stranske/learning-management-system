@@ -90,10 +90,18 @@ def test_attempt_confidence_validation() -> None:
         ("support_level", "", "unknown support_level ''"),
         ("elapsed_seconds", -1, "elapsed_seconds must be non-negative"),
         ("elapsed_seconds", -5, "elapsed_seconds must be non-negative"),
+        *[
+            (field, value, message)
+            for field, message in (
+                ("confidence_rating", "confidence_rating must be an integer between 1 and 5"),
+                ("elapsed_seconds", "elapsed_seconds must be a non-negative integer"),
+            )
+            for value in (1.5, 1.0, float("nan"), float("inf"), float("-inf"), True, False, "1")
+        ],
     ],
 )
 def test_create_attempt_rejects_invalid_metadata_without_poisoning_session(
-    db_session: Session, field: str, value: int | str, message: str
+    db_session: Session, field: str, value: object, message: str
 ) -> None:
     """Direct repository callers get a domain error before any persistence."""
     payload: dict[str, Any] = dict(_attempt_payload())
