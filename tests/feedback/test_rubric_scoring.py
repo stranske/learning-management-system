@@ -296,6 +296,11 @@ def test_rubric_scoring_validates_thresholds_with_other_threshold_defaulted(
         (1.0, 1.0, (2, 3), None),
         (1.0, 1.0, (1, 1), "remediation"),
         (1.0, 0.0, (1, 1), "review"),
+        # Values immediately inside the unit interval remain valid thresholds.
+        (math.nextafter(0.0, 1.0), 0.0, (0, 0), "review"),
+        (1.0, math.nextafter(0.0, 1.0), (0, 0), "remediation"),
+        (math.nextafter(1.0, 0.0), 0.5, (2, 3), None),
+        (1.0, math.nextafter(1.0, 0.0), (2, 3), None),
         # Equal interior thresholds have no review-only interval.
         (0.4, 0.4, (1, 0), "remediation"),
         (0.4, 0.4, (1, 1), None),
