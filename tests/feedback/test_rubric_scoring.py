@@ -254,13 +254,13 @@ def test_invalid_thresholds_are_rejected_before_database_access(
     ("thresholds", "message"),
     [
         (
-            {"feedback_threshold": float("nan")},
-            "feedback_threshold must be a finite number between 0.0 and 1.0",
-        ),
-        (
-            {"remediation_threshold": float("nan")},
-            "remediation_threshold must be a finite number between 0.0 and 1.0",
-        ),
+            {threshold: value},
+            f"{threshold} must be a finite number between 0.0 and 1.0",
+        )
+        for threshold in ["feedback_threshold", "remediation_threshold"]
+        for value in [math.nan, math.inf, -math.inf, -0.1, 1.1]
+    ]
+    + [
         ({"feedback_threshold": 0.4}, "remediation_threshold cannot exceed feedback_threshold"),
         ({"remediation_threshold": 0.9}, "remediation_threshold cannot exceed feedback_threshold"),
     ],
