@@ -138,6 +138,9 @@ def _source_kwargs(**changes: Any) -> dict[str, Any]:
         ("source_type", "invalid", SOURCE_TYPES),
         ("source_visibility", "hidden", SOURCE_VISIBILITIES),
         ("multi_source_role", "invalid", MULTI_SOURCE_ROLES),
+        ("source_type", "", SOURCE_TYPES),
+        ("source_visibility", "", SOURCE_VISIBILITIES),
+        ("multi_source_role", "", MULTI_SOURCE_ROLES),
         ("source_type", None, SOURCE_TYPES),
         ("source_visibility", None, SOURCE_VISIBILITIES),
     ],
@@ -170,6 +173,10 @@ def test_create_rejects_source_enums_before_persistence(
         ("source_visibility", "hidden", SOURCE_VISIBILITIES),
         ("drift_status", "unknown", DRIFT_STATUSES),
         ("multi_source_role", "invalid", MULTI_SOURCE_ROLES),
+        ("source_type", "", SOURCE_TYPES),
+        ("source_visibility", "", SOURCE_VISIBILITIES),
+        ("drift_status", "", DRIFT_STATUSES),
+        ("multi_source_role", "", MULTI_SOURCE_ROLES),
     ],
 )
 def test_update_rejects_source_enums_before_any_mutation(
