@@ -295,6 +295,10 @@ def test_rubric_scoring_validates_thresholds_with_other_threshold_defaulted(
         (0.8, 0.4, (2, 2), None),
         (0.8, 0.4, (1, 1), "review"),
         (0.8, 0.4, (1, 0), "remediation"),
+        (math.nextafter(0.8, 0.0), 0.4, (2, 2), None),
+        (math.nextafter(0.8, 1.0), 0.4, (2, 2), "review"),
+        (0.8, math.nextafter(0.4, 0.0), (1, 1), "review"),
+        (0.8, math.nextafter(0.4, 1.0), (1, 1), "remediation"),
     ],
 )
 def test_rubric_scoring_accepts_threshold_boundaries(
@@ -331,6 +335,16 @@ def test_rubric_scoring_accepts_threshold_boundaries(
         feedback = get_feedback_record(db_session, score.feedback_record_id)
         assert feedback is not None
         assert feedback.feedback_level == expected_level
+        actions = list_feedback_actions(
+            db_session,
+            learner_id="learner-1",
+            feedback_record_id=feedback.id,
+        )
+        assert len(actions) == 1
+        assert actions[0].action_type == (
+            "prerequisite-remediation" if expected_level == "remediation" else "revision"
+        )
+        assert feedback.next_action_ids == [actions[0].id]
 
 
 def test_low_rubric_score_creates_revision_or_remediation_feedback_action(
