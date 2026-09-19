@@ -24,6 +24,7 @@ from lms.maintenance.anchors import (
 from lms.maintenance.grading import IdeaGrader, KeyPoint, grade_idea_answer
 from lms.maintenance.models import GradeDispute, MaintenanceItem
 from lms.scheduling.card_state import advance_card_state, get_card_state, get_or_seed_card_state
+from lms.scheduling.fsrs_engine import RETENTION_TIERS
 from lms.scheduling.models import SUBJECT_MAINTENANCE_ITEM, ReviewCardState
 
 # A graded answer maps onto the FSRS rating vocabulary. The thresholds are
@@ -298,6 +299,10 @@ def set_item_tier(
     so changing one without the other would leave the item advertising a
     tier it does not actually use.
     """
+    if retention_tier not in RETENTION_TIERS:
+        raise ValueError(
+            f"unknown retention_tier {retention_tier!r}; expected one of {RETENTION_TIERS}"
+        )
     item.retention_tier = retention_tier
     card = get_card_state(
         session,
