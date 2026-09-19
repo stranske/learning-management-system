@@ -115,9 +115,16 @@ def items_affordable_per_day(
     return settings.daily_item_cap, "item cap"
 
 
+def _validate_count(count: int, message: str) -> None:
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ValueError(message)
+
+
 def _weighted(values: dict[str, float], tier_counts: dict[str, int] | None) -> float:
     """Weight per-tier constants by how many items actually use each tier."""
     counts = {tier: (tier_counts or {}).get(tier, 0) for tier in RETENTION_TIERS}
+    for count in counts.values():
+        _validate_count(count, "tier counts must be non-negative integers")
     total = sum(counts.values())
     if total == 0:
         return values[WARM]
@@ -142,6 +149,7 @@ def estimate_capacity(
     anchor_share: float = 0.5,
 ) -> CapacityEstimate:
     """Estimate capacity, validating anchor_share via items_affordable_per_day."""
+    _validate_count(active_items, "active_items must be a non-negative integer")
     per_day, limited_by = items_affordable_per_day(settings, anchor_share=anchor_share)
     interval = mean_interval_days(tier_counts)
     capacity = max(1, int(per_day * interval))
