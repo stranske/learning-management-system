@@ -210,6 +210,39 @@ def test_update_rejects_source_enums_before_any_mutation(
 
 
 @pytest.mark.parametrize(
+    "invalid_field",
+    ["source_type", "source_visibility", "drift_status", "multi_source_role"],
+)
+def test_update_rejects_mixed_enum_changes_atomically(
+    db_session: Session, invalid_field: str
+) -> None:
+    """A rejected batch must not persist even its otherwise valid enum changes."""
+    reference = create_source_reference(db_session, **_source_kwargs(multi_source_role="primary"))
+    db_session.commit()
+    changes = {
+        "source_type": "url",
+        "source_visibility": "local-only",
+        "drift_status": "stale",
+        "multi_source_role": "supporting",
+    }
+    original = {field: getattr(reference, field) for field in changes}
+    # Put the invalid field last to catch validation interleaved with assignment.
+    changes.pop(invalid_field)
+    changes[invalid_field] = "invalid"
+
+    with pytest.raises(ValueError, match=invalid_field):
+        update_source_reference(db_session, reference, actor_id="user:alice", **changes)
+
+    assert db_session.is_active
+    assert not db_session.dirty
+    assert {field: getattr(reference, field) for field in changes} == original
+    db_session.commit()
+    db_session.refresh(reference)
+    assert {field: getattr(reference, field) for field in changes} == original
+    assert db_session.query(AuditLog).filter_by(entity_id=reference.id).count() == 1
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     [("source_type", value) for value in SOURCE_TYPES]
     + [("source_visibility", value) for value in SOURCE_VISIBILITIES]
