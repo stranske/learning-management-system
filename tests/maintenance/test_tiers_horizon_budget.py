@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -37,6 +38,7 @@ from lms.maintenance.budget import (
     describe,
     estimate_capacity,
     items_affordable_per_day,
+    mean_first_month_reviews,
     mean_interval_days,
 )
 from lms.maintenance.models import MaintenanceItem
@@ -458,6 +460,25 @@ def test_capacity_estimate_rejects_negative_tier_counts() -> None:
     """Negative tier distributions must not corrupt weighted interval math."""
     with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
         estimate_capacity(BudgetSettings(), active_items=10, tier_counts={"hot": -2})
+
+
+@pytest.mark.parametrize("count", [1.5, math.nan, math.inf, -math.inf, "2", None, True])
+def test_capacity_estimate_rejects_non_integer_active_items(count: object) -> None:
+    """Runtime callers must not receive fractional or non-finite collection estimates."""
+    with pytest.raises(ValueError, match="^active_items must be a non-negative integer$"):
+        estimate_capacity(BudgetSettings(), active_items=cast(int, count))
+
+
+@pytest.mark.parametrize("count", [1.5, math.nan, math.inf, -math.inf, "2", None, True])
+@pytest.mark.parametrize("tier", ["hot", "warm", "cold"])
+def test_capacity_estimate_rejects_non_integer_tier_counts(count: object, tier: str) -> None:
+    """Every public weighted calculation rejects malformed counts in every known tier."""
+    counts = {tier: cast(int, count)}
+    for calculation in (mean_interval_days, mean_first_month_reviews):
+        with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
+            calculation(counts)
+    with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
+        estimate_capacity(BudgetSettings(), active_items=10, tier_counts=counts)
 
 
 @pytest.mark.parametrize(
