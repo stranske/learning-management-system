@@ -15,7 +15,13 @@ from sqlalchemy.orm import Session
 
 from lms.audit.repository import record_audit_event
 from lms.prompts.models import prompt_source_references
-from lms.sources.models import SourceReference
+from lms.sources.models import (
+    DRIFT_STATUSES,
+    MULTI_SOURCE_ROLES,
+    SOURCE_TYPES,
+    SOURCE_VISIBILITIES,
+    SourceReference,
+)
 
 DEFAULT_HASH_ALGORITHM = "sha256"
 _LINE_RANGE_PATTERN = re.compile(r"^(?:L|lines?:)?(?P<start>\d+)(?:[-:](?:L)?(?P<end>\d+))?$")
@@ -76,6 +82,23 @@ def compute_source_hash(
     return hasher.hexdigest()
 
 
+def _validate_source_enums(changes: Mapping[str, Any]) -> None:
+    """Validate all supplied enums before mutating a reference or its audit log."""
+    for field, allowed in (
+        ("source_type", SOURCE_TYPES),
+        ("source_visibility", SOURCE_VISIBILITIES),
+        ("drift_status", DRIFT_STATUSES),
+        ("multi_source_role", MULTI_SOURCE_ROLES),
+    ):
+        if field not in changes:
+            continue
+        value = changes[field]
+        if field == "multi_source_role" and value is None:
+            continue
+        if value not in allowed:
+            raise ValueError(f"unknown {field} {value!r}; expected one of {allowed}")
+
+
 def create_source_reference(
     session: Session,
     *,
@@ -91,6 +114,13 @@ def create_source_reference(
     source_subsystem: str = "api",
 ) -> SourceReference:
     """Create a source reference and record the authoring audit event."""
+    _validate_source_enums(
+        {
+            "source_type": source_type,
+            "source_visibility": source_visibility,
+            "multi_source_role": multi_source_role,
+        }
+    )
     resolved_hash = content_hash or compute_source_hash_for_reference(
         source_type=source_type,
         stable_locator=stable_locator,
@@ -155,6 +185,8 @@ def update_source_reference(
     **changes: Any,
 ) -> SourceReference:
     """Update mutable source-reference fields and record one audit event."""
+    # None is an existing update no-op; validate only values that will be assigned.
+    _validate_source_enums({field: value for field, value in changes.items() if value is not None})
     before = _reference_summary(reference)
     for field, value in changes.items():
         if value is not None:
