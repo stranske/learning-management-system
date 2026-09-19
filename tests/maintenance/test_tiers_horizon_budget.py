@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -201,6 +201,35 @@ def test_invalid_tier_leaves_item_card_and_session_unchanged(
                 )
                 is None
             )
+
+
+@pytest.mark.parametrize("autoflush", [False, True])
+def test_invalid_tier_does_not_reload_an_expired_item(
+    env: tuple[TestClient, sessionmaker[Session], str],
+    autoflush: bool,
+) -> None:
+    """Reject input before expired attributes can start a new database transaction."""
+    _client, factory, _learner_id = env
+    item_id = _any_item(factory).id
+    with factory(autoflush=autoflush, expire_on_commit=True) as session:
+        item = session.get(MaintenanceItem, item_id)
+        assert item is not None
+        session.commit()
+        expired_attributes = set(inspect(item).expired_attributes)
+        assert expired_attributes
+        assert not session.in_transaction()
+
+        with pytest.raises(ValueError) as error:
+            set_item_tier(session, item=item, retention_tier="ultra-hot")
+
+        assert str(error.value) == (
+            "unknown retention_tier 'ultra-hot'; expected one of ('hot', 'warm', 'cold')"
+        )
+        assert not session.in_transaction()
+        assert inspect(item).expired_attributes == expired_attributes
+        assert not session.dirty
+        assert not session.new
+        assert not session.deleted
 
 
 @pytest.mark.parametrize("autoflush", [False, True])
