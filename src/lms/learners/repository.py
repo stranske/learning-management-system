@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -318,6 +320,8 @@ def goal_progress_for_learner(
     counts target nodes whose current estimate reaches ``mastery_threshold``.
     ``progress`` is the mastered/target ratio (0.0 when the goal has no targets).
     """
+    if not math.isfinite(mastery_threshold) or not 0.0 <= mastery_threshold <= 1.0:
+        raise ValueError("mastery_threshold must be a finite float between 0.0 and 1.0 (inclusive)")
     goal = get_learning_goal(session, learner_id=learner_id, goal_id=goal_id)
     if goal is None:
         raise ValueError("learning goal not found for this learner")
