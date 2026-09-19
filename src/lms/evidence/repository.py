@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from lms.evidence.models import Attempt, EvidenceRecord
+from lms.evidence.models import SUPPORT_LEVELS, Attempt, EvidenceRecord
 from lms.evidence.scoring import resolved_normalized_score
 from lms.learners.models import Learner
 
@@ -63,7 +63,16 @@ def create_attempt(
     llm_session_id: str | None = None,
     evidence: dict[str, Any] | None = None,
 ) -> Attempt:
-    """Persist a learner attempt with structured feedback."""
+    """Validate attempt metadata before persisting structured feedback."""
+    if confidence_rating is not None and not 1 <= confidence_rating <= 5:
+        raise ValueError("confidence_rating must be between 1 and 5")
+    if support_level not in SUPPORT_LEVELS:
+        raise ValueError(
+            f"unknown support_level {support_level!r}; expected one of {SUPPORT_LEVELS}"
+        )
+    if elapsed_seconds is not None and elapsed_seconds < 0:
+        raise ValueError("elapsed_seconds must be non-negative")
+
     attempt = Attempt(
         learner_id=learner_id,
         prompt_id=prompt_id,
