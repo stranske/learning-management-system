@@ -145,7 +145,11 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
         ]
     ],
 )
-@pytest.mark.parametrize("points", [(0, 0), (2, 3)], ids=["zero-credit", "full-credit"])
+@pytest.mark.parametrize(
+    "points",
+    [(0, 0), (1, 1), (2, 3)],
+    ids=["zero-credit", "partial-credit", "full-credit"],
+)
 def test_rubric_scoring_rejects_invalid_thresholds_without_writes(
     db_session: Session,
     feedback_threshold: float,
