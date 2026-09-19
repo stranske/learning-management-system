@@ -448,6 +448,18 @@ def test_capacity_estimate_rejects_non_finite_anchor_share(anchor_share: float) 
         estimate_capacity(BudgetSettings(), active_items=0, anchor_share=anchor_share)
 
 
+def test_capacity_estimate_rejects_negative_active_items() -> None:
+    """Negative collection sizes must not corrupt utilisation or headroom."""
+    with pytest.raises(ValueError, match="^active_items must be a non-negative integer$"):
+        estimate_capacity(BudgetSettings(), active_items=-10)
+
+
+def test_capacity_estimate_rejects_negative_tier_counts() -> None:
+    """Negative tier distributions must not corrupt weighted interval math."""
+    with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
+        estimate_capacity(BudgetSettings(), active_items=10, tier_counts={"hot": -2})
+
+
 @pytest.mark.parametrize(
     ("anchor_share", "expected_items"),
     [(-1.0, 13), (0.0, 13), (0.5, 18), (1.0, 30), (2.0, 30)],
