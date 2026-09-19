@@ -86,20 +86,50 @@ def goal_with_mastery(db_session: Session) -> tuple[str, str]:
         math.nextafter(1.0, math.inf),
     ],
 )
-@pytest.mark.parametrize("existing_goal", [True, False])
+@pytest.mark.parametrize("goal_state", ["populated", "fully_mastered", "missing"])
 def test_goal_progress_rejects_invalid_mastery_threshold(
     db_session: Session,
     goal_with_mastery: tuple[str, str],
     threshold: float,
-    existing_goal: bool,
+    goal_state: str,
 ) -> None:
-    """Invalid thresholds fail explicitly, even before resolving a missing goal."""
+    """Invalid thresholds fail even for fully mastered goals and missing goals."""
     learner_id, goal_id = goal_with_mastery
+    requested_goal_id = goal_id
+    if goal_state == "fully_mastered":
+        node = create_knowledge_node(
+            db_session,
+            title="Mastered concept",
+            knowledge_type="conceptual",
+            scope="personal",
+            actor_id="test-actor",
+            status="published",
+        )
+        create_evidence_record(
+            db_session,
+            learner_id=learner_id,
+            knowledge_node_id=node.id,
+            knowledge_type="conceptual",
+            normalized_score=1.0,
+        )
+        mastered_goal = create_learning_goal(
+            db_session,
+            learner_id=learner_id,
+            title="Fully mastered goal",
+            knowledge_type="conceptual",
+            target_node_ids=[node.id],
+            ownership_scope="personal",
+        )
+        db_session.commit()
+        requested_goal_id = mastered_goal.id
+    elif goal_state == "missing":
+        requested_goal_id = "missing-goal"
+
     with pytest.raises(ValueError) as error:
         goal_progress_for_learner(
             db_session,
             learner_id=learner_id,
-            goal_id=goal_id if existing_goal else "missing-goal",
+            goal_id=requested_goal_id,
             mastery_threshold=threshold,
         )
     assert str(error.value) == (
