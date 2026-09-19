@@ -86,17 +86,17 @@ def goal_with_mastery(db_session: Session) -> tuple[str, str]:
         math.nextafter(1.0, math.inf),
     ],
 )
-@pytest.mark.parametrize("goal_state", ["populated", "fully_mastered", "missing"])
+@pytest.mark.parametrize("goal_state", ["populated", "fully_mastered", "no_evidence", "missing"])
 def test_goal_progress_rejects_invalid_mastery_threshold(
     db_session: Session,
     goal_with_mastery: tuple[str, str],
     threshold: float,
     goal_state: str,
 ) -> None:
-    """Invalid thresholds fail even for fully mastered goals and missing goals."""
+    """Invalid thresholds fail regardless of goal existence or mastery evidence."""
     learner_id, goal_id = goal_with_mastery
     requested_goal_id = goal_id
-    if goal_state == "fully_mastered":
+    if goal_state in {"fully_mastered", "no_evidence"}:
         node = create_knowledge_node(
             db_session,
             title="Mastered concept",
@@ -105,23 +105,24 @@ def test_goal_progress_rejects_invalid_mastery_threshold(
             actor_id="test-actor",
             status="published",
         )
-        create_evidence_record(
+        if goal_state == "fully_mastered":
+            create_evidence_record(
+                db_session,
+                learner_id=learner_id,
+                knowledge_node_id=node.id,
+                knowledge_type="conceptual",
+                normalized_score=1.0,
+            )
+        separate_goal = create_learning_goal(
             db_session,
             learner_id=learner_id,
-            knowledge_node_id=node.id,
-            knowledge_type="conceptual",
-            normalized_score=1.0,
-        )
-        mastered_goal = create_learning_goal(
-            db_session,
-            learner_id=learner_id,
-            title="Fully mastered goal",
+            title=f"Goal with {goal_state}",
             knowledge_type="conceptual",
             target_node_ids=[node.id],
             ownership_scope="personal",
         )
         db_session.commit()
-        requested_goal_id = mastered_goal.id
+        requested_goal_id = separate_goal.id
     elif goal_state == "missing":
         requested_goal_id = "missing-goal"
 
