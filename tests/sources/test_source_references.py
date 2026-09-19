@@ -4,17 +4,25 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from lms.audit.models import AuditLog
-from lms.sources.models import SourceReference
+from lms.sources.models import (
+    DRIFT_STATUSES,
+    MULTI_SOURCE_ROLES,
+    SOURCE_TYPES,
+    SOURCE_VISIBILITIES,
+    SourceReference,
+)
 from lms.sources.repository import (
     _select_passage,
     compute_source_hash,
     create_source_reference,
+    update_source_reference,
 )
 
 
@@ -112,3 +120,180 @@ def test_source_references_table_is_created_by_base_metadata(db_session: Session
     assert bind is not None
     inspector = inspect(bind)
     assert "source_references" in inspector.get_table_names()
+
+
+def _source_kwargs(**changes: Any) -> dict[str, Any]:
+    return {
+        "source_type": "internal-note",
+        "stable_locator": "note:enum-test",
+        "actor_id": "user:alice",
+        "content": "source text",
+        **changes,
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "allowed"),
+    [
+        ("source_type", "invalid", SOURCE_TYPES),
+        ("source_visibility", "hidden", SOURCE_VISIBILITIES),
+        ("multi_source_role", "invalid", MULTI_SOURCE_ROLES),
+        ("source_type", "public", SOURCE_TYPES),
+        ("source_visibility", "internal-note", SOURCE_VISIBILITIES),
+        ("multi_source_role", "current", MULTI_SOURCE_ROLES),
+        ("source_type", "", SOURCE_TYPES),
+        ("source_visibility", "", SOURCE_VISIBILITIES),
+        ("multi_source_role", "", MULTI_SOURCE_ROLES),
+        ("source_type", None, SOURCE_TYPES),
+        ("source_visibility", None, SOURCE_VISIBILITIES),
+    ],
+)
+@pytest.mark.parametrize("prehashed", [False, True])
+def test_create_rejects_source_enums_before_persistence(
+    db_session: Session, field: str, value: object, allowed: tuple[str, ...], prehashed: bool
+) -> None:
+    kwargs = _source_kwargs(**{field: value})
+    if prehashed:
+        kwargs["content_hash"] = "precomputed"
+    with pytest.raises(ValueError, match=field) as error:
+        create_source_reference(db_session, **kwargs)
+    assert repr(value) in str(error.value)
+    assert f"expected one of {allowed}" in str(error.value)
+    assert db_session.is_active
+    assert not db_session.new
+    db_session.commit()
+    assert db_session.query(SourceReference).count() == 0
+    assert db_session.query(AuditLog).count() == 0
+    create_source_reference(db_session, **_source_kwargs())
+    db_session.commit()
+    assert db_session.query(SourceReference).count() == 1
+    assert db_session.query(AuditLog).count() == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "allowed"),
+    [
+        ("source_type", "invalid", SOURCE_TYPES),
+        ("source_visibility", "hidden", SOURCE_VISIBILITIES),
+        ("drift_status", "unknown", DRIFT_STATUSES),
+        ("multi_source_role", "invalid", MULTI_SOURCE_ROLES),
+        ("source_type", "public", SOURCE_TYPES),
+        ("source_visibility", "internal-note", SOURCE_VISIBILITIES),
+        ("drift_status", "primary", DRIFT_STATUSES),
+        ("multi_source_role", "current", MULTI_SOURCE_ROLES),
+        ("source_type", "", SOURCE_TYPES),
+        ("source_visibility", "", SOURCE_VISIBILITIES),
+        ("drift_status", "", DRIFT_STATUSES),
+        ("multi_source_role", "", MULTI_SOURCE_ROLES),
+    ],
+)
+def test_update_rejects_source_enums_before_any_mutation(
+    db_session: Session, field: str, value: str, allowed: tuple[str, ...]
+) -> None:
+    reference = create_source_reference(db_session, **_source_kwargs())
+    db_session.commit()
+    old_value, old_hash = getattr(reference, field), reference.content_hash
+    with pytest.raises(ValueError, match=field) as error:
+        update_source_reference(
+            db_session,
+            reference,
+            actor_id="user:alice",
+            stable_locator="must-not-persist",
+            content="must-not-be-hashed",
+            **{field: value},
+        )
+    assert repr(value) in str(error.value)
+    assert f"expected one of {allowed}" in str(error.value)
+    assert db_session.is_active
+    assert not db_session.dirty
+    db_session.commit()
+    db_session.refresh(reference)
+    assert reference.stable_locator == "note:enum-test"
+    assert reference.content_hash == old_hash
+    assert getattr(reference, field) == old_value
+    assert db_session.query(AuditLog).count() == 1
+    update_source_reference(db_session, reference, actor_id="user:alice", drift_status="stale")
+    db_session.commit()
+    assert reference.drift_status == "stale"
+    assert db_session.query(AuditLog).count() == 2
+
+
+@pytest.mark.parametrize(
+    "invalid_field",
+    ["source_type", "source_visibility", "drift_status", "multi_source_role"],
+)
+def test_update_rejects_mixed_enum_changes_atomically(
+    db_session: Session, invalid_field: str
+) -> None:
+    """A rejected batch must not persist even its otherwise valid enum changes."""
+    reference = create_source_reference(db_session, **_source_kwargs(multi_source_role="primary"))
+    db_session.commit()
+    changes = {
+        "source_type": "url",
+        "source_visibility": "local-only",
+        "drift_status": "stale",
+        "multi_source_role": "supporting",
+    }
+    original = {field: getattr(reference, field) for field in changes}
+    # Put the invalid field last to catch validation interleaved with assignment.
+    changes.pop(invalid_field)
+    changes[invalid_field] = "invalid"
+
+    with pytest.raises(ValueError, match=invalid_field):
+        update_source_reference(db_session, reference, actor_id="user:alice", **changes)
+
+    assert db_session.is_active
+    assert not db_session.dirty
+    assert {field: getattr(reference, field) for field in changes} == original
+    db_session.commit()
+    db_session.refresh(reference)
+    assert {field: getattr(reference, field) for field in changes} == original
+    assert db_session.query(AuditLog).filter_by(entity_id=reference.id).count() == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("source_type", value) for value in SOURCE_TYPES]
+    + [("source_visibility", value) for value in SOURCE_VISIBILITIES]
+    + [("multi_source_role", value) for value in (*MULTI_SOURCE_ROLES, None)],
+)
+def test_create_accepts_each_source_enum(
+    db_session: Session, field: str, value: str | None
+) -> None:
+    reference = create_source_reference(
+        db_session, **_source_kwargs(content_hash="precomputed", **{field: value})
+    )
+    db_session.commit()
+    assert getattr(reference, field) == value
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("source_type", value) for value in SOURCE_TYPES]
+    + [("source_visibility", value) for value in SOURCE_VISIBILITIES]
+    + [("multi_source_role", value) for value in MULTI_SOURCE_ROLES]
+    + [("drift_status", value) for value in DRIFT_STATUSES],
+)
+def test_update_accepts_each_source_enum(db_session: Session, field: str, value: str) -> None:
+    reference = create_source_reference(db_session, **_source_kwargs())
+    update_source_reference(db_session, reference, actor_id="user:alice", **{field: value})
+    db_session.commit()
+    assert getattr(reference, field) == value
+
+
+def test_update_preserves_none_as_no_change(db_session: Session) -> None:
+    reference = create_source_reference(db_session, **_source_kwargs(multi_source_role="primary"))
+    update_source_reference(
+        db_session,
+        reference,
+        actor_id="user:alice",
+        source_type=None,
+        source_visibility=None,
+        drift_status=None,
+        multi_source_role=None,
+    )
+    db_session.commit()
+    assert reference.source_type == "internal-note"
+    assert reference.source_visibility == "public"
+    assert reference.drift_status == "current"
+    assert reference.multi_source_role == "primary"
