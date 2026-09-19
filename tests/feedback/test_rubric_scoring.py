@@ -206,6 +206,45 @@ def test_rubric_scoring_rejects_invalid_thresholds_without_writes(
 
 
 @pytest.mark.parametrize(
+    ("thresholds", "message"),
+    [
+        (
+            {"feedback_threshold": float("nan")},
+            "feedback_threshold must be a finite number between 0.0 and 1.0",
+        ),
+        (
+            {"remediation_threshold": float("nan")},
+            "remediation_threshold must be a finite number between 0.0 and 1.0",
+        ),
+        ({"feedback_threshold": 0.4}, "remediation_threshold cannot exceed feedback_threshold"),
+        ({"remediation_threshold": 0.9}, "remediation_threshold cannot exceed feedback_threshold"),
+    ],
+)
+def test_rubric_scoring_validates_thresholds_with_other_threshold_defaulted(
+    db_session: Session, thresholds: dict[str, float], message: str
+) -> None:
+    """Overriding one threshold must still validate against the other's default."""
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+
+    with pytest.raises(InvalidRubricScoringError) as exc_info:
+        score_attempt_with_rubric(
+            db_session,
+            rubric_id=rubric_id,
+            attempt_id=attempt_id,
+            scorer_type="human",
+            criterion_scores=[
+                {"criterion_id": criterion_ids[0], "points": 2},
+                {"criterion_id": criterion_ids[1], "points": 3},
+            ],
+            **thresholds,
+        )
+
+    assert str(exc_info.value) == message
+    assert exc_info.value.http_status == 422
+
+
+@pytest.mark.parametrize(
     ("feedback_threshold", "remediation_threshold", "points", "expected_level"),
     [
         (0.0, 0.0, (0, 0), None),
