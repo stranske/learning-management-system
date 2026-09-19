@@ -144,11 +144,13 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
         ]
     ],
 )
+@pytest.mark.parametrize("points", [(0, 0), (2, 3)], ids=["zero-credit", "full-credit"])
 def test_rubric_scoring_rejects_invalid_thresholds_without_writes(
     db_session: Session,
     feedback_threshold: float,
     remediation_threshold: float,
     message: str,
+    points: tuple[int, int],
 ) -> None:
     """Rejected thresholds leave no durable scoring side effects, even without rollback."""
     attempt_id = _attempt(db_session)
@@ -177,7 +179,10 @@ def test_rubric_scoring_rejects_invalid_thresholds_without_writes(
             rubric_id=rubric_id,
             attempt_id=attempt_id,
             scorer_type="human",
-            criterion_scores=criterion_scores,
+            criterion_scores=[
+                {"criterion_id": criterion_ids[0], "points": points[0]},
+                {"criterion_id": criterion_ids[1], "points": points[1]},
+            ],
             feedback_threshold=feedback_threshold,
             remediation_threshold=remediation_threshold,
         )
