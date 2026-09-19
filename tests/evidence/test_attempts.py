@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from lms.auth.models import User
 from lms.evidence.api import create_attempt_route
+from lms.evidence.models import SUPPORT_LEVELS, Attempt
 from lms.evidence.repository import create_attempt, get_attempt, list_evidence_records
 from lms.evidence.schemas import AttemptCreate, AttemptRead
 from lms.scheduling.fsrs_adapter import evidence_to_fsrs_rating
@@ -78,6 +79,75 @@ def test_attempt_confidence_validation() -> None:
 
     with pytest.raises(ValidationError):
         AttemptCreate.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("confidence_rating", 0, "confidence_rating must be between 1 and 5"),
+        ("confidence_rating", 6, "confidence_rating must be between 1 and 5"),
+        ("support_level", "invalid", "unknown support_level 'invalid'"),
+        ("support_level", "", "unknown support_level ''"),
+        ("elapsed_seconds", -1, "elapsed_seconds must be non-negative"),
+        ("elapsed_seconds", -5, "elapsed_seconds must be non-negative"),
+        *[
+            (field, value, message)
+            for field, message in (
+                ("confidence_rating", "confidence_rating must be an integer between 1 and 5"),
+                ("elapsed_seconds", "elapsed_seconds must be a non-negative integer"),
+            )
+            for value in (1.5, 1.0, float("nan"), float("inf"), float("-inf"), True, False, "1")
+        ],
+    ],
+)
+def test_create_attempt_rejects_invalid_metadata_without_poisoning_session(
+    db_session: Session, field: str, value: object, message: str
+) -> None:
+    """Direct repository callers get a domain error before any persistence."""
+    payload: dict[str, Any] = dict(_attempt_payload())
+    payload[field] = value
+
+    with pytest.raises(ValueError, match=message) as exc_info:
+        create_attempt(db_session, **payload)
+
+    if field == "support_level":
+        assert f"expected one of {SUPPORT_LEVELS}" in str(exc_info.value)
+    assert db_session.is_active
+    assert not db_session.new
+    assert db_session.query(Attempt).count() == 0
+
+    # No rollback is needed to submit and commit a valid attempt after rejection.
+    valid_payload: dict[str, Any] = dict(_attempt_payload())
+    created = create_attempt(db_session, **valid_payload)
+    db_session.commit()
+    assert get_attempt(db_session, created.id) is created
+    assert db_session.query(Attempt).count() == 1
+
+
+@pytest.mark.parametrize("confidence_rating", [None, 1, 5])
+@pytest.mark.parametrize("elapsed_seconds", [None, 0, 42])
+def test_create_attempt_accepts_optional_metadata_and_boundaries(
+    db_session: Session, confidence_rating: int | None, elapsed_seconds: int | None
+) -> None:
+    """Nullable metadata and inclusive domain boundaries still persist."""
+    payload: dict[str, Any] = dict(_attempt_payload())
+    payload.update(confidence_rating=confidence_rating, elapsed_seconds=elapsed_seconds)
+    created = create_attempt(db_session, **payload)
+    db_session.commit()
+    db_session.refresh(created)
+    assert created.confidence_rating == confidence_rating
+    assert created.elapsed_seconds == elapsed_seconds
+
+
+@pytest.mark.parametrize("support_level", SUPPORT_LEVELS)
+def test_create_attempt_accepts_all_support_levels(db_session: Session, support_level: str) -> None:
+    """Repository validation shares the model's complete support-level contract."""
+    payload: dict[str, Any] = dict(_attempt_payload())
+    payload["support_level"] = support_level
+    created = create_attempt(db_session, **payload)
+    db_session.commit()
+    db_session.refresh(created)
+    assert created.support_level == support_level
 
 
 def test_get_attempt_returns_recorded_feedback(db_session: Session) -> None:
