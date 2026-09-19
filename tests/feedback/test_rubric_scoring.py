@@ -292,6 +292,10 @@ def test_rubric_scoring_validates_thresholds_with_other_threshold_defaulted(
         (1.0, 1.0, (2, 3), None),
         (1.0, 1.0, (1, 1), "remediation"),
         (1.0, 0.0, (1, 1), "review"),
+        # Equal interior thresholds have no review-only interval.
+        (0.4, 0.4, (1, 0), "remediation"),
+        (0.4, 0.4, (1, 1), None),
+        (0.4, 0.4, (2, 2), None),
         (0.8, 0.4, (2, 2), None),
         (0.8, 0.4, (1, 1), "review"),
         (0.8, 0.4, (1, 0), "remediation"),
