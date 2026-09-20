@@ -111,6 +111,14 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
     [
         (value, 0.5, "feedback_threshold must be a finite number between 0.0 and 1.0")
         for value in [
+            None,
+            "0.5",
+            "not-a-number",
+            True,
+            False,
+            [],
+            {},
+            10**400,
             float("nan"),
             float("inf"),
             float("-inf"),
@@ -123,6 +131,14 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
     + [
         (0.85, value, "remediation_threshold must be a finite number between 0.0 and 1.0")
         for value in [
+            None,
+            "0.5",
+            "not-a-number",
+            True,
+            False,
+            [],
+            {},
+            10**400,
             float("nan"),
             float("inf"),
             float("-inf"),
