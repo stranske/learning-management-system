@@ -501,11 +501,12 @@ def list_misconception_patterns(
     if signature_text is not None:
         needle = signature_text.lower()
         candidates = session.scalars(
-            statement.order_by(MisconceptionPattern.created_at.desc()).limit(limit)
+            statement.order_by(MisconceptionPattern.created_at.desc(), MisconceptionPattern.id)
         )
-        return [
+        matches = (
             pattern for pattern in candidates if pattern.wrong_answer_signature.lower() in needle
-        ]
+        )
+        return list(islice(matches, limit))
     return list(
         session.scalars(
             statement.order_by(
