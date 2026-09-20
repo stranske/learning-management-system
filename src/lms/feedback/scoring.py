@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+from numbers import Real
 from typing import Any
 
 from sqlalchemy import select
@@ -82,6 +83,27 @@ def score_attempt_with_rubric(
     The caller commits on success and rolls back on failure, including any
     evidence or scheduling writes made before a scheduling error.
     """
+    if (
+        isinstance(feedback_threshold, bool)
+        or not isinstance(feedback_threshold, Real)
+        or not 0.0 <= feedback_threshold <= 1.0
+        or not math.isfinite(feedback_threshold)
+    ):
+        raise InvalidRubricScoringError(
+            "feedback_threshold must be a finite number between 0.0 and 1.0"
+        )
+    if (
+        isinstance(remediation_threshold, bool)
+        or not isinstance(remediation_threshold, Real)
+        or not 0.0 <= remediation_threshold <= 1.0
+        or not math.isfinite(remediation_threshold)
+    ):
+        raise InvalidRubricScoringError(
+            "remediation_threshold must be a finite number between 0.0 and 1.0"
+        )
+    if remediation_threshold > feedback_threshold:
+        raise InvalidRubricScoringError("remediation_threshold cannot exceed feedback_threshold")
+
     attempt = session.get(Attempt, attempt_id)
     if attempt is None:
         raise AttemptNotFoundError("referenced attempt was not found")

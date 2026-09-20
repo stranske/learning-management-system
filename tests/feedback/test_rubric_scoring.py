@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import math
+from unittest.mock import Mock
+
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_attempt, get_evidence_record
+from lms.feedback.models import FeedbackAction, FeedbackRecord, RubricScore
 from lms.feedback.repository import create_rubric, get_feedback_record, list_feedback_actions
 from lms.feedback.scoring import (
     AttemptNotFoundError,
@@ -15,6 +20,7 @@ from lms.feedback.scoring import (
     score_attempt_with_rubric,
 )
 from lms.graphs.repository import create_knowledge_node
+from lms.scheduling.models import ReviewCardState, ReviewQueueItem
 
 
 def _attempt(db_session: Session) -> str:
@@ -98,6 +104,332 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
     assert evidence.scorer_version == "rubric-v1"
     assert evidence.partial_credit_dimensions["rubric_id"] == rubric_id
     assert evidence.partial_credit_dimensions["criterion_scores"][1]["points"] == 2
+
+
+@pytest.mark.parametrize(
+    ("feedback_threshold", "remediation_threshold", "message"),
+    [
+        (value, 0.5, "feedback_threshold must be a finite number between 0.0 and 1.0")
+        for value in [
+            None,
+            "0.5",
+            "not-a-number",
+            True,
+            False,
+            [],
+            {},
+            10**400,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            -0.1,
+            1.1,
+            math.nextafter(0.0, -math.inf),
+            math.nextafter(1.0, math.inf),
+        ]
+    ]
+    + [
+        (0.85, value, "remediation_threshold must be a finite number between 0.0 and 1.0")
+        for value in [
+            None,
+            "0.5",
+            "not-a-number",
+            True,
+            False,
+            [],
+            {},
+            10**400,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            -0.1,
+            1.1,
+            math.nextafter(0.0, -math.inf),
+            math.nextafter(1.0, math.inf),
+        ]
+    ]
+    + [
+        (feedback, remediation, "remediation_threshold cannot exceed feedback_threshold")
+        for feedback, remediation in [
+            (0.4, 0.8),
+            (0.0, 0.5),
+            (0.85, 1.0),
+            # Even adjacent floats must respect threshold ordering.
+            (0.0, math.nextafter(0.0, math.inf)),
+            (0.5, math.nextafter(0.5, math.inf)),
+            (math.nextafter(1.0, 0.0), 1.0),
+        ]
+    ],
+)
+@pytest.mark.parametrize(
+    "points",
+    [(0, 0), (1, 1), (2, 3)],
+    ids=["zero-credit", "partial-credit", "full-credit"],
+)
+def test_rubric_scoring_rejects_invalid_thresholds_without_writes(
+    db_session: Session,
+    feedback_threshold: float,
+    remediation_threshold: float,
+    message: str,
+    points: tuple[int, int],
+) -> None:
+    """Rejected thresholds leave no durable scoring side effects, even without rollback."""
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+    criterion_scores = [
+        {"criterion_id": criterion_ids[0], "points": 2},
+        {"criterion_id": criterion_ids[1], "points": 3},
+    ]
+    db_session.commit()
+    tables = [
+        model.__table__
+        for model in (
+            EvidenceRecord,
+            RubricScore,
+            FeedbackRecord,
+            FeedbackAction,
+            ReviewQueueItem,
+            ReviewCardState,
+        )
+    ]
+    before = [db_session.scalar(select(func.count()).select_from(table)) for table in tables]
+
+    with pytest.raises(InvalidRubricScoringError) as exc_info:
+        score_attempt_with_rubric(
+            db_session,
+            rubric_id=rubric_id,
+            attempt_id=attempt_id,
+            scorer_type="human",
+            criterion_scores=[
+                {"criterion_id": criterion_ids[0], "points": points[0]},
+                {"criterion_id": criterion_ids[1], "points": points[1]},
+            ],
+            feedback_threshold=feedback_threshold,
+            remediation_threshold=remediation_threshold,
+        )
+    assert str(exc_info.value) == message
+    assert exc_info.value.http_status == 422
+    db_session.commit()
+    assert [
+        db_session.scalar(select(func.count()).select_from(table)) for table in tables
+    ] == before
+
+    # The same attempt can still be scored correctly in the same session.
+    score = score_attempt_with_rubric(
+        db_session,
+        rubric_id=rubric_id,
+        attempt_id=attempt_id,
+        scorer_type="human",
+        criterion_scores=criterion_scores,
+    )
+    db_session.commit()
+    assert score.normalized_score == 1.0
+    assert score.feedback_record_id is None
+    assert score.evidence_record_id is not None
+    evidence = get_evidence_record(db_session, score.evidence_record_id)
+    assert evidence is not None
+    assert evidence.correctness is True
+
+
+@pytest.mark.parametrize(
+    ("feedback_threshold", "remediation_threshold", "message"),
+    [
+        (value, 0.5, "feedback_threshold must be a finite number between 0.0 and 1.0")
+        for value in [math.nan, math.inf, -math.inf, -0.1, 1.1]
+    ]
+    + [
+        (0.85, value, "remediation_threshold must be a finite number between 0.0 and 1.0")
+        for value in [math.nan, math.inf, -math.inf, -0.1, 1.1]
+    ]
+    + [
+        (0.4, 0.8, "remediation_threshold cannot exceed feedback_threshold"),
+    ]
+    + [
+        # Report the feedback error first for every pairing of invalid values,
+        # including cases where a premature ordering check would also fail.
+        (feedback, remediation, "feedback_threshold must be a finite number between 0.0 and 1.0")
+        for feedback in [math.nan, math.inf, -math.inf, -0.1, 1.1]
+        for remediation in [math.nan, math.inf, -math.inf, -0.1, 1.1]
+    ],
+)
+def test_invalid_thresholds_are_rejected_before_database_access(
+    feedback_threshold: float, remediation_threshold: float, message: str
+) -> None:
+    """Invalid configuration must fail before a lookup can trigger ORM autoflush."""
+    session = Mock(spec=Session)
+
+    with pytest.raises(InvalidRubricScoringError) as exc_info:
+        score_attempt_with_rubric(
+            session,
+            rubric_id="unused-rubric",
+            attempt_id="unused-attempt",
+            scorer_type="human",
+            criterion_scores=[],
+            feedback_threshold=feedback_threshold,
+            remediation_threshold=remediation_threshold,
+        )
+
+    assert str(exc_info.value) == message
+    assert session.mock_calls == []
+
+
+@pytest.mark.parametrize(
+    "thresholds",
+    [
+        {"feedback_threshold": math.nan},
+        {"remediation_threshold": math.nan},
+        {"feedback_threshold": 0.4, "remediation_threshold": 0.8},
+    ],
+)
+def test_invalid_thresholds_preserve_pending_caller_edits(
+    db_session: Session, thresholds: dict[str, float]
+) -> None:
+    """Validation must not autoflush or discard unrelated edits in the transaction."""
+    from sqlalchemy import event
+
+    from lms.feedback.repository import get_rubric
+
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+    db_session.commit()
+    rubric = get_rubric(db_session, rubric_id)
+    assert rubric is not None
+    rubric.title = "Pending caller revision"
+    statements = Mock()
+    bind = db_session.get_bind()
+    event.listen(bind, "before_cursor_execute", statements)
+    try:
+        with pytest.raises(InvalidRubricScoringError):
+            score_attempt_with_rubric(
+                db_session,
+                rubric_id=rubric_id,
+                attempt_id=attempt_id,
+                scorer_type="human",
+                criterion_scores=[
+                    {"criterion_id": criterion_ids[0], "points": 2},
+                    {"criterion_id": criterion_ids[1], "points": 3},
+                ],
+                **thresholds,
+            )
+        statements.assert_not_called()
+        assert rubric in db_session.dirty
+        assert rubric.title == "Pending caller revision"
+    finally:
+        event.remove(bind, "before_cursor_execute", statements)
+
+    db_session.commit()
+    db_session.expire_all()
+    assert rubric.title == "Pending caller revision"
+
+
+@pytest.mark.parametrize(
+    ("thresholds", "message"),
+    [
+        (
+            {threshold: value},
+            f"{threshold} must be a finite number between 0.0 and 1.0",
+        )
+        for threshold in ["feedback_threshold", "remediation_threshold"]
+        for value in [math.nan, math.inf, -math.inf, -0.1, 1.1]
+    ]
+    + [
+        ({"feedback_threshold": 0.4}, "remediation_threshold cannot exceed feedback_threshold"),
+        ({"remediation_threshold": 0.9}, "remediation_threshold cannot exceed feedback_threshold"),
+    ],
+)
+def test_rubric_scoring_validates_thresholds_with_other_threshold_defaulted(
+    db_session: Session, thresholds: dict[str, float], message: str
+) -> None:
+    """Overriding one threshold must still validate against the other's default."""
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+
+    with pytest.raises(InvalidRubricScoringError) as exc_info:
+        score_attempt_with_rubric(
+            db_session,
+            rubric_id=rubric_id,
+            attempt_id=attempt_id,
+            scorer_type="human",
+            criterion_scores=[
+                {"criterion_id": criterion_ids[0], "points": 2},
+                {"criterion_id": criterion_ids[1], "points": 3},
+            ],
+            **thresholds,
+        )
+
+    assert str(exc_info.value) == message
+    assert exc_info.value.http_status == 422
+
+
+@pytest.mark.parametrize(
+    ("feedback_threshold", "remediation_threshold", "points", "expected_level"),
+    [
+        (0.0, 0.0, (0, 0), None),
+        (1.0, 1.0, (2, 3), None),
+        (1.0, 1.0, (1, 1), "remediation"),
+        (1.0, 0.0, (1, 1), "review"),
+        # Values immediately inside the unit interval remain valid thresholds.
+        (math.nextafter(0.0, 1.0), 0.0, (0, 0), "review"),
+        (1.0, math.nextafter(0.0, 1.0), (0, 0), "remediation"),
+        (math.nextafter(1.0, 0.0), 0.5, (2, 3), None),
+        (1.0, math.nextafter(1.0, 0.0), (2, 3), None),
+        # Equal interior thresholds have no review-only interval.
+        (0.4, 0.4, (1, 0), "remediation"),
+        (0.4, 0.4, (1, 1), None),
+        (0.4, 0.4, (2, 2), None),
+        (0.8, 0.4, (2, 2), None),
+        (0.8, 0.4, (1, 1), "review"),
+        (0.8, 0.4, (1, 0), "remediation"),
+        (math.nextafter(0.8, 0.0), 0.4, (2, 2), None),
+        (math.nextafter(0.8, 1.0), 0.4, (2, 2), "review"),
+        (0.8, math.nextafter(0.4, 0.0), (1, 1), "review"),
+        (0.8, math.nextafter(0.4, 1.0), (1, 1), "remediation"),
+    ],
+)
+def test_rubric_scoring_accepts_threshold_boundaries(
+    db_session: Session,
+    feedback_threshold: float,
+    remediation_threshold: float,
+    points: tuple[int, int],
+    expected_level: str | None,
+) -> None:
+    """Inclusive and equal thresholds preserve correctness and feedback boundaries."""
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+    score = score_attempt_with_rubric(
+        db_session,
+        rubric_id=rubric_id,
+        attempt_id=attempt_id,
+        scorer_type="human",
+        criterion_scores=[
+            {"criterion_id": criterion_ids[0], "points": points[0]},
+            {"criterion_id": criterion_ids[1], "points": points[1]},
+        ],
+        feedback_threshold=feedback_threshold,
+        remediation_threshold=remediation_threshold,
+    )
+    db_session.commit()
+    assert score.evidence_record_id is not None
+    evidence = get_evidence_record(db_session, score.evidence_record_id)
+    assert evidence is not None
+    assert evidence.correctness is (expected_level is None)
+    if expected_level is None:
+        assert score.feedback_record_id is None
+    else:
+        assert score.feedback_record_id is not None
+        feedback = get_feedback_record(db_session, score.feedback_record_id)
+        assert feedback is not None
+        assert feedback.feedback_level == expected_level
+        actions = list_feedback_actions(
+            db_session,
+            learner_id="learner-1",
+            feedback_record_id=feedback.id,
+        )
+        assert len(actions) == 1
+        assert actions[0].action_type == (
+            "prerequisite-remediation" if expected_level == "remediation" else "revision"
+        )
+        assert feedback.next_action_ids == [actions[0].id]
 
 
 def test_low_rubric_score_creates_revision_or_remediation_feedback_action(
