@@ -8,7 +8,7 @@ Turn notes into durable knowledge through retrieval practice, feedback, spaced r
 Author knowledge, goals and prompts → learner starts a question → answers and self-grades → receives feedback → completes scheduled review → views progress and capability plan.
 
 ## Core functions
-| id | a <user> can … and sees … | entry point | probe (how to exercise it; vary these determinants) | status 2026-09-20 |
+| id | a user can … and sees … | entry point | probe (how to exercise it; vary these determinants) | status 2026-09-20 |
 |---|---|---|---|---|
 | CF1 | an author can build knowledge, goals and published prompts and sees reachable practice items | author pages and knowledge/goal/prompt APIs | create distinct nodes, goals and prompts; publish and read author pages | PARTIAL |
 | CF2 | a learner can work a lesson and sees a persisted scored attempt and feedback | `/learn`, attempts UI and attempt/self-grade APIs | two learners answer six prompts correct vs incorrect; submit `/learn` without prompt_id | PARTIAL |
