@@ -450,16 +450,73 @@ def test_capacity_estimate_rejects_non_finite_anchor_share(anchor_share: float) 
         estimate_capacity(BudgetSettings(), active_items=0, anchor_share=anchor_share)
 
 
-def test_capacity_estimate_rejects_negative_active_items() -> None:
-    """Negative collection sizes must not corrupt utilisation or headroom."""
-    with pytest.raises(ValueError, match="^active_items must be a non-negative integer$"):
-        estimate_capacity(BudgetSettings(), active_items=-10)
+@pytest.mark.parametrize("active_items", [-1, -10, -50])
+def test_capacity_estimate_rejects_negative_active_items(active_items: int) -> None:
+    """Reject negative sizes before doing any capacity or headroom work."""
+    with (
+        patch("lms.maintenance.budget.items_affordable_per_day") as affordable,
+        pytest.raises(ValueError) as exc_info,
+    ):
+        estimate_capacity(BudgetSettings(), active_items=active_items)
+
+    assert str(exc_info.value) == "active_items must be a non-negative integer"
+    affordable.assert_not_called()
 
 
-def test_capacity_estimate_rejects_negative_tier_counts() -> None:
+@pytest.mark.parametrize("tier", ["hot", "warm", "cold"])
+@pytest.mark.parametrize("offset", [0, 2, 5])
+def test_capacity_estimate_rejects_negative_tier_counts(tier: str, offset: int) -> None:
     """Negative tier distributions must not corrupt weighted interval math."""
+    counts = dict.fromkeys(fsrs_engine.RETENTION_TIERS, offset)
+    counts[tier] = -2
+    with pytest.raises(ValueError) as exc_info:
+        estimate_capacity(BudgetSettings(), active_items=10, tier_counts=counts)
+    assert str(exc_info.value) == "tier counts must be non-negative integers"
+
+    for calculation in (mean_interval_days, mean_first_month_reviews):
+        with pytest.raises(ValueError) as exc_info:
+            calculation(counts)
+        assert str(exc_info.value) == "tier counts must be non-negative integers"
+
+
+@pytest.mark.parametrize("tier", ["hot", "warm", "cold"])
+@pytest.mark.parametrize("active_items", [0, 10])
+def test_capacity_estimate_rejects_sparse_negative_tier_counts(
+    tier: str, active_items: int
+) -> None:
+    """Missing tiers and an empty collection must not bypass count validation."""
     with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
-        estimate_capacity(BudgetSettings(), active_items=10, tier_counts={"hot": -2})
+        estimate_capacity(BudgetSettings(), active_items=active_items, tier_counts={tier: -2})
+
+
+@pytest.mark.parametrize("counts", [None, {}, {"hot": 0, "warm": 0, "cold": 0}])
+def test_capacity_estimate_accepts_zero_counts(counts: dict[str, int] | None) -> None:
+    """An empty collection remains valid and uses the default warm-tier blend."""
+    settings = BudgetSettings()
+    estimate = estimate_capacity(settings, active_items=0, tier_counts=counts)
+
+    assert estimate == estimate_capacity(settings, active_items=0, tier_counts={"warm": 1})
+    assert estimate.utilisation == 0.0
+    assert estimate.sustainable_new_items_per_week > 0
+
+
+@pytest.mark.parametrize("count", [-1, 0.0, 1.5, math.nan, math.inf, "2", None, True, False])
+@pytest.mark.parametrize("known_counts", [{}, {"warm": 5}])
+def test_weighted_calculations_reject_invalid_unknown_tier_counts(
+    count: object, known_counts: dict[str, int]
+) -> None:
+    """Validate every supplied count before ignoring unrecognized tier names."""
+    counts = {**known_counts, "unknown": cast(int, count)}
+    for calculation in (mean_interval_days, mean_first_month_reviews):
+        with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
+            calculation(counts)
+    with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
+        estimate_capacity(BudgetSettings(), active_items=10, tier_counts=counts)
+
+
+def test_weighted_calculations_ignore_valid_unknown_tier_counts() -> None:
+    # Unknown tiers do not contribute to the weighted result when valid.
+    assert mean_interval_days({"warm": 2, "unknown": 3}) == mean_interval_days({"warm": 2})
 
 
 @pytest.mark.parametrize("count", [1.5, math.nan, math.inf, -math.inf, "2", None, True])

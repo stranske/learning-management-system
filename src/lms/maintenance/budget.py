@@ -122,9 +122,10 @@ def _validate_count(count: int, message: str) -> None:
 
 def _weighted(values: dict[str, float], tier_counts: dict[str, int] | None) -> float:
     """Weight per-tier constants by how many items actually use each tier."""
-    counts = {tier: (tier_counts or {}).get(tier, 0) for tier in RETENTION_TIERS}
-    for count in counts.values():
+    supplied_counts = tier_counts or {}
+    for count in supplied_counts.values():
         _validate_count(count, "tier counts must be non-negative integers")
+    counts = {tier: supplied_counts.get(tier, 0) for tier in RETENTION_TIERS}
     total = sum(counts.values())
     if total == 0:
         return values[WARM]
