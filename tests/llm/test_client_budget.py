@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -174,6 +175,104 @@ def test_release_refunds_reservation_and_is_idempotent() -> None:
     # A second settle (release or commit) on the same reservation is a no-op.
     tracker.release(reservation)
     tracker.commit(reservation, 999)
+    assert tracker.spent_micro_usd() == 0
+
+
+def test_daily_cap_resets_on_utc_day_boundary() -> None:
+    now = [datetime(2026, 9, 20, 23, 59, tzinfo=UTC)]
+    tracker = DailyBudgetTracker(
+        mode_caps_micro_usd={},
+        global_cap_micro_usd=100,
+        _clock=lambda: now[0],
+    )
+    tracker.reserve("practice", 100)
+    with pytest.raises(BudgetExceeded, match="2026-09-21 UTC"):
+        tracker.reserve("practice", 1)
+
+    now[0] += timedelta(days=1)
+    tracker.reserve("practice", 1)
+    assert tracker.spent_micro_usd() == 1
+    assert tracker.spent_micro_usd("practice") == 1
+
+
+def test_remaining_micro_usd_reports_drainable_headroom() -> None:
+    now = [datetime(2026, 9, 20, 12, tzinfo=UTC)]
+    tracker = DailyBudgetTracker(
+        mode_caps_micro_usd={"practice": 70},
+        global_cap_micro_usd=100,
+        _clock=lambda: now[0],
+    )
+    tracker.reserve("practice", 70)
+    assert tracker.remaining_micro_usd("practice") == 0
+    assert tracker.remaining_micro_usd() == 30
+    tracker.reserve("study-coach", 30)
+    assert tracker.remaining_micro_usd() == 0
+    assert tracker.remaining_micro_usd("practice") == 0
+
+    now[0] += timedelta(days=1)
+    assert tracker.remaining_micro_usd() == 100
+    assert tracker.remaining_micro_usd("practice") == 70
+    assert tracker.spent_micro_usd() == 0
+
+
+def test_preflight_record_and_spend_reads_each_roll_daily_spend() -> None:
+    now = [datetime(2026, 9, 20, tzinfo=UTC)]
+    tracker = DailyBudgetTracker({}, 100, _clock=lambda: now[0])
+    tracker.record("practice", 100)
+    with pytest.raises(BudgetExceeded):
+        tracker.preflight("practice", 1)
+
+    # Each operation is the first one to observe a new day. This prevents one
+    # rollover-capable method from masking a missing rollover in another.
+    now[0] += timedelta(days=1)
+    tracker.record("practice", 20)
+    assert tracker.spent_micro_usd("practice") == 20
+
+    now[0] += timedelta(days=1)
+    tracker.preflight("practice", 100)
+    tracker.record("practice", 100)
+
+    now[0] += timedelta(days=1)
+    assert tracker.spent_micro_usd("practice") == 0
+
+
+@pytest.mark.parametrize("actual_cost", [120, 500, 700])
+def test_stale_reservation_commit_does_not_change_new_day_spend(actual_cost: int) -> None:
+    now = [datetime(2026, 9, 20, tzinfo=UTC)]
+    tracker = DailyBudgetTracker({}, 1_000, _clock=lambda: now[0])
+    stale = tracker.reserve("practice", 500)
+    now[0] += timedelta(days=1)
+    tracker.reserve("practice", 200)
+
+    tracker.commit(stale, actual_cost)
+    assert stale.settled
+    assert tracker.spent_micro_usd("practice") == 200
+    assert tracker.remaining_micro_usd() == 800
+    tracker.release(stale)
+    assert tracker.spent_micro_usd() == 200
+
+
+def test_stale_reservation_release_rolls_period_without_negative_spend() -> None:
+    now = [datetime(2026, 9, 20, tzinfo=UTC)]
+    tracker = DailyBudgetTracker({}, 1_000, _clock=lambda: now[0])
+    stale = tracker.reserve("practice", 500)
+    now[0] += timedelta(days=1)
+
+    tracker.release(stale)
+    assert stale.settled
+    assert tracker.spent_micro_usd() == 0
+    tracker.reserve("practice", 200)
+    assert tracker.spent_micro_usd() == 200
+
+
+def test_stale_reservation_commit_rolls_period_before_reconciliation() -> None:
+    now = [datetime(2026, 9, 20, tzinfo=UTC)]
+    tracker = DailyBudgetTracker({}, 1_000, _clock=lambda: now[0])
+    stale = tracker.reserve("practice", 500)
+    now[0] += timedelta(days=1)
+
+    tracker.commit(stale, 120)
+    assert stale.settled
     assert tracker.spent_micro_usd() == 0
 
 
