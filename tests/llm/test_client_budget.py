@@ -216,16 +216,25 @@ def test_remaining_micro_usd_reports_drainable_headroom() -> None:
     assert tracker.spent_micro_usd() == 0
 
 
-def test_preflight_and_record_roll_daily_spend() -> None:
+def test_preflight_record_and_spend_reads_each_roll_daily_spend() -> None:
     now = [datetime(2026, 9, 20, tzinfo=UTC)]
     tracker = DailyBudgetTracker({}, 100, _clock=lambda: now[0])
     tracker.record("practice", 100)
     with pytest.raises(BudgetExceeded):
         tracker.preflight("practice", 1)
+
+    # Each operation is the first one to observe a new day. This prevents one
+    # rollover-capable method from masking a missing rollover in another.
     now[0] += timedelta(days=1)
-    tracker.preflight("practice", 100)
     tracker.record("practice", 20)
     assert tracker.spent_micro_usd("practice") == 20
+
+    now[0] += timedelta(days=1)
+    tracker.preflight("practice", 100)
+    tracker.record("practice", 100)
+
+    now[0] += timedelta(days=1)
+    assert tracker.spent_micro_usd("practice") == 0
 
 
 @pytest.mark.parametrize("actual_cost", [120, 500, 700])
