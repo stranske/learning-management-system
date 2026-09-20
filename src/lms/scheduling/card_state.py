@@ -13,6 +13,24 @@ from lms.scheduling import fsrs_engine
 from lms.scheduling.models import SUBJECT_KNOWLEDGE_NODE, ReviewCardState
 
 
+def _is_card_identity_conflict(error: IntegrityError) -> bool:
+    """Recognize only the learner/subject unique index on supported databases."""
+    original = error.orig
+    sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+    if sqlstate is not None:
+        return (
+            sqlstate == "23505"
+            and getattr(getattr(original, "diag", None), "constraint_name", None)
+            == "ux_review_card_states_learner_subject"
+        )
+    return getattr(original, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_UNIQUE" and str(
+        original
+    ) == (
+        "UNIQUE constraint failed: review_card_states.learner_id, "
+        "review_card_states.subject_type, review_card_states.subject_id"
+    )
+
+
 def get_card_state(
     session: Session,
     *,
@@ -79,11 +97,16 @@ def get_or_seed_card_state(
         review_count=prior_successes if seeded else 0,
         seeded_from_legacy_ladder=seeded,
     )
+    # begin_nested() first flushes pending work belonging to the caller. Those
+    # failures must propagate outside this insert's recovery handler.
+    savepoint = session.begin_nested()
     try:
-        with session.begin_nested():
+        with savepoint:
             session.add(state)
             session.flush()
-    except IntegrityError:
+    except IntegrityError as error:
+        if not _is_card_identity_conflict(error):
+            raise
         # A peer committed the same learner/subject pair between our SELECT and
         # our INSERT. The savepoint rollback leaves the outer transaction usable,
         # so re-query and hand back the row that won.
