@@ -5,11 +5,30 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lms.auth.models import utc_now
 from lms.scheduling import fsrs_engine
 from lms.scheduling.models import SUBJECT_KNOWLEDGE_NODE, ReviewCardState
+
+
+def _is_card_identity_conflict(error: IntegrityError) -> bool:
+    """Recognize only the learner/subject unique index on supported databases."""
+    original = error.orig
+    sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+    if sqlstate is not None:
+        return (
+            sqlstate == "23505"
+            and getattr(getattr(original, "diag", None), "constraint_name", None)
+            == "ux_review_card_states_learner_subject"
+        )
+    return getattr(original, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_UNIQUE" and str(
+        original
+    ) == (
+        "UNIQUE constraint failed: review_card_states.learner_id, "
+        "review_card_states.subject_type, review_card_states.subject_id"
+    )
 
 
 def get_card_state(
@@ -45,6 +64,12 @@ def get_or_seed_card_state(
     history (see :func:`fsrs_engine.seed_card_state_from_history`) rather than
     reset to zero, so the migration does not silently re-teach everything the
     learner already knows.
+
+    The (learner_id, subject_type, subject_id) tuple is protected by the unique
+    index ``ux_review_card_states_learner_subject``, so two callers that both
+    miss the initial SELECT race on insert; the loser catches the resulting
+    ``IntegrityError`` inside a SAVEPOINT and re-queries the winner, matching
+    :func:`lms.scheduling.repository.get_or_create_review_policy`.
     """
     existing = get_card_state(
         session, learner_id=learner_id, subject_id=subject_id, subject_type=subject_type
@@ -72,8 +97,29 @@ def get_or_seed_card_state(
         review_count=prior_successes if seeded else 0,
         seeded_from_legacy_ladder=seeded,
     )
-    session.add(state)
-    session.flush()
+    # begin_nested() first flushes pending work belonging to the caller. Those
+    # failures must propagate outside this insert's recovery handler.
+    savepoint = session.begin_nested()
+    try:
+        with savepoint:
+            session.add(state)
+            session.flush()
+    except IntegrityError as error:
+        if not _is_card_identity_conflict(error):
+            raise
+        # A peer committed the same learner/subject pair between our SELECT and
+        # our INSERT. The savepoint rollback leaves the outer transaction usable,
+        # so re-query and hand back the row that won.
+        winner = get_card_state(
+            session, learner_id=learner_id, subject_id=subject_id, subject_type=subject_type
+        )
+        if winner is None:
+            # Not the uniqueness race - a genuine constraint violation that must
+            # not be masked as a missing row.
+            raise
+        if retention_tier is not None and winner.retention_tier != retention_tier:
+            winner.retention_tier = retention_tier
+        return winner
     return state
 
 
