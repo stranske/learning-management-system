@@ -491,14 +491,21 @@ def test_capacity_estimate_accepts_zero_counts(counts: dict[str, int] | None) ->
     assert estimate.sustainable_new_items_per_week > 0
 
 
-def test_weighted_calculations_reject_invalid_unknown_tier_counts() -> None:
+@pytest.mark.parametrize("count", [-1, 0.0, 1.5, math.nan, math.inf, "2", None, True, False])
+@pytest.mark.parametrize("known_counts", [{}, {"warm": 5}])
+def test_weighted_calculations_reject_invalid_unknown_tier_counts(
+    count: object, known_counts: dict[str, int]
+) -> None:
     """Validate every supplied count before ignoring unrecognized tier names."""
+    counts = {**known_counts, "unknown": cast(int, count)}
     for calculation in (mean_interval_days, mean_first_month_reviews):
         with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
-            calculation({"unknown": -1})
+            calculation(counts)
     with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
-        estimate_capacity(BudgetSettings(), active_items=10, tier_counts={"unknown": -1})
+        estimate_capacity(BudgetSettings(), active_items=10, tier_counts=counts)
 
+
+def test_weighted_calculations_ignore_valid_unknown_tier_counts() -> None:
     # Unknown tiers do not contribute to the weighted result when valid.
     assert mean_interval_days({"warm": 2, "unknown": 3}) == mean_interval_days({"warm": 2})
 
