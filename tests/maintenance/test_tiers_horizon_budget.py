@@ -462,6 +462,18 @@ def test_capacity_estimate_rejects_negative_tier_counts() -> None:
         estimate_capacity(BudgetSettings(), active_items=10, tier_counts={"hot": -2})
 
 
+def test_weighted_calculations_reject_invalid_unknown_tier_counts() -> None:
+    """Validate every supplied count before ignoring unrecognized tier names."""
+    for calculation in (mean_interval_days, mean_first_month_reviews):
+        with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
+            calculation({"unknown": -1})
+    with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
+        estimate_capacity(BudgetSettings(), active_items=10, tier_counts={"unknown": -1})
+
+    # Unknown tiers do not contribute to the weighted result when valid.
+    assert mean_interval_days({"warm": 2, "unknown": 3}) == mean_interval_days({"warm": 2})
+
+
 @pytest.mark.parametrize("count", [1.5, math.nan, math.inf, -math.inf, "2", None, True])
 def test_capacity_estimate_rejects_non_integer_active_items(count: object) -> None:
     """Runtime callers must not receive fractional or non-finite collection estimates."""
