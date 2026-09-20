@@ -452,9 +452,14 @@ def test_capacity_estimate_rejects_non_finite_anchor_share(anchor_share: float) 
 
 @pytest.mark.parametrize("active_items", [-1, -10, -50])
 def test_capacity_estimate_rejects_negative_active_items(active_items: int) -> None:
-    """Negative collection sizes must not corrupt utilisation or headroom."""
-    with pytest.raises(ValueError, match="^active_items must be a non-negative integer$"):
+    """Reject negative sizes before doing any capacity or headroom work."""
+    with (
+        patch("lms.maintenance.budget.items_affordable_per_day") as affordable,
+        pytest.raises(ValueError, match="^active_items must be a non-negative integer$"),
+    ):
         estimate_capacity(BudgetSettings(), active_items=active_items)
+
+    affordable.assert_not_called()
 
 
 @pytest.mark.parametrize("tier", ["hot", "warm", "cold"])
