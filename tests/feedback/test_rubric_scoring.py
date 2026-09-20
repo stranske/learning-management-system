@@ -258,6 +258,55 @@ def test_invalid_thresholds_are_rejected_before_database_access(
 
 
 @pytest.mark.parametrize(
+    "thresholds",
+    [
+        {"feedback_threshold": math.nan},
+        {"remediation_threshold": math.nan},
+        {"feedback_threshold": 0.4, "remediation_threshold": 0.8},
+    ],
+)
+def test_invalid_thresholds_preserve_pending_caller_edits(
+    db_session: Session, thresholds: dict[str, float]
+) -> None:
+    """Validation must not autoflush or discard unrelated edits in the transaction."""
+    from sqlalchemy import event
+
+    from lms.feedback.repository import get_rubric
+
+    attempt_id = _attempt(db_session)
+    rubric_id, criterion_ids = _rubric(db_session)
+    db_session.commit()
+    rubric = get_rubric(db_session, rubric_id)
+    assert rubric is not None
+    rubric.title = "Pending caller revision"
+    statements = Mock()
+    bind = db_session.get_bind()
+    event.listen(bind, "before_cursor_execute", statements)
+    try:
+        with pytest.raises(InvalidRubricScoringError):
+            score_attempt_with_rubric(
+                db_session,
+                rubric_id=rubric_id,
+                attempt_id=attempt_id,
+                scorer_type="human",
+                criterion_scores=[
+                    {"criterion_id": criterion_ids[0], "points": 2},
+                    {"criterion_id": criterion_ids[1], "points": 3},
+                ],
+                **thresholds,
+            )
+        statements.assert_not_called()
+        assert rubric in db_session.dirty
+        assert rubric.title == "Pending caller revision"
+    finally:
+        event.remove(bind, "before_cursor_execute", statements)
+
+    db_session.commit()
+    db_session.expire_all()
+    assert rubric.title == "Pending caller revision"
+
+
+@pytest.mark.parametrize(
     ("thresholds", "message"),
     [
         (
