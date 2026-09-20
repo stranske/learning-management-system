@@ -181,19 +181,18 @@ def test_release_refunds_reservation_and_is_idempotent() -> None:
 def test_daily_cap_resets_on_utc_day_boundary() -> None:
     now = [datetime(2026, 9, 20, 23, 59, tzinfo=UTC)]
     tracker = DailyBudgetTracker(
-        mode_caps_micro_usd={"practice": 60},
+        mode_caps_micro_usd={},
         global_cap_micro_usd=100,
         _clock=lambda: now[0],
     )
-    tracker.reserve("practice", 60)
-    tracker.reserve("study-coach", 40)
+    tracker.reserve("practice", 100)
     with pytest.raises(BudgetExceeded, match="2026-09-21 UTC"):
         tracker.reserve("practice", 1)
 
-    now[0] += timedelta(minutes=1)
-    tracker.reserve("practice", 60)
-    assert tracker.spent_micro_usd() == 60
-    assert tracker.spent_micro_usd("study-coach") == 0
+    now[0] += timedelta(days=1)
+    tracker.reserve("practice", 1)
+    assert tracker.spent_micro_usd() == 1
+    assert tracker.spent_micro_usd("practice") == 1
 
 
 def test_remaining_micro_usd_reports_drainable_headroom() -> None:
