@@ -8,10 +8,15 @@ before a call is issued, not in cross-process spend reconciliation.
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 
 from lms.llm.exceptions import BudgetExceeded
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 @dataclass
@@ -28,6 +33,7 @@ class BudgetReservation:
     mode: str
     projected_cost_micro_usd: int
     settled: bool = False
+    period_generation: int = 0
 
 
 @dataclass
@@ -47,6 +53,23 @@ class DailyBudgetTracker:
     _mode_spend: dict[str, int] = field(default_factory=dict)
     _global_spend: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _clock: Callable[[], datetime] = field(default=_utc_now, repr=False)
+    _period_start: date = field(init=False)
+    _period_generation: int = field(default=0, init=False)
+
+    def __post_init__(self) -> None:
+        self._period_start = self._utc_today()
+
+    def _utc_today(self) -> date:
+        return self._clock().astimezone(UTC).date()
+
+    def _roll_period_locked(self, today: date) -> None:
+        """Drain the previous UTC day's spend before a read or write."""
+        if today > self._period_start:
+            self._global_spend = 0
+            self._mode_spend.clear()
+            self._period_start = today
+            self._period_generation += 1
 
     def _check_caps_locked(self, mode: str, projected_cost_micro_usd: int) -> None:
         """Raise :class:`BudgetExceeded` if the projected cost breaches a cap.
@@ -59,7 +82,8 @@ class DailyBudgetTracker:
             raise BudgetExceeded(
                 f"global daily cap {self.global_cap_micro_usd} micro-USD "
                 f"would be exceeded by {projected_cost_micro_usd} micro-USD "
-                f"call (already spent {self._global_spend})"
+                f"call (already spent {self._global_spend}); "
+                f"resets {(self._period_start + timedelta(days=1)).isoformat()} UTC"
             )
 
         mode_cap = self.mode_caps_micro_usd.get(mode)
@@ -70,7 +94,8 @@ class DailyBudgetTracker:
             raise BudgetExceeded(
                 f"mode '{mode}' daily cap {mode_cap} micro-USD would be "
                 f"exceeded by {projected_cost_micro_usd} micro-USD call "
-                f"(already spent {self._mode_spend.get(mode, 0)})"
+                f"(already spent {self._mode_spend.get(mode, 0)}); "
+                f"resets {(self._period_start + timedelta(days=1)).isoformat()} UTC"
             )
 
     def _add_spend_locked(self, mode: str, delta_micro_usd: int) -> None:
@@ -90,27 +115,36 @@ class DailyBudgetTracker:
         if projected_cost_micro_usd < 0:
             raise ValueError("projected_cost_micro_usd must be non-negative")
         with self._lock:
+            self._roll_period_locked(self._utc_today())
             self._check_caps_locked(mode, projected_cost_micro_usd)
             self._add_spend_locked(mode, projected_cost_micro_usd)
-        return BudgetReservation(mode=mode, projected_cost_micro_usd=projected_cost_micro_usd)
+            return BudgetReservation(
+                mode=mode,
+                projected_cost_micro_usd=projected_cost_micro_usd,
+                period_generation=self._period_generation,
+            )
 
     def commit(self, reservation: BudgetReservation, actual_cost_micro_usd: int) -> None:
         """Reconcile a reservation to the call's actual cost."""
         if actual_cost_micro_usd < 0:
             raise ValueError("actual_cost_micro_usd must be non-negative")
         with self._lock:
+            self._roll_period_locked(self._utc_today())
             if reservation.settled:
                 return
-            delta = actual_cost_micro_usd - reservation.projected_cost_micro_usd
-            self._add_spend_locked(reservation.mode, delta)
+            if reservation.period_generation == self._period_generation:
+                delta = actual_cost_micro_usd - reservation.projected_cost_micro_usd
+                self._add_spend_locked(reservation.mode, delta)
             reservation.settled = True
 
     def release(self, reservation: BudgetReservation) -> None:
         """Refund a reservation in full (call failed; no spend occurred)."""
         with self._lock:
+            self._roll_period_locked(self._utc_today())
             if reservation.settled:
                 return
-            self._add_spend_locked(reservation.mode, -reservation.projected_cost_micro_usd)
+            if reservation.period_generation == self._period_generation:
+                self._add_spend_locked(reservation.mode, -reservation.projected_cost_micro_usd)
             reservation.settled = True
 
     def preflight(self, mode: str, projected_cost_micro_usd: int) -> None:
@@ -123,6 +157,7 @@ class DailyBudgetTracker:
         if projected_cost_micro_usd < 0:
             raise ValueError("projected_cost_micro_usd must be non-negative")
         with self._lock:
+            self._roll_period_locked(self._utc_today())
             self._check_caps_locked(mode, projected_cost_micro_usd)
 
     def record(self, mode: str, cost_micro_usd: int) -> None:
@@ -130,10 +165,24 @@ class DailyBudgetTracker:
         if cost_micro_usd < 0:
             raise ValueError("cost_micro_usd must be non-negative")
         with self._lock:
+            self._roll_period_locked(self._utc_today())
             self._add_spend_locked(mode, cost_micro_usd)
 
     def spent_micro_usd(self, mode: str | None = None) -> int:
         with self._lock:
+            self._roll_period_locked(self._utc_today())
             if mode is None:
                 return self._global_spend
             return self._mode_spend.get(mode, 0)
+
+    def remaining_micro_usd(self, mode: str | None = None) -> int:
+        """Return current UTC day's global or tighter per-mode headroom."""
+        with self._lock:
+            self._roll_period_locked(self._utc_today())
+            remaining = self.global_cap_micro_usd - self._global_spend
+            if mode is not None and mode in self.mode_caps_micro_usd:
+                remaining = min(
+                    remaining,
+                    self.mode_caps_micro_usd[mode] - self._mode_spend.get(mode, 0),
+                )
+            return max(0, remaining)
