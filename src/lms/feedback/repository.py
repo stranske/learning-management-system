@@ -498,21 +498,15 @@ def list_misconception_patterns(
                 MisconceptionPattern.target_knowledge_node_id.is_(None),
             )
         )
+    statement = statement.order_by(MisconceptionPattern.created_at.desc(), MisconceptionPattern.id)
     if signature_text is not None:
         needle = signature_text.lower()
-        candidates = session.scalars(
-            statement.order_by(MisconceptionPattern.created_at.desc()).limit(limit)
-        )
-        return [
+        candidates = session.scalars(statement)
+        matches = (
             pattern for pattern in candidates if pattern.wrong_answer_signature.lower() in needle
-        ]
-    return list(
-        session.scalars(
-            statement.order_by(
-                MisconceptionPattern.created_at.desc(), MisconceptionPattern.id
-            ).limit(limit)
         )
-    )
+        return list(islice(matches, limit))
+    return list(session.scalars(statement.limit(limit)))
 
 
 def create_feedback_template(
