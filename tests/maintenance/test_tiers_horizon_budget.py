@@ -470,6 +470,16 @@ def test_capacity_estimate_rejects_negative_tier_counts(tier: str, offset: int) 
             calculation(counts)
 
 
+@pytest.mark.parametrize("tier", ["hot", "warm", "cold"])
+@pytest.mark.parametrize("active_items", [0, 10])
+def test_capacity_estimate_rejects_sparse_negative_tier_counts(
+    tier: str, active_items: int
+) -> None:
+    """Missing tiers and an empty collection must not bypass count validation."""
+    with pytest.raises(ValueError, match="^tier counts must be non-negative integers$"):
+        estimate_capacity(BudgetSettings(), active_items=active_items, tier_counts={tier: -2})
+
+
 @pytest.mark.parametrize("counts", [None, {}, {"hot": 0, "warm": 0, "cold": 0}])
 def test_capacity_estimate_accepts_zero_counts(counts: dict[str, int] | None) -> None:
     """An empty collection remains valid and uses the default warm-tier blend."""
