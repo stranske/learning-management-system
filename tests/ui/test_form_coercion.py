@@ -8,7 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from lms.evidence.models import Attempt
-from lms.ui.forms import FormValueError, optional_int
+from lms.feedback.models import RevisionRequest
+from lms.feedback.repository import create_feedback_record
+from lms.ui.forms import FormValueError, optional_float, optional_int
 
 ATTEMPTS_PATH = "/app/learner/attempts"
 
@@ -64,6 +66,58 @@ def test_optional_int_rejects_non_numeric() -> None:
         optional_int("abc")
     assert optional_int("") is None
     assert optional_int(None) is None
+
+
+@pytest.mark.parametrize("value", ["abc", "nan", "inf", "-inf"])
+def test_optional_float_rejects_invalid_or_non_finite_values(value: str) -> None:
+    with pytest.raises(FormValueError):
+        optional_float(value)
+
+
+def test_optional_float_treats_blank_values_as_absent() -> None:
+    assert optional_float("") is None
+    assert optional_float("   ") is None
+    assert optional_float(None) is None
+
+
+def test_non_numeric_feedback_confidence_does_not_persist_revision(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        _seed_prompt(session)
+        attempt = Attempt(
+            learner_id="learner-1",
+            prompt_id="prompt-1",
+            response_text="Initial response",
+            feedback={"goal": "Improve the response", "next_action": "Revise"},
+        )
+        session.add(attempt)
+        session.flush()
+        record = create_feedback_record(
+            session,
+            learner_id="learner-1",
+            attempt_id=attempt.id,
+            prompt_id="prompt-1",
+            goal="Revise with a clearer reason",
+            observed_evidence="The initial response was incomplete.",
+            gap="Needs a revised explanation",
+        )
+        session.commit()
+        record_id = record.id
+
+    response = client.post(
+        f"/app/learner/feedback/{record_id}/revision",
+        data={
+            "response_text": "A revision that should not be persisted.",
+            "confidence_rating": "abc",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Enter a valid whole number for numeric form fields." in response.text
+    with session_factory() as session:
+        assert session.scalars(select(RevisionRequest)).all() == []
 
 
 def _seed_prompt(session: Session) -> None:
