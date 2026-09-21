@@ -24,6 +24,7 @@ from lms.graphs.repository import (
 )
 from lms.llm.proposals import LLMProposal
 from lms.mastery.service import mastery_estimates_for_learner
+from lms.ui.forms import FormValueError, optional_float
 from lms.ui.shell import render_page
 
 router = APIRouter(tags=["graph-design-ui"])
@@ -87,6 +88,7 @@ async def create_graph_edge_route(request: Request, session: SessionDep) -> str:
     form = await _form_data(request)
     scope = _scope(form.get("ownership_scope"))
     try:
+        confidence = optional_float(form.get("confidence"))
         create_knowledge_edge(
             session,
             source_node_id=form.get("source_node_id", "").strip(),
@@ -95,7 +97,7 @@ async def create_graph_edge_route(request: Request, session: SessionDep) -> str:
             scope=scope,
             target_scope=_scope(form.get("target_scope") or scope),
             is_graph_reference=form.get("is_graph_reference") == "true",
-            confidence=_optional_float(form.get("confidence")),
+            confidence=confidence,
             status=form.get("status", "draft"),
             notes=form.get("notes") or None,
             actor_id="graph-ui",
@@ -103,6 +105,9 @@ async def create_graph_edge_route(request: Request, session: SessionDep) -> str:
         )
         session.commit()
         message = "Edge saved."
+    except FormValueError as exc:
+        session.rollback()
+        message = str(exc)
     except ValueError as exc:
         session.rollback()
         message = str(exc)
@@ -437,7 +442,3 @@ def _metric_percent(value: object) -> str:
     return f"{float(value):.0%}" if isinstance(value, int | float) else "pending"
 
 
-def _optional_float(value: str | None) -> float | None:
-    if value is None or value == "":
-        return None
-    return float(value)

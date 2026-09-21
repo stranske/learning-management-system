@@ -80,6 +80,7 @@ from lms.scheduling.service import (
 )
 from lms.sources.models import SourceReference
 from lms.sources.repository import list_source_references
+from lms.ui.forms import FormValueError, optional_float, optional_int
 from lms.ui.shell import empty_state, render_page
 
 router = APIRouter(tags=["learner-ui"])
@@ -125,6 +126,7 @@ def _learn_surface(
     session: Session,
     learner_id: str,
     prompt_id: str | None,
+    error: str | None = None,
 ) -> str:
     """Return a mobile-friendly Learn surface wired to the attempt API."""
     prompt = session.get(Prompt, prompt_id) if prompt_id is not None else None
@@ -143,6 +145,7 @@ def _learn_surface(
             <p class="eyebrow">Assigned next task</p>
             <h1>Learn</h1>
           </header>
+          {_notice(None, error)}
           <section aria-labelledby="prompt-heading">
             <h2 id="prompt-heading">Prompt</h2>
             <p class="prompt-text">{escape(prompt_body)}</p>
@@ -197,18 +200,27 @@ async def submit_learn_attempt_route(
         settings=settings,
         requested=form.get("learner_id") or None,
     )
-    payload = AttemptCreate(
-        learner_id=learner_id,
-        prompt_id=form.get("prompt_id", ""),
-        response_text=form.get("response_text", ""),
-        confidence_rating=_optional_int(form.get("confidence_rating")),
-        reference_accessed=form.get("reference_accessed") == "true",
-        feedback=StructuredFeedback(
-            goal="Record learner attempt",
-            observed_evidence=form.get("response_text", ""),
-            next_action="Review feedback and continue practice.",
-        ),
-    )
+    try:
+        confidence_rating = optional_int(form.get("confidence_rating"))
+        payload = AttemptCreate(
+            learner_id=learner_id,
+            prompt_id=form.get("prompt_id", ""),
+            response_text=form.get("response_text", ""),
+            confidence_rating=confidence_rating,
+            reference_accessed=form.get("reference_accessed") == "true",
+            feedback=StructuredFeedback(
+                goal="Record learner attempt",
+                observed_evidence=form.get("response_text", ""),
+                next_action="Review feedback and continue practice.",
+            ),
+        )
+    except FormValueError as exc:
+        return _learn_surface(
+            session=session,
+            learner_id=learner_id,
+            prompt_id=form.get("prompt_id") or None,
+            error=str(exc),
+        )
     recorded = record_attempt(session, **payload.model_dump())
     session.commit()
     attempt = recorded.attempt
@@ -706,6 +718,7 @@ async def create_author_edge_route(request: Request, session: SessionDep) -> str
     form = await _read_form(request)
     ownership_scope = form.get("ownership_scope", "personal")
     try:
+        confidence = optional_float(form.get("confidence"))
         create_knowledge_edge(
             session,
             source_node_id=form.get("source_node_id", ""),
@@ -714,12 +727,20 @@ async def create_author_edge_route(request: Request, session: SessionDep) -> str
             scope=ownership_scope,
             target_scope=form.get("target_scope") or ownership_scope,
             is_graph_reference=form.get("is_graph_reference") == "true",
-            confidence=_optional_float(form.get("confidence")),
+            confidence=confidence,
             status=form.get("status", "draft"),
             actor_id="author-ui",
             source_subsystem="author-ui",
         )
         session.commit()
+    except FormValueError as exc:
+        session.rollback()
+        return _author_knowledge_surface(
+            session=session,
+            ownership_scope=ownership_scope,
+            message=None,
+            error=str(exc),
+        )
     except ValueError as exc:
         session.rollback()
         return _author_knowledge_surface(
@@ -1415,12 +1436,6 @@ def _confidence_label(value: int | None) -> str:
     return "not recorded" if value is None else f"{value}/5"
 
 
-def _optional_int(value: str | None) -> int | None:
-    if value is None or value == "":
-        return None
-    return int(value)
-
-
 async def _read_form(request: Request) -> dict[str, str]:
     raw_form = parse_qs((await request.body()).decode(), keep_blank_values=True)
     return {key: values[-1] for key, values in raw_form.items()}
@@ -1915,12 +1930,6 @@ def _select(
 
 def _split_ids(value: str) -> list[str]:
     return [part.strip() for part in value.replace("\n", ",").split(",") if part.strip()]
-
-
-def _optional_float(value: str | None) -> float | None:
-    if value is None or value == "":
-        return None
-    return float(value)
 
 
 def _confidence_value(value: float | None) -> str:

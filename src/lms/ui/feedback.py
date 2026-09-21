@@ -37,6 +37,7 @@ from lms.feedback.repository import (
     submit_revision_request,
 )
 from lms.learners.identity import CurrentUserDep, LearnerIdDep, require_learner_ownership
+from lms.ui.forms import FormValueError, optional_int
 from lms.ui.shell import empty_state, render_page
 
 router = APIRouter(tags=["learner-feedback-ui"])
@@ -191,10 +192,13 @@ async def learner_revision_submit_route(
             session,
             revision,
             response_text=response_text,
-            confidence_rating=_optional_int(form.get("confidence_rating")),
+            confidence_rating=optional_int(form.get("confidence_rating")),
         )
         session.commit()
         session.refresh(revision)
+    except FormValueError as exc:
+        session.rollback()
+        return HTMLResponse(_feedback_detail_page(session, record, error=str(exc)), status_code=422)
     except ValueError as exc:
         session.rollback()
         return HTMLResponse(_feedback_detail_page(session, record, error=str(exc)), status_code=422)
@@ -431,12 +435,6 @@ def _open_revision_request(session: Session, record: FeedbackRecord) -> Revision
 async def _read_form(request: Request) -> dict[str, str]:
     raw_form = parse_qs((await request.body()).decode(), keep_blank_values=True)
     return {key: values[-1] for key, values in raw_form.items()}
-
-
-def _optional_int(value: str | None) -> int | None:
-    if value is None or value == "":
-        return None
-    return int(value)
 
 
 def _notice(text: str | None, class_name: str) -> str:
