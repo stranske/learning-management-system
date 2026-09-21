@@ -108,10 +108,7 @@ class LLMClient:
         self._validate_coaching_intensity(coaching_intensity)
 
         derived_provider, model = self.config.provider_and_model_for(mode)
-        # Resolution order: explicit per-call provider_name > provider embedded
-        # in the model config string (e.g. "anthropic:claude-sonnet-4-5") >
-        # config.default_provider fallback (handled inside _resolve_provider).
-        provider = self._resolve_provider(provider_name or derived_provider)
+        provider = self._resolve_provider(self._provider_name(provider_name, derived_provider))
 
         projected_cost = self._estimate_cost(provider, prompt=prompt, max_tokens=max_tokens)
         # Reserve atomically (check-and-debit in one critical section) so two
@@ -210,7 +207,7 @@ class LLMClient:
         self._validate_trace_class(gold_set_entry.trace_class)
 
         derived_provider, model = self.config.provider_and_model_for(mode)
-        provider = self._resolve_provider(provider_name or derived_provider)
+        provider = self._resolve_provider(self._provider_name(provider_name, derived_provider))
         provider_response = provider.complete(
             model=model,
             prompt=gold_set_entry.prompt,
@@ -265,6 +262,15 @@ class LLMClient:
             return self.providers[name]
         except KeyError as exc:
             raise LLMError(f"no provider adapter registered for '{name}'") from exc
+
+    def _provider_name(self, per_call: str | None, model_provider: str | None) -> str | None:
+        # An explicit per-call choice remains highest priority. The operator's
+        # fake switch must suppress live calls even for provider-qualified models.
+        if per_call is not None:
+            return per_call
+        if self.config.force_fake_provider:
+            return "fake"
+        return model_provider
 
     @staticmethod
     def _estimate_cost(provider: ProviderAdapter, *, prompt: str, max_tokens: int | None) -> int:

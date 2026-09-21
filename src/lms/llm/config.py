@@ -32,6 +32,7 @@ class LLMConfig:
     per_mode_daily_cap_micro_usd: Mapping[str, int] = field(default_factory=dict)
     default_provider: str = "fake"
     default_timeout_seconds: float = 30.0
+    force_fake_provider: bool = False
 
     def model_for(self, mode: str) -> str:
         if mode not in LLM_MODES:
@@ -119,4 +120,5 @@ def load_runtime_llm_config(
     return replace(
         load_llm_config_from_env(defaults=defaults),
         default_provider=override if override is not None else default_provider,
+        force_fake_provider=override == "fake",
     )

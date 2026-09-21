@@ -433,6 +433,29 @@ def test_explicit_provider_override_is_honored(
     response = client.complete(mode="study-coach", prompt="hello", trace_class="formative")
     assert response.session.provider == "fake"
 
+    monkeypatch.setenv("LLM_MODEL_STUDY_COACH", "anthropic:claude-haiku-4-5")
+    llm_api._default_client.cache_clear()
+    client = llm_api._default_client()
+    assert (
+        client.complete(
+            mode="study-coach", prompt="hello", trace_class="formative"
+        ).session.provider
+        == "fake"
+    )
+    assert (
+        client.replay(
+            GoldSetEntry(entry_id="fake-override", mode="study-coach", prompt="hello")
+        ).session.provider
+        == "fake"
+    )
+    client.providers["anthropic"] = FakeProvider(name="anthropic")
+    assert (
+        client.complete(
+            mode="study-coach", prompt="hello", trace_class="formative", provider_name="anthropic"
+        ).session.provider
+        == "anthropic"
+    )
+
 
 @pytest.mark.parametrize("override", ["unregistered", "anthropic"])
 def test_unregistered_provider_override_is_rejected(
