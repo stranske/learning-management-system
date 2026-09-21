@@ -103,7 +103,9 @@ def test_default_export_omits_user_and_learner_names(db_session: Session) -> Non
     db_session.add_all([user, learner])
     db_session.commit()
 
-    records = {json.loads(line)["type"]: json.loads(line)["record"] for line in export_jsonl(db_session)}
+    records = {
+        json.loads(line)["type"]: json.loads(line)["record"] for line in export_jsonl(db_session)
+    }
 
     user_record = records["User"]
     learner_record = records["Learner"]
