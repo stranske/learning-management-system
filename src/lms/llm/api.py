@@ -185,6 +185,7 @@ def _default_client() -> LLMClient:
     )
     config = load_runtime_llm_config(
         default_provider=default_provider,
+        providers=providers,
         defaults=dict.fromkeys(DEFAULT_MODE_MODELS, default_model),
     )
     return LLMClient(

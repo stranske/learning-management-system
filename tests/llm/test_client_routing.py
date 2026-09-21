@@ -385,8 +385,8 @@ def test_default_api_client_applies_runtime_policy(
             monkeypatch.delenv(name, raising=False)
         else:
             monkeypatch.setenv(name, value)
-    # Credential-driven provider choice wins over a contradictory env default.
-    monkeypatch.setenv("LLM_DEFAULT_PROVIDER", "fake" if api_key else "anthropic")
+    # Without an explicit override, credential detection selects the provider.
+    monkeypatch.delenv("LLM_DEFAULT_PROVIDER", raising=False)
     monkeypatch.setenv("LLM_MODEL_STUDY_COACH", "api-override-coach")
 
     client = llm_api._default_client()
@@ -408,3 +408,45 @@ def test_default_api_client_applies_runtime_policy(
     with pytest.raises(BudgetExceeded, match="global daily cap"):
         client.budget.reserve("practice", 1)
     client.budget.release(reservation)
+
+
+def test_explicit_provider_override_is_honored(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """An operator can suspend live provider calls without removing the key."""
+    from lms.llm import api as llm_api
+
+    llm_api._default_client.cache_clear()
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    monkeypatch.setattr(
+        llm_api,
+        "get_settings",
+        lambda: SimpleNamespace(anthropic_api_key="sk-ant-test"),
+    )
+    monkeypatch.setenv("LLM_DEFAULT_PROVIDER", "fake")
+
+    client = llm_api._default_client()
+
+    assert client.config.default_provider == "fake"
+    assert isinstance(client.providers["anthropic"], AnthropicProvider)
+    assert isinstance(client.providers["fake"], FakeProvider)
+    response = client.complete(mode="study-coach", prompt="hello", trace_class="formative")
+    assert response.session.provider == "fake"
+
+
+@pytest.mark.parametrize("override", ["unregistered", "anthropic"])
+def test_unregistered_provider_override_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    override: str,
+) -> None:
+    """The override must exist in the registry built from available keys."""
+    from lms.llm import api as llm_api
+
+    llm_api._default_client.cache_clear()
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    monkeypatch.setattr(llm_api, "get_settings", lambda: SimpleNamespace(anthropic_api_key=None))
+    monkeypatch.setenv("LLM_DEFAULT_PROVIDER", override)
+
+    with pytest.raises(ValueError, match=f"LLM_DEFAULT_PROVIDER='{override}' is not registered"):
+        llm_api._default_client()

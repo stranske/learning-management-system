@@ -81,6 +81,11 @@ services:
       # study-coach path is exercised.
       - key: CLAUDE_API_STRANSKE
         sync: false
+      # Optional provider override. Set to "fake" in the dashboard to suspend
+      # live LLM calls while keeping the Anthropic key configured. Unset it to
+      # use credential detection; an unavailable provider causes a clear error.
+      - key: LLM_DEFAULT_PROVIDER
+        sync: false
       # LangSmith tracing key (M5).
       - key: LANGSMITH_API_KEY
         sync: false

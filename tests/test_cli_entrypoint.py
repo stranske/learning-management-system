@@ -237,7 +237,7 @@ def test_authoring_assist_uses_environment_llm_config(
         monkeypatch.setenv(key, value)
     if override_model:
         monkeypatch.setenv("LLM_MODEL_AUTHORING_ASSIST", "operator-authoring-model")
-    monkeypatch.setenv("LLM_DEFAULT_PROVIDER", "anthropic")
+    monkeypatch.delenv("LLM_DEFAULT_PROVIDER", raising=False)
     monkeypatch.setattr(
         lms_main, "get_settings", lambda: SimpleNamespace(anthropic_api_key=api_key)
     )
@@ -411,7 +411,7 @@ def test_replay_eval_uses_environment_llm_config(
         monkeypatch.delenv(key, raising=False)
     for key, value in policy_env.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setenv("LLM_DEFAULT_PROVIDER", "anthropic")
+    monkeypatch.delenv("LLM_DEFAULT_PROVIDER", raising=False)
     monkeypatch.setattr(lms_main, "get_settings", lambda: SimpleNamespace(anthropic_api_key=None))
 
     def refuse_production_session() -> None:

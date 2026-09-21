@@ -408,6 +408,7 @@ def main() -> None:
             )
             config = load_runtime_llm_config(
                 default_provider=default_provider,
+                providers=providers,
                 defaults={**DEFAULT_MODE_MODELS, "authoring-assist": authoring_model},
             )
             client = LLMClient(
@@ -470,7 +471,7 @@ def main() -> None:
             # without one, the fake provider keeps replays runnable offline.
             api_key = get_settings().anthropic_api_key
             providers, default_provider = build_default_providers(anthropic_api_key=api_key)
-            config = load_runtime_llm_config(default_provider=default_provider)
+            config = load_runtime_llm_config(default_provider=default_provider, providers=providers)
             client = LLMClient(
                 config=config,
                 providers=providers,
