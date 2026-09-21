@@ -595,5 +595,3 @@ def _read_form(body: str) -> dict[str, str]:
 
 def _feedback_url(*, learner_id: str, prompt_id: str) -> str:
     return f"{FEEDBACK_PATH}?learner_id={quote_plus(learner_id)}&prompt_id={quote_plus(prompt_id)}"
-
-

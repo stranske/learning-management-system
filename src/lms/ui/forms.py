@@ -19,9 +19,7 @@ def optional_int(value: str | None) -> int | None:
     try:
         return int(text)
     except ValueError:
-        raise FormValueError(
-            "Enter a valid whole number for numeric form fields."
-        ) from None
+        raise FormValueError("Enter a valid whole number for numeric form fields.") from None
 
 
 def optional_float(value: str | None) -> float | None:
@@ -34,11 +32,7 @@ def optional_float(value: str | None) -> float | None:
     try:
         parsed = float(text)
     except ValueError:
-        raise FormValueError(
-            "Enter a valid number for numeric form fields."
-        ) from None
+        raise FormValueError("Enter a valid number for numeric form fields.") from None
     if not math.isfinite(parsed):
-        raise FormValueError(
-            "Enter a finite number for numeric form fields."
-        ) from None
+        raise FormValueError("Enter a finite number for numeric form fields.") from None
     return parsed

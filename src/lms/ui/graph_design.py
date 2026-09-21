@@ -440,5 +440,3 @@ def _scope(value: str | None) -> str:
 
 def _metric_percent(value: object) -> str:
     return f"{float(value):.0%}" if isinstance(value, int | float) else "pending"
-
-
