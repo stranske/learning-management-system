@@ -107,6 +107,7 @@ async def submit_attempt_route(
             learner_id=learner_id,
             prompt_id=prompt_id or None,
             error="Enter a response and a confidence rating between 1 and 5 before submitting.",
+            response_text=form.get("response_text", ""),
         )
     except (ValidationError, ValueError):
         return _attempt_start_surface(
@@ -114,6 +115,7 @@ async def submit_attempt_route(
             learner_id=learner_id,
             prompt_id=prompt_id or None,
             error="Enter a response and a confidence rating between 1 and 5 before submitting.",
+            response_text=form.get("response_text", ""),
         )
 
     recorded = record_attempt(session, **payload.model_dump())
@@ -222,6 +224,7 @@ def _attempt_start_surface(
     learner_id: str,
     prompt_id: str | None,
     error: str | None,
+    response_text: str = "",
 ) -> str:
     prompt = session.get(Prompt, prompt_id) if prompt_id else None
 
@@ -279,7 +282,7 @@ def _attempt_start_surface(
           <input type="hidden" name="prompt_id" value="{escape(prompt.id)}">
           <input type="hidden" id="elapsed_seconds" name="elapsed_seconds" value="">
           <label for="response_text">Your response</label>
-          <textarea id="response_text" name="response_text" rows="6" required></textarea>
+          <textarea id="response_text" name="response_text" rows="6" required>{escape(response_text)}</textarea>
           <label for="confidence_rating">Confidence</label>
           <select id="confidence_rating" name="confidence_rating">
             <option value="1">1 - unsure</option>

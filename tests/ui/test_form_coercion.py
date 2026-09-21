@@ -34,6 +34,55 @@ def test_non_numeric_confidence_does_not_500(
 
     assert response.status_code < 500
     assert "validation-error" in response.text
+    assert "A response with invalid confidence." in response.text
+    with session_factory() as session:
+        assert session.scalars(select(Attempt)).all() == []
+
+
+def test_learn_route_preserves_response_on_invalid_confidence(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        _seed_prompt(session)
+
+    response = client.post(
+        "/learn/attempts",
+        data={
+            "learner_id": "learner-1",
+            "prompt_id": "prompt-1",
+            "response_text": "A response with invalid confidence.",
+            "confidence_rating": "abc",
+        },
+    )
+
+    assert response.status_code < 500
+    assert "validation-error" in response.text
+    assert "A response with invalid confidence." in response.text
+    with session_factory() as session:
+        assert session.scalars(select(Attempt)).all() == []
+
+
+def test_learn_route_rejects_out_of_range_confidence(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        _seed_prompt(session)
+
+    response = client.post(
+        "/learn/attempts",
+        data={
+            "learner_id": "learner-1",
+            "prompt_id": "prompt-1",
+            "response_text": "A response with invalid confidence.",
+            "confidence_rating": "6",
+        },
+    )
+
+    assert response.status_code < 500
+    assert "validation-error" in response.text
+    assert "A response with invalid confidence." in response.text
     with session_factory() as session:
         assert session.scalars(select(Attempt)).all() == []
 

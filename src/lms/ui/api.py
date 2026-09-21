@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -127,6 +128,7 @@ def _learn_surface(
     learner_id: str,
     prompt_id: str | None,
     error: str | None = None,
+    response_text: str = "",
 ) -> str:
     """Return a mobile-friendly Learn surface wired to the attempt API."""
     prompt = session.get(Prompt, prompt_id) if prompt_id is not None else None
@@ -155,7 +157,7 @@ def _learn_surface(
             <input type="hidden" name="learner_id" value="{escape(learner_id)}">
             <input type="hidden" name="prompt_id" value="{escape(prompt_id or "")}">
             <label for="response_text">Response</label>
-            <textarea id="response_text" name="response_text" rows="6"></textarea>
+            <textarea id="response_text" name="response_text" rows="6">{escape(response_text)}</textarea>
             <label for="confidence_rating">Confidence</label>
             <select id="confidence_rating" name="confidence_rating">
               <option value="1">1 - unsure</option>
@@ -220,6 +222,15 @@ async def submit_learn_attempt_route(
             learner_id=learner_id,
             prompt_id=form.get("prompt_id") or None,
             error=str(exc),
+            response_text=form.get("response_text", ""),
+        )
+    except (ValidationError, ValueError):
+        return _learn_surface(
+            session=session,
+            learner_id=learner_id,
+            prompt_id=form.get("prompt_id") or None,
+            error="Enter a response and a confidence rating between 1 and 5 before submitting.",
+            response_text=form.get("response_text", ""),
         )
     recorded = record_attempt(session, **payload.model_dump())
     session.commit()
