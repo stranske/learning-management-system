@@ -38,6 +38,7 @@ from lms.scheduling.service import (
     SchedulerSettings,
     get_review_queue_overview,
 )
+from lms.ui.forms import FormValueError, optional_int
 from lms.ui.shell import empty_state, render_page
 
 router = APIRouter(tags=["learner-ui"])
@@ -91,14 +92,22 @@ async def submit_attempt_route(
             learner_id=learner_id,
             prompt_id=prompt_id,
             response_text=form.get("response_text", ""),
-            confidence_rating=_optional_int(form.get("confidence_rating")),
+            confidence_rating=optional_int(form.get("confidence_rating")),
             reference_accessed=form.get("reference_accessed") == "true",
-            elapsed_seconds=_optional_int(form.get("elapsed_seconds")),
+            elapsed_seconds=optional_int(form.get("elapsed_seconds")),
             feedback=StructuredFeedback(
                 goal="Record learner attempt",
                 observed_evidence=form.get("response_text", "") or "(no response captured)",
                 next_action="Review feedback and continue practice.",
             ),
+        )
+    except FormValueError:
+        return _attempt_start_surface(
+            session=session,
+            learner_id=learner_id,
+            prompt_id=prompt_id or None,
+            error="Enter a response and a confidence rating between 1 and 5 before submitting.",
+            response_text=form.get("response_text", ""),
         )
     except (ValidationError, ValueError):
         return _attempt_start_surface(
@@ -106,6 +115,7 @@ async def submit_attempt_route(
             learner_id=learner_id,
             prompt_id=prompt_id or None,
             error="Enter a response and a confidence rating between 1 and 5 before submitting.",
+            response_text=form.get("response_text", ""),
         )
 
     recorded = record_attempt(session, **payload.model_dump())
@@ -214,6 +224,7 @@ def _attempt_start_surface(
     learner_id: str,
     prompt_id: str | None,
     error: str | None,
+    response_text: str = "",
 ) -> str:
     prompt = session.get(Prompt, prompt_id) if prompt_id else None
 
@@ -271,7 +282,7 @@ def _attempt_start_surface(
           <input type="hidden" name="prompt_id" value="{escape(prompt.id)}">
           <input type="hidden" id="elapsed_seconds" name="elapsed_seconds" value="">
           <label for="response_text">Your response</label>
-          <textarea id="response_text" name="response_text" rows="6" required></textarea>
+          <textarea id="response_text" name="response_text" rows="6" required>{escape(response_text)}</textarea>
           <label for="confidence_rating">Confidence</label>
           <select id="confidence_rating" name="confidence_rating">
             <option value="1">1 - unsure</option>
@@ -586,7 +597,3 @@ def _feedback_url(*, learner_id: str, prompt_id: str) -> str:
     return f"{FEEDBACK_PATH}?learner_id={quote_plus(learner_id)}&prompt_id={quote_plus(prompt_id)}"
 
 
-def _optional_int(value: str | None) -> int | None:
-    if value is None or value == "":
-        return None
-    return int(value)

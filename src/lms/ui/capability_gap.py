@@ -60,6 +60,7 @@ from lms.learners.identity import (
 )
 from lms.learners.models import LearningGoal
 from lms.settings import Settings
+from lms.ui.forms import FormValueError, optional_float
 from lms.ui.shell import empty_state, render_page
 
 router = APIRouter(tags=["learner-ui"])
@@ -890,12 +891,9 @@ def _split_tokens(raw: str) -> list[str]:
 
 
 def _optional_float(raw: str) -> float | None:
-    text = raw.strip()
-    if not text:
-        return None
     try:
-        return float(text)
-    except ValueError:
+        return optional_float(raw)
+    except FormValueError:
         return None
 
 
