@@ -37,7 +37,7 @@ from lms.feedback.models import (
     RevisionRequest,
 )
 from lms.graphs.models import KnowledgeEdge, KnowledgeNode
-from lms.learners.models import LearnerReflection
+from lms.learners.models import Learner, LearnerReflection
 from lms.llm.models import LearningInteractionSkill, LLMFeedbackEvent, LLMSession
 from lms.llm.proposals import LLMProposal
 from lms.maintenance.models import DraftRejection, GradeDispute, MaintenanceItem
@@ -95,6 +95,40 @@ def test_export_emits_jsonl_typed_records_in_dependency_order(db_session: Sessio
     assert records[0]["schema_version"] == 1
     assert records[0]["record"]["id"] == "user-1"
     assert "email" not in records[0]["record"]
+
+
+def test_default_export_omits_user_and_learner_names(db_session: Session) -> None:
+    user = User(id="user-1", email="ada@example.com", username="ada", display_name="Ada")
+    learner = Learner(id="learner-1", user_id=user.id, display_name="Ada Learner")
+    db_session.add_all([user, learner])
+    db_session.commit()
+
+    records = {json.loads(line)["type"]: json.loads(line)["record"] for line in export_jsonl(db_session)}
+
+    user_record = records["User"]
+    learner_record = records["Learner"]
+    assert "email" not in user_record
+    assert "username" not in user_record
+    assert "display_name" not in user_record
+    assert "display_name" not in learner_record
+
+
+def test_include_pii_all_still_emits_names(db_session: Session) -> None:
+    user = User(id="user-1", email="ada@example.com", username="ada", display_name="Ada")
+    learner = Learner(id="learner-1", user_id=user.id, display_name="Ada Learner")
+    db_session.add_all([user, learner])
+    db_session.commit()
+
+    records = {
+        json.loads(line)["type"]: json.loads(line)["record"]
+        for line in export_jsonl(db_session, include_pii="all", confirm_all=True)
+    }
+
+    user_record = records["User"]
+    learner_record = records["Learner"]
+    assert user_record["username"] == "ada"
+    assert user_record["display_name"] == "Ada"
+    assert learner_record["display_name"] == "Ada Learner"
 
 
 def test_export_requires_confirmation_for_all_pii(db_session: Session) -> None:
@@ -159,7 +193,10 @@ def test_export_excludes_password_hash_and_users_remain_importable(
             imported = destination.get(User, user.id)
             assert summary.counts == {"User": 1}
             assert imported is not None
-            assert imported.username == user.username
+            if include_pii == "all":
+                assert imported.username == user.username
+            else:
+                assert imported.username.startswith("imported-")
             assert imported.password_hash is None
     finally:
         engine.dispose()
