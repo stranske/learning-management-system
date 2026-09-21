@@ -2,6 +2,8 @@
 
 Per project-plan ``LLM client wrapper interface (v1)`` and Segment 10, mode
 routing is config-driven (env vars) so a model decision is a one-line change.
+The JSON files in ``config/`` are agent-fleet/CI metadata, not application
+runtime policy; the running client reads environment variables here.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ class LLMConfig:
     per_mode_daily_cap_micro_usd: Mapping[str, int] = field(default_factory=dict)
     default_provider: str = "fake"
     default_timeout_seconds: float = 30.0
+    force_fake_provider: bool = False
 
     def model_for(self, mode: str) -> str:
         if mode not in LLM_MODES:
@@ -97,15 +100,25 @@ def load_llm_config_from_env(
 def load_runtime_llm_config(
     *,
     default_provider: str,
+    providers: Mapping[str, object],
     defaults: Mapping[str, str] = DEFAULT_MODE_MODELS,
 ) -> LLMConfig:
-    """Resolve environment policy while retaining the initialized provider choice.
+    """Resolve environment policy against the initialized provider registry.
 
     Web and CLI callers select a real or fake provider from available credentials
-    before resolving model and budget overrides. Keep that choice so a missing
-    API key still permits offline use.
+    before resolving model and budget overrides. An explicit override may select
+    any registered provider, including ``fake`` when a real key is configured.
+    Without an override, retain the credential-derived choice for offline use.
     """
+    override = os.environ.get("LLM_DEFAULT_PROVIDER")
+    if override is not None and override not in providers:
+        available = ", ".join(sorted(providers))
+        raise ValueError(
+            f"LLM_DEFAULT_PROVIDER={override!r} is not registered; "
+            f"available providers: {available}"
+        )
     return replace(
         load_llm_config_from_env(defaults=defaults),
-        default_provider=default_provider,
+        default_provider=override if override is not None else default_provider,
+        force_fake_provider=override == "fake",
     )

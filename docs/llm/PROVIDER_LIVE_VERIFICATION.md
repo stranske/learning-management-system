@@ -66,16 +66,19 @@ authoring-assist proposal complete: proposal=<uuid> node=<uuid> prompt=<uuid> mo
 
 ## study-coach Routing Check
 
-To verify the `study-coach` mode routes to Anthropic when a key is present, inspect the
-`LLM_DEFAULT_PROVIDER` environment variable path:
+To verify the provider chosen by the running API client, inspect the resolved
+client configuration (without issuing a provider call):
 
 ```python
-from lms.llm.config import load_llm_config_from_env
-import os
+from lms.llm.api import _default_client
 
-config = load_llm_config_from_env(dict(os.environ))
-print(config.default_provider)   # "anthropic" when key present, "fake" otherwise
+print(_default_client().config.default_provider)
+# "anthropic" when a key is present and no override is set; "fake" without a
+# key or when LLM_DEFAULT_PROVIDER=fake is set.
 ```
+
+The three model JSON files in `config/` configure agent/CI tools, not this
+runtime client. See `config/README.md` for the ownership of all five files.
 
 ## Redaction Observable
 
