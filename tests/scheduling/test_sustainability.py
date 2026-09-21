@@ -153,6 +153,47 @@ def test_stale_items_sort_behind_fresh_items(db_session: Session) -> None:
     assert {item.id for item in overview.items[2:]} == {item.id for item in stale}
 
 
+def test_fresh_items_keep_existing_queue_tiebreak_order(db_session: Session) -> None:
+    """The stale rank does not disturb due-time, priority, or id ordering."""
+    fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
+    earlier_due_at = fixed_now - timedelta(minutes=1)
+    low_priority = seed_new_learning_item(
+        db_session,
+        learner_id="learner-fresh-tiebreaks",
+        knowledge_node_id="low-priority",
+        priority=0.2,
+        now=earlier_due_at,
+    )
+    same_due_and_priority = [
+        seed_new_learning_item(
+            db_session,
+            learner_id="learner-fresh-tiebreaks",
+            knowledge_node_id=f"high-priority-{index}",
+            priority=0.8,
+            now=earlier_due_at,
+        )
+        for index in range(2)
+    ]
+    later = seed_new_learning_item(
+        db_session,
+        learner_id="learner-fresh-tiebreaks",
+        knowledge_node_id="later",
+        priority=1.0,
+        now=fixed_now,
+    )
+
+    overview = get_review_queue_overview(
+        db_session, learner_id="learner-fresh-tiebreaks", now=fixed_now
+    )
+
+    expected = [
+        *sorted(same_due_and_priority, key=lambda item: item.id),
+        low_priority,
+        later,
+    ]
+    assert [item.id for item in overview.items] == [item.id for item in expected]
+
+
 def test_fresh_items_survive_a_stale_backlog(db_session: Session) -> None:
     """The daily cap cannot be consumed entirely by a stale backlog."""
     fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
