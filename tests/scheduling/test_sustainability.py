@@ -150,7 +150,7 @@ def test_stale_items_sort_behind_fresh_items(db_session: Session) -> None:
     )
 
     assert [item.id for item in overview.items[:2]] == [fresh[1].id, fresh[0].id]
-    assert {item.id for item in overview.items[2:]} == {item.id for item in stale}
+    assert [item.id for item in overview.items[2:]] == [stale[1].id, stale[0].id]
 
 
 def test_fresh_items_keep_existing_queue_tiebreak_order(db_session: Session) -> None:
