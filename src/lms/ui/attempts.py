@@ -385,7 +385,7 @@ def _score_block(session: Session, attempt: Attempt) -> str:
     score = session.scalars(
         select(RubricScore)
         .where(RubricScore.attempt_id == attempt.id)
-        .order_by(RubricScore.created_at.desc())
+        .order_by(RubricScore.created_at.desc(), RubricScore.id.desc())
         .limit(1)
     ).first()
     if score is not None:

@@ -454,7 +454,7 @@ def _attempt_link(session: Session, item: ReviewQueueItem) -> str:
                 Prompt.target_node_id == item.knowledge_node_id,
                 Prompt.status == "published",
             )
-            .order_by(Prompt.created_at)
+            .order_by(Prompt.created_at, Prompt.id)
             .limit(1)
         ).first()
     if prompt_id is None:
@@ -1386,7 +1386,7 @@ def _latest_attempt_summary(session: Session, *, learner_id: str, prompt_id: str
     attempt = session.scalars(
         select(Attempt)
         .where(Attempt.learner_id == learner_id, Attempt.prompt_id == prompt_id)
-        .order_by(Attempt.created_at.desc())
+        .order_by(Attempt.created_at.desc(), Attempt.id.desc())
         .limit(1)
     ).first()
     if attempt is None:

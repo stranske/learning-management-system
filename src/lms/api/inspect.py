@@ -125,7 +125,7 @@ def learner_overview_route(
         session.scalars(
             select(EvidenceRecord)
             .where(EvidenceRecord.learner_id == learner_id)
-            .order_by(EvidenceRecord.observed_at.desc())
+            .order_by(EvidenceRecord.observed_at.desc(), EvidenceRecord.id)
             .limit(25)
         )
     )
@@ -138,7 +138,7 @@ def learner_overview_route(
                 .options(selectinload(Prompt.versions))
                 .join(KnowledgeNode, KnowledgeNode.id == Prompt.target_node_id)
                 .where(KnowledgeNode.ownership_scope == ownership_scope)
-                .order_by(Prompt.updated_at.desc())
+                .order_by(Prompt.updated_at.desc(), Prompt.id)
                 .limit(25)
             )
         )
