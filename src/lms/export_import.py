@@ -406,7 +406,12 @@ PERSISTED_RELATIONSHIP_KEYS = {
     ("LLMFeedbackEvent", "source_reference_ids"),
 }
 
-PII_FIELDS = {"User": {"email"}}
+# Privacy-preserving exports omit these columns unless include_pii="all" with confirm_all.
+# User.email, User.username, User.display_name, and Learner.display_name are PII.
+PII_FIELDS = {
+    "User": {"email", "username", "display_name"},
+    "Learner": {"display_name"},
+}
 # Credentials never belong in portable exports, even when all PII is requested.
 EXCLUDED_EXPORT_FIELDS = {"User": {"password_hash"}}
 SOURCE_CONTENT_FIELDS = {"body", "content", "raw_content", "source_content", "text"}
@@ -723,12 +728,24 @@ def _relationship_dependency_type(key: str) -> str:
     raise ExportImportError(f"unsupported relationship key {key!r}")
 
 
+def _apply_pii_import_defaults(record_type: str, record: dict[str, Any]) -> None:
+    """Fill required identity columns omitted from privacy-preserving exports."""
+    if record_type == "User":
+        if "username" not in record:
+            record["username"] = f"imported-{record['id']}"
+        if "display_name" not in record:
+            record["display_name"] = "Imported user"
+    elif record_type == "Learner" and "display_name" not in record:
+        record["display_name"] = "Imported learner"
+
+
 def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
     pending_relationships: list[tuple[str, str, str, list[str]]] = []
     pending_session_parents: list[tuple[LLMSession, str]] = []
     for entry in entries:
         model = MODEL_BY_TYPE[entry["type"]]
         record = dict(entry["record"])
+        _apply_pii_import_defaults(entry["type"], record)
         for key in RELATIONSHIP_KEYS.get(entry["type"], ()):
             if (entry["type"], key) in PERSISTED_RELATIONSHIP_KEYS:
                 continue  # Validate persisted JSON links without removing their values.

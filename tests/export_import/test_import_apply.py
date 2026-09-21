@@ -55,6 +55,78 @@ def test_apply_writes_after_dry_run_validation_passes(tmp_path: Path, db_session
     assert db_session.get(Learner, "learner-1") is not None
 
 
+def test_apply_accepts_user_without_withheld_pii_fields(
+    tmp_path: Path, db_session: Session
+) -> None:
+    path = tmp_path / "privacy-preserving-user.jsonl"
+    _write_jsonl(
+        path,
+        [
+            {
+                "type": "User",
+                "schema_version": 1,
+                "record": {
+                    "id": "user-1",
+                    "is_local": True,
+                },
+            },
+            {
+                "type": "Learner",
+                "schema_version": 1,
+                "record": {
+                    "id": "learner-1",
+                    "user_id": "user-1",
+                    "timezone": "UTC",
+                    "locale": "en-US",
+                },
+            },
+        ],
+    )
+
+    summary = import_jsonl(db_session, path, dry_run=False)
+    db_session.commit()
+
+    assert summary.counts == {"User": 1, "Learner": 1}
+    user = db_session.get(User, "user-1")
+    learner = db_session.get(Learner, "learner-1")
+    assert user is not None
+    assert learner is not None
+    assert user.username.startswith("imported-")
+    assert user.display_name == "Imported user"
+    assert learner.display_name == "Imported learner"
+
+
+def test_apply_generates_unique_usernames_for_ids_with_shared_prefix(
+    tmp_path: Path, db_session: Session
+) -> None:
+    first_id = "aaaaaaaa-aaaa-4000-8000-000000000001"
+    second_id = "aaaaaaaa-aaaa-4000-8000-000000000002"
+    path = tmp_path / "privacy-preserving-users.jsonl"
+    _write_jsonl(
+        path,
+        [
+            {
+                "type": "User",
+                "schema_version": 1,
+                "record": {"id": user_id, "is_local": True},
+            }
+            for user_id in (first_id, second_id)
+        ],
+    )
+
+    summary = import_jsonl(db_session, path, dry_run=False)
+    db_session.commit()
+
+    assert summary.counts == {"User": 2}
+    first = db_session.get(User, first_id)
+    second = db_session.get(User, second_id)
+    assert first is not None
+    assert second is not None
+    assert first.username == f"imported-{first_id}"
+    assert second.username == f"imported-{second_id}"
+    assert first.username != second.username
+
+
 def test_apply_rolls_back_on_partial_failure(tmp_path: Path, db_session: Session) -> None:
     path = tmp_path / "invalid.jsonl"
     _write_jsonl(
