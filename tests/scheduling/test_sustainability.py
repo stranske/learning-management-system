@@ -1,10 +1,8 @@
-"""Acceptance tests for scheduler sustainability controls (issue #24).
+"""Acceptance tests for scheduler sustainability controls (issues #24 and #691).
 
-The three test functions in this module are the literal acceptance criteria for
-issue #24 ("Add daily cap, pause mode, and stale handling"). They were
-previously defined in ``tests/scheduling/test_review_queue.py``; this module
-hosts them at the path the acceptance criteria name explicitly so the
-PR/verifier surface can locate them by the documented file name.
+The original three tests for issue #24 were moved here from
+``tests/scheduling/test_review_queue.py``. The ordering regressions for #691
+exercise the capped learner-visible queue after stale marking.
 """
 
 from __future__ import annotations
@@ -91,8 +89,8 @@ def test_pause_freezes_due_times_and_resume_ramps_items(db_session: Session) -> 
     assert all(item.decision_log["events"][-1]["rule"] == "resume-ramp" for item in items)
 
 
-def test_stale_item_can_be_retired_or_reengaged(db_session: Session) -> None:
-    """Very old pending items are marked stale for explicit retire/re-engage decisions."""
+def test_stale_item_is_flagged(db_session: Session) -> None:
+    """Very old pending items receive stale flags and a decision-log event."""
     fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
     stale = seed_new_learning_item(
         db_session,
@@ -120,3 +118,73 @@ def test_stale_item_can_be_retired_or_reengaged(db_session: Session) -> None:
     assert "Re-engage it, retire it, or adjust the learning goal" in stale.reason_explanation
     assert stale.decision_log["events"][-1]["rule"] == "mark-stale"
     assert fresh.reason_code == "new-learning"
+
+
+def test_stale_items_sort_behind_fresh_items(db_session: Session) -> None:
+    """Fresh due-review items precede older stale items in the overview."""
+    fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
+    stale = [
+        seed_new_learning_item(
+            db_session,
+            learner_id="learner-stale-order",
+            knowledge_node_id=f"old-{index}",
+            now=fixed_now - timedelta(days=90, minutes=index),
+        )
+        for index in range(2)
+    ]
+    fresh = [
+        seed_new_learning_item(
+            db_session,
+            learner_id="learner-stale-order",
+            knowledge_node_id=f"fresh-{index}",
+            now=fixed_now - timedelta(minutes=index),
+        )
+        for index in range(2)
+    ]
+    for item in fresh:
+        item.reason_code = "due-review"
+
+    assert mark_stale_queue_items(db_session, learner_id="learner-stale-order", now=fixed_now) == 2
+    overview = get_review_queue_overview(
+        db_session, learner_id="learner-stale-order", now=fixed_now
+    )
+
+    assert [item.id for item in overview.items[:2]] == [fresh[1].id, fresh[0].id]
+    assert {item.id for item in overview.items[2:]} == {item.id for item in stale}
+
+
+def test_fresh_items_survive_a_stale_backlog(db_session: Session) -> None:
+    """The daily cap cannot be consumed entirely by a stale backlog."""
+    fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
+    for index in range(30):
+        seed_new_learning_item(
+            db_session,
+            learner_id="learner-stale-backlog",
+            knowledge_node_id=f"old-{index}",
+            now=fixed_now - timedelta(days=90, minutes=index),
+        )
+    fresh = [
+        seed_new_learning_item(
+            db_session,
+            learner_id="learner-stale-backlog",
+            knowledge_node_id=f"fresh-{index}",
+            now=fixed_now - timedelta(minutes=index),
+        )
+        for index in range(3)
+    ]
+    for item in fresh:
+        item.reason_code = "due-review"
+
+    assert (
+        mark_stale_queue_items(db_session, learner_id="learner-stale-backlog", now=fixed_now) == 30
+    )
+    overview = get_review_queue_overview(
+        db_session,
+        learner_id="learner-stale-backlog",
+        settings=SchedulerSettings(daily_cap=25),
+        now=fixed_now,
+    )
+
+    assert overview.backlog_total == 33
+    assert len(overview.items) == 25
+    assert {item.id for item in fresh} <= {item.id for item in overview.items}

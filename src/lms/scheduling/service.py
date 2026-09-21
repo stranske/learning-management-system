@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from lms.auth.models import utc_now
@@ -272,6 +272,7 @@ def _pending_queue_statement(*, learner_id: str) -> Any:
             ReviewQueueItem.status == "pending",
         )
         .order_by(
+            case((ReviewQueueItem.reason_code == "stale", 1), else_=0),
             ReviewQueueItem.due_at.asc(),
             ReviewQueueItem.priority.desc(),
             ReviewQueueItem.id,
