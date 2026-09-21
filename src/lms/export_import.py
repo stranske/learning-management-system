@@ -732,7 +732,7 @@ def _apply_pii_import_defaults(record_type: str, record: dict[str, Any]) -> None
     """Fill required identity columns omitted from privacy-preserving exports."""
     if record_type == "User":
         if "username" not in record:
-            record["username"] = f"imported-{record['id'].replace('-', '')[:12]}"
+            record["username"] = f"imported-{record['id']}"
         if "display_name" not in record:
             record["display_name"] = "Imported user"
     elif record_type == "Learner" and "display_name" not in record:
