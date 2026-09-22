@@ -69,6 +69,7 @@ def test_invalid_course_graph_does_not_write_packet(tmp_path: Path) -> None:
         [sys.executable, str(SCRIPT), "--fixture", str(fixture), "--out", str(output)],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert completed.returncode == 2
     assert "course modules must be a list" in completed.stderr

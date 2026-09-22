@@ -90,10 +90,10 @@ def main() -> None:
     try:
         raw = json.loads(args.fixture.read_text(encoding="utf-8"))
         html = render_packet(raw)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(html, encoding="utf-8")
     except (OSError, ValueError) as error:
         parser.error(str(error))
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(html, encoding="utf-8")
     print(f"Wrote offline review packet: {args.out}")
 
 
