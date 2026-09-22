@@ -15,6 +15,8 @@ This system will support four major audience families:
 
 The initial implementation target is an API-first backend. A web application is a planned product surface, but the backend should define the core learning model, data contracts, assessment engine, scheduling logic, and analytics before the UI becomes the primary driver.
 
+For environments without a hosted service or database, the [local-first course review packet](docs/development/local-first-delivery.md) exports a bounded course fixture to a self-contained HTML file.
+
 ## Design Commitments
 
 Every major feature should map to a learning principle, an observable learner action, and a measurable outcome.

@@ -1,0 +1,21 @@
+{
+  "course": {
+    "title": "Investment Research Foundations",
+    "summary": "A short course for offline curriculum review.",
+    "modules": [
+      {
+        "title": "Research process",
+        "lessons": [
+          {
+            "title": "Frame the investment question",
+            "summary": "State the decision and its evidence threshold."
+          },
+          {
+            "title": "Compare competing explanations",
+            "summary": "Record what would change your conclusion."
+          }
+        ]
+      }
+    ]
+  }
+}
