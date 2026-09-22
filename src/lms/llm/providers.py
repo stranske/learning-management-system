@@ -143,7 +143,8 @@ class FakeProvider:
 
 
 # Anthropic pricing table (USD per million tokens) used for cost normalization.
-# Values reflect public Anthropic API pricing as of 2026-05. The table is small
+# Values reflect public Anthropic API pricing as of 2026-05; Opus rows refreshed
+# 2026-09-22 (Opus 5.5 launch; 4.7+ Opus is $5/$25, not the old $15/$75). The table is small
 # and explicit so a new model can be added by editing one entry rather than
 # touching the adapter logic. Unknown models fall back to ``_DEFAULT_PRICE``
 # (matches Sonnet pricing) so a typo or a freshly-released model still produces
@@ -154,7 +155,10 @@ _ANTHROPIC_PRICES_USD_PER_MTOKENS: Mapping[str, tuple[float, float]] = {
     "claude-sonnet-4-5": (3.00, 15.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-sonnet-4-7": (3.00, 15.00),
-    "claude-opus-4-7": (15.00, 75.00),
+    "claude-opus-4-7": (5.00, 25.00),
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-opus-5": (5.00, 25.00),
+    "claude-opus-5-5": (4.00, 20.00),
     "claude-3-5-haiku-20241022": (1.00, 5.00),
     "claude-3-5-sonnet-20241022": (3.00, 15.00),
     "claude-3-opus-20240229": (15.00, 75.00),
