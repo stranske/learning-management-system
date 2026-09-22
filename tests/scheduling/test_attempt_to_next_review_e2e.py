@@ -38,7 +38,7 @@ from lms.graphs.repository import create_knowledge_node
 from lms.learners.repository import create_learner_for_user, create_learning_goal
 from lms.main import create_app
 from lms.prompts.repository import create_prompt, publish_prompt
-from lms.scheduling.models import ReviewQueueItem
+from lms.scheduling.models import ReviewQueueItem, ReviewSchedule
 from lms.sources.repository import create_source_reference
 
 ACTOR = "system:e2e-loop-test"
@@ -329,3 +329,9 @@ def test_remediation_queue_item_can_be_cleared_after_failure(
     assert len(items) == 1
     assert items[0].status == "completed"
     assert items[0].decision_log["events"][-1]["rule"] == "remediation-cleared"
+    with session_factory() as session:
+        schedule = session.scalar(
+            select(ReviewSchedule).where(ReviewSchedule.review_queue_item_id == remediation.id)
+        )
+        assert schedule is not None
+        assert schedule.schedule_state == "completed"
