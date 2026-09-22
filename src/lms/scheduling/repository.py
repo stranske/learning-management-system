@@ -147,6 +147,49 @@ def complete_review_queue_item(
     return item
 
 
+def clear_remediation_queue_item(
+    session: Session,
+    *,
+    review_queue_item_id: str,
+    actor_id: str,
+) -> ReviewQueueItem | None:
+    """Mark a remediation item cleared after the learner finishes remedial work."""
+    item = session.get(ReviewQueueItem, review_queue_item_id)
+    if item is None:
+        return None
+    if item.status == "completed":
+        return item
+    if item.reason_code != "remediation":
+        raise ValueError(
+            "only remediation queue items can be cleared through the remediation drain path"
+        )
+
+    completed_at = utc_now()
+    log = dict(item.decision_log or {})
+    events = list(log.get("events", []))
+    events.append(
+        {
+            "rule": "remediation-cleared",
+            "at": completed_at.isoformat(),
+            "actor_id": actor_id,
+            "previous_status": item.status,
+        }
+    )
+    log["events"] = events
+    item.status = "completed"
+    item.updated_at = completed_at
+    item.decision_log = log
+
+    schedules = session.scalars(
+        select(ReviewSchedule).where(ReviewSchedule.review_queue_item_id == item.id)
+    )
+    for schedule in schedules:
+        schedule.schedule_state = "completed"
+        schedule.updated_at = completed_at
+    session.flush()
+    return item
+
+
 def get_or_create_review_policy(
     session: Session,
     *,

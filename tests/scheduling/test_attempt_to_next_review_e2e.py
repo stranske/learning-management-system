@@ -296,3 +296,36 @@ def test_configured_remediation_trigger_fires_on_production_path(
     assert (
         "remediation" in reason_codes
     ), "a matching high-confidence-error trigger must create a remediation item"
+
+
+def test_remediation_queue_item_can_be_cleared_after_failure(
+    loop_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    """Failed attempts enqueue remediation items the learner can clear from the UI."""
+    client, session_factory = loop_client
+    learner_id, node_id, prompt_id = _seed_learner_node_prompt(session_factory)
+
+    payload = _attempt_payload(learner_id, node_id, prompt_id, response_text="Wrong answer.")
+    evidence = payload["evidence"]
+    assert isinstance(evidence, dict)
+    evidence.update({"correctness": False, "raw_score": 0.0, "normalized_score": 0.0})
+
+    response = client.post("/attempts", json=payload)
+    assert response.status_code == 201, response.text
+
+    items = _queue_items(session_factory, learner_id)
+    assert len(items) == 1
+    remediation = items[0]
+    assert remediation.reason_code == "remediation"
+    assert remediation.status == "pending"
+
+    completion = client.post(
+        f"/app/learner/reviews/{remediation.id}/complete",
+        data={"learner_id": learner_id},
+    )
+    assert completion.status_code == 303, completion.text
+
+    items = _queue_items(session_factory, learner_id)
+    assert len(items) == 1
+    assert items[0].status == "completed"
+    assert items[0].decision_log["events"][-1]["rule"] == "remediation-cleared"
