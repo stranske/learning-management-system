@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.db.session import get_session
@@ -19,6 +20,7 @@ from lms.feedback.repository import (
 )
 from lms.graphs.models import KnowledgeNode
 from lms.main import create_app
+from lms.scheduling.models import ReviewQueueItem
 
 
 def _client(db_session: Session) -> TestClient:
@@ -327,6 +329,50 @@ def test_revision_request_submit_accepts_evidence_payload(db_session: Session) -
     assert len(evidence_records) == 1
     assert evidence_records[0].attempt_id == revised_attempt_id
     assert evidence_records[0].correctness is True
+
+
+def test_revision_acceptance_enqueues_review_queue_item(db_session: Session) -> None:
+    """Accepted scored revisions advance the learner's review schedule."""
+    _, feedback_record = _seed_feedback(db_session)
+    node = KnowledgeNode(
+        title="Revision scheduling",
+        knowledge_type="procedural",
+        ownership_scope="personal",
+        status="published",
+    )
+    db_session.add(node)
+    request = create_revision_request(
+        db_session,
+        learner_id="learner-1",
+        feedback_record_id=feedback_record.id,
+    )
+
+    submit_revision_request(
+        db_session,
+        request,
+        response_text="Revised answer with the required substitution check.",
+        evidence={
+            "knowledge_node_id": node.id,
+            "correctness": True,
+            "normalized_score": 1.0,
+        },
+    )
+    resolve_revision_request(db_session, request, outcome="accepted", result_note="Correct now.")
+    db_session.commit()
+
+    queue_items = list(
+        db_session.scalars(
+            select(ReviewQueueItem).where(
+                ReviewQueueItem.learner_id == "learner-1",
+                ReviewQueueItem.source_attempt_id == request.revised_attempt_id,
+            )
+        )
+    )
+    assert any(item.reason_code == "due-review" for item in queue_items)
+    assert all(
+        item.decision_log["revision_request"]["revision_request_id"] == request.id
+        for item in queue_items
+    )
 
 
 def test_revision_request_create_rejects_missing_feedback_record(db_session: Session) -> None:
