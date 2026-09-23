@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from itertools import islice
 from math import isfinite
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
@@ -32,6 +32,9 @@ from lms.feedback.models import (
 from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeEdge, KnowledgeNode
 from lms.prompts.models import Prompt
 from lms.prompts.repository import get_prompt
+
+if TYPE_CHECKING:
+    from lms.scheduling.models import ReviewQueueItem
 
 
 def create_feedback_record(
@@ -253,6 +256,43 @@ def _revision_scheduler_hook(request: RevisionRequest, outcome: str) -> dict[str
     }
 
 
+def _ensure_revision_scheduling(
+    session: Session, request: RevisionRequest
+) -> list[ReviewQueueItem]:
+    """Schedule scored revision evidence once and return its queue items."""
+    if request.revised_attempt_id is None:
+        return []
+
+    attempt = session.get(Attempt, request.revised_attempt_id)
+    if attempt is None:
+        raise ValueError("revised attempt was not found")
+    evidence_record = session.scalars(
+        select(EvidenceRecord)
+        .where(EvidenceRecord.attempt_id == attempt.id)
+        .order_by(EvidenceRecord.id)
+    ).first()
+    if evidence_record is None:
+        return []
+
+    # Local imports avoid coupling feedback model import order to scheduling.
+    from lms.evidence.service import schedule_for_evidence
+    from lms.scheduling.models import ReviewQueueItem
+
+    queue_items = list(
+        session.scalars(
+            select(ReviewQueueItem)
+            .where(ReviewQueueItem.source_attempt_id == attempt.id)
+            .order_by(ReviewQueueItem.created_at, ReviewQueueItem.id)
+        )
+    )
+    if not queue_items:
+        review_item, remediation_items = schedule_for_evidence(
+            session, attempt=attempt, evidence_record=evidence_record
+        )
+        queue_items = [review_item, *remediation_items]
+    return queue_items
+
+
 def create_revision_request(
     session: Session,
     *,
@@ -382,6 +422,7 @@ def submit_revision_request(
     request.revised_attempt_id = attempt.id
     request.status = "submitted"
     request.submitted_at = utc_now()
+    _ensure_revision_scheduling(session, request)
     session.flush()
     return request
 
@@ -401,6 +442,16 @@ def resolve_revision_request(
     request.result_note = result_note
     request.resolved_at = utc_now()
     request.scheduler_hook = _revision_scheduler_hook(request, outcome)
+    queue_items = _ensure_revision_scheduling(session, request)
+    if queue_items:
+        request.scheduler_hook = {
+            **request.scheduler_hook,
+            "queue_item_ids": [item.id for item in queue_items],
+        }
+        for item in queue_items:
+            decision_log = dict(item.decision_log or {})
+            decision_log["revision_request"] = dict(request.scheduler_hook)
+            item.decision_log = decision_log
     if request.feedback_action_id is not None:
         action = get_feedback_action(session, request.feedback_action_id)
         if action is not None:
