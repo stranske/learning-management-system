@@ -13,6 +13,7 @@ from lms.db.session import get_session
 from lms.learners.identity import require_learner_ownership, resolve_learner_id
 from lms.scheduling.models import ReviewQueueItem
 from lms.scheduling.repository import (
+    clear_remediation_queue_item,
     complete_review_queue_item,
     count_review_queue_for_learner,
     create_remediation_trigger,
@@ -128,11 +129,18 @@ def complete_review_queue_item_route(
         session, user=current_user, settings=settings, learner_id=existing.learner_id
     )
     try:
-        item = complete_review_queue_item(
-            session,
-            review_queue_item_id=review_queue_item_id,
-            actor_id=current_user.id,
-        )
+        if existing.reason_code == "remediation":
+            item = clear_remediation_queue_item(
+                session,
+                review_queue_item_id=review_queue_item_id,
+                actor_id=current_user.id,
+            )
+        else:
+            item = complete_review_queue_item(
+                session,
+                review_queue_item_id=review_queue_item_id,
+                actor_id=current_user.id,
+            )
     except ValueError as exc:
         session.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc

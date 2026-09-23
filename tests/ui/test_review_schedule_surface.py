@@ -70,6 +70,17 @@ def test_review_surface_shows_schedule_and_decision_reason(
             source_attempt_id="attempt-1",
             decision_log={"source": "test"},
         )
+        remediation_item = ReviewQueueItem(
+            id="queue-remediation",
+            learner_id="learner-1",
+            knowledge_node_id="node-review",
+            reason_code="remediation",
+            reason_explanation="Repair the missed retrieval.",
+            due_at=now,
+            priority=0.9,
+            source_attempt_id="attempt-1",
+            decision_log={"source": "test"},
+        )
         schedule = ReviewSchedule(
             id="schedule-1",
             learner_id="learner-1",
@@ -98,7 +109,7 @@ def test_review_surface_shows_schedule_and_decision_reason(
             support_level="none",
             decision_log={"rule": "first_success"},
         )
-        session.add_all([prompt, attempt, policy, queue_item, schedule, decision])
+        session.add_all([prompt, attempt, policy, queue_item, remediation_item, schedule, decision])
         session.commit()
 
     response = client.get("/app/learner/reviews?learner_id=learner-1&daily_cap=10")
@@ -116,6 +127,7 @@ def test_review_surface_shows_schedule_and_decision_reason(
     # drops prompt_id — the attempt surface is the correct target.
     assert 'href="/app/learner/attempts?learner_id=learner-1&amp;prompt_id=prompt-review"' in html
     assert "Mark reviewed" in html
+    assert "Clear remediation" in html
     assert "attempt_id=attempt-1" not in html
     assert 'data-action="pause-review" disabled' in html
     assert 'name="viewport"' in html

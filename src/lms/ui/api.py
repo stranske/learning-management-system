@@ -68,6 +68,7 @@ from lms.prompts.models import ANSWER_FORMS, COGNITIVE_ACTIONS, DEMAND_LEVELS, P
 from lms.prompts.repository import create_prompt, list_prompts
 from lms.scheduling.models import ReviewPolicy, ReviewQueueItem, ReviewSchedule, SchedulerDecision
 from lms.scheduling.repository import (
+    clear_remediation_queue_item,
     complete_review_queue_item,
     list_review_policies,
     list_review_schedules,
@@ -318,11 +319,18 @@ async def complete_review_from_ui_route(
             detail="Review queue item not found for this learner.",
         )
     try:
-        complete_review_queue_item(
-            session,
-            review_queue_item_id=review_queue_item_id,
-            actor_id=current_user.id,
-        )
+        if item.reason_code == "remediation":
+            clear_remediation_queue_item(
+                session,
+                review_queue_item_id=review_queue_item_id,
+                actor_id=current_user.id,
+            )
+        else:
+            complete_review_queue_item(
+                session,
+                review_queue_item_id=review_queue_item_id,
+                actor_id=current_user.id,
+            )
     except ValueError as exc:
         session.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -492,11 +500,17 @@ def _complete_review_form(item: ReviewQueueItem) -> str:
     """Per-item completion control so the ramp can advance from the UI."""
     if item.status != "pending":
         return ""
+    if item.reason_code == "remediation":
+        button_label = "Clear remediation"
+    elif item.reason_code in {"due-review", "new-learning"}:
+        button_label = "Mark reviewed"
+    else:
+        return ""
     return (
         f'<form method="post" action="/app/learner/reviews/{escape(item.id)}/complete" '
         'class="complete-review">'
         f'<input type="hidden" name="learner_id" value="{escape(item.learner_id)}">'
-        '<button type="submit">Mark reviewed</button>'
+        f'<button type="submit">{button_label}</button>'
         "</form>"
     )
 

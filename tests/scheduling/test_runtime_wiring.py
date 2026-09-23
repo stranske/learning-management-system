@@ -182,10 +182,10 @@ def test_complete_review_queue_route_is_authorized_and_idempotent(
         assert schedule.schedule_state == "completed"
 
 
-def test_complete_review_queue_route_rejects_non_success_reason(
+def test_complete_review_queue_route_clears_remediation(
     scheduling_api_client: tuple[TestClient, sessionmaker[Session], User],
 ) -> None:
-    """Remediation items cannot be mislabeled as successful reviews."""
+    """The completion route clears remediation items and their schedules."""
     client, session_factory, current_user = scheduling_api_client
     item_id = _queue_item_for_user(
         session_factory,
@@ -196,8 +196,19 @@ def test_complete_review_queue_route_rejects_non_success_reason(
 
     response = client.post(f"/review-queue/{item_id}/complete")
 
-    assert response.status_code == 409
-    assert "due-review and new-learning" in response.json()["detail"]
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "completed"
+
+    with session_factory() as session:
+        item = session.get(ReviewQueueItem, item_id)
+        assert item is not None
+        assert item.status == "completed"
+        assert item.decision_log["events"][-1]["rule"] == "remediation-cleared"
+        schedule = session.scalar(
+            select(ReviewSchedule).where(ReviewSchedule.review_queue_item_id == item_id)
+        )
+        assert schedule is not None
+        assert schedule.schedule_state == "completed"
 
 
 def test_complete_review_queue_route_rejects_other_learners_item(
