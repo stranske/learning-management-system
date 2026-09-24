@@ -5,6 +5,8 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+from packaging.specifiers import SpecifierSet
+
 _OPERATORS = ("==", ">=", "<=", "~=", "!=", ">", "<", "===")
 
 
@@ -89,7 +91,10 @@ def test_sqlalchemy_install_stays_on_validated_major_minor() -> None:
     """Avoid the SQLAlchemy 2.1.0 sdist metadata failure in Compose smoke."""
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     dependencies = pyproject["project"]["dependencies"]
-    assert "sqlalchemy>=2.0.50,<2.1" in dependencies
+    requirement = next(dependency for dependency in dependencies if dependency.startswith("sqlalchemy"))
+    assert requirement == "sqlalchemy>=2.0.50,<2.1"
+    allowed_versions = SpecifierSet(requirement.removeprefix("sqlalchemy"))
+    assert "2.0.0" not in allowed_versions
     for lock_name in ("requirements.lock", "requirements-dev.lock"):
         version = _load_lock_versions(Path(lock_name))["sqlalchemy"]
-        assert version.startswith("2.0."), f"{lock_name} pins unsupported SQLAlchemy {version}"
+        assert version in allowed_versions, f"{lock_name} pins unsupported SQLAlchemy {version}"
