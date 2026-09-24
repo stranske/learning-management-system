@@ -40,6 +40,19 @@ PYTEST_RUNTIME_DEPENDENCIES = (f"pyyaml=={PYYAML_VERSION}",)
 PYYAML_PROBE_SENTINEL = "__gate_pyyaml_import_ok__"
 PYYAML_PROBE_CODE = f"import yaml; print({PYYAML_PROBE_SENTINEL!r})"
 
+# Reviewed Workflows source exceptions only. PR-authored data cannot add entries.
+# This change strengthens issue #36's old assertion; all other removals still fail.
+APPROVED_ASSERTION_REPLACEMENTS = {
+    (
+        "stranske/Deliverable-Render",
+        "36",
+        "tests/store/test_communication_render_profile.py",
+    ): (
+        "assert validate_store(without_page).valid  # validator allows document-only citations",
+        "assert not validate_store(without_page).valid",
+    ),
+}
+
 
 @dataclass(frozen=True)
 class DeliberateBreakSpec:
@@ -117,6 +130,21 @@ def _explicit_marker(section: str) -> DeliberateBreakSpec | None:
         break_file = values.get("break-file") or values.get("revert-file")
         command_text = values.get("command")
         if not test_id or not test_file or not break_file:
+            # Checklist prose like "Deliberate-break: revert the X branch" matches
+            # MARKER_RE but is not a key=value marker; skip and keep searching.
+            if not any(
+                key in values
+                for key in (
+                    "test",
+                    "test-id",
+                    "test-file",
+                    "file",
+                    "break-file",
+                    "revert-file",
+                    "command",
+                )
+            ):
+                continue
             raise ValueError("deliberate-break marker requires test, test-file, and break-file")
         command = tuple(shlex.split(command_text)) if command_text else _pytest_command(test_id)
         return DeliberateBreakSpec(test_id, test_file, break_file, command)
@@ -142,7 +170,7 @@ def _extract_fallback_test_name(named_line: str) -> str | None:
     if unquoted:
         name = unquoted.group(1)
         tail = named_line[unquoted.end() :]
-        if not tail or tail[0] not in "_A-Za-z0-9":
+        if not tail or not (tail[0].isalnum() or tail[0] == "_"):
             return name
     return None
 
@@ -211,13 +239,13 @@ def _infer_break_file(break_line: str, named_line: str, markdown: str) -> str | 
     for text in (named_line, markdown):
         ordered_paths.extend(_candidate_paths(text))
 
-    workflow_paths = [
-        path
-        for path in ordered_paths
-        if ".github/workflows/" in path or path.endswith((".yml", ".yaml"))
-    ]
-    if workflow_paths:
-        return workflow_paths[0]
+    github_workflow_paths = [path for path in ordered_paths if ".github/workflows/" in path]
+    if github_workflow_paths:
+        return github_workflow_paths[0]
+
+    yaml_paths = [path for path in ordered_paths if path.endswith((".yml", ".yaml"))]
+    if yaml_paths:
+        return yaml_paths[0]
 
     return ordered_paths[0] if ordered_paths else None
 
@@ -234,7 +262,9 @@ def parse_deliberate_break_spec(markdown: str) -> DeliberateBreakSpec | None:
 
 
 def _pytest_command(test_id: str) -> tuple[str, ...]:
-    return (sys.executable, "-m", "pytest", test_id, "-q")
+    # This is a named-test proof, not a whole-suite coverage or plugin invocation.
+    # Keep repository configuration (including pythonpath), but clear addopts.
+    return (sys.executable, "-m", "pytest", test_id, "-o", "addopts=", "-q")
 
 
 def _supported_pyyaml_version(installed_version: str | None) -> bool:
@@ -759,6 +789,31 @@ def _run_with_runtime_deps(
         raise CommandUnavailableError(exc) from exc
 
 
+_MISSING_MODULE_RE = re.compile(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]")
+# A ModuleNotFoundError only means "the test never ran" when pytest raised it while COLLECTING.
+# The same exception from inside a test body is an ordinary failure of a test that did run, and
+# reporting that as not-importable would hide a real acceptance failure behind an environment
+# excuse. Require pytest's own collection diagnostics as corroboration.
+_COLLECTION_ERROR_RE = re.compile(
+    r"ImportError while importing test module|ERROR collecting|errors during collection",
+    re.IGNORECASE,
+)
+
+
+def _missing_module_from_pytest_output(*streams: str | None) -> str | None:
+    """Return the module missing at COLLECTION time, or None if that is not the failure.
+
+    Collection-time ImportErrors surface inside pytest's captured output rather than as an
+    exception this script can catch, which is why they previously landed in the generic
+    head-test-failed branch.
+    """
+    joined = "\n".join(stream for stream in streams if stream)
+    if not joined or not _COLLECTION_ERROR_RE.search(joined):
+        return None
+    match = _MISSING_MODULE_RE.search(joined)
+    return match.group(1) if match else None
+
+
 def _runtime_dependency_error_result(error: Exception) -> dict[str, object]:
     """Map dependency-repair failures consistently for head and base runs."""
     if isinstance(error, subprocess.TimeoutExpired):
@@ -807,16 +862,44 @@ def _git(
     )
 
 
-def _assertion_diff_lines(diff_text: str) -> Iterator[str]:
+def _assertion_diff_lines(
+    diff_text: str, approved_replacement: tuple[str, str] | None = None
+) -> Iterator[str]:
     """Yield removed assertion lines; adding a new assertion is valid test growth."""
-    for line in diff_text.splitlines():
-        if not line.startswith("-") or line.startswith("---"):
-            continue
-        if ASSERTION_DIFF_RE.search(line):
-            yield line[:240]
+    # Require the exact replacement in the same diff hunk. A second removed
+    # assertion in that hunk, or a replacement elsewhere, remains a failure.
+    hunk: list[str] = []
+    for line in [*diff_text.splitlines(), "@@ end"]:
+        if line.startswith("@@"):
+            additions = [
+                item[1:].strip()
+                for item in hunk
+                if item.startswith("+") and not item.startswith("+++")
+            ]
+            for item in hunk:
+                if (
+                    not item.startswith("-")
+                    or item.startswith("---")
+                    or not ASSERTION_DIFF_RE.search(item)
+                ):
+                    continue
+                replacement = approved_replacement
+                if (
+                    replacement is not None
+                    and item[1:].strip() == replacement[0]
+                    and replacement[1] in additions
+                ):
+                    additions.remove(replacement[1])
+                else:
+                    yield item[:240]
+            hunk = []
+        else:
+            hunk.append(line)
 
 
-def _changed_assertions(base: str, head: str, test_file: str, cwd: Path) -> list[str]:
+def _changed_assertions(
+    base: str, head: str, test_file: str, cwd: Path, pr_body: str | None = None
+) -> list[str]:
     status = _git(["diff", "--name-status", f"{base}...{head}", "--", test_file], cwd)
     if any(line.split("\t", 1)[0] == "A" for line in status.stdout.splitlines()):
         return []
@@ -824,7 +907,15 @@ def _changed_assertions(base: str, head: str, test_file: str, cwd: Path) -> list
         ["diff", "--no-ext-diff", "--unified=0", f"{base}...{head}", "--", test_file],
         cwd,
     )
-    return list(_assertion_diff_lines(completed.stdout))
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    issue = re.search(
+        r"<!--\s*meta:issue:(\d+)\s*-->",
+        pr_body if pr_body is not None else os.environ.get("PR_BODY", ""),
+    )
+    approved_replacement = APPROVED_ASSERTION_REPLACEMENTS.get(
+        (repo, issue.group(1) if issue else "", test_file)
+    )
+    return list(_assertion_diff_lines(completed.stdout, approved_replacement))
 
 
 def _archive_ref(base: str, target: Path, cwd: Path) -> None:
@@ -863,6 +954,7 @@ def verify_spec(
     head: str = "HEAD",
     cwd: Path | None = None,
     enforce_tamper: bool = True,
+    pr_body: str | None = None,
 ) -> dict[str, object]:
     repo = cwd or Path.cwd()
     test_path = repo / spec.test_file
@@ -875,7 +967,7 @@ def verify_spec(
 
     try:
         if enforce_tamper:
-            tampered = _changed_assertions(base, head, spec.test_file, repo)
+            tampered = _changed_assertions(base, head, spec.test_file, repo, pr_body)
             if tampered:
                 return _json_result(
                     VERDICT_BROKEN,
@@ -927,6 +1019,27 @@ def verify_spec(
         )
 
     if head_run.returncode != 0:
+        # "The test could not be collected" and "the test ran and failed" are different facts,
+        # and reporting them under one reason made the gate unactionable: Deliverable-Render #20
+        # spent five autofix attempts on a missing runtime dependency while its own declaration
+        # was correct, because `head-test-failed` reads as an acceptance failure. Name the
+        # environment case so the next reader fixes the environment, not the PR.
+        missing = _missing_module_from_pytest_output(head_run.stdout, head_run.stderr)
+        if missing is not None:
+            return _json_result(
+                VERDICT_BROKEN,
+                reason="head-test-not-importable",
+                test_id=spec.test_id,
+                command=list(spec.command),
+                missing_module=missing,
+                detail=(
+                    f"The named test could not be imported: no module named {missing!r}. "
+                    "This is an environment defect, not a failed deliberate break -- the test "
+                    "never ran. Install the project and its dependencies before this check."
+                ),
+                stdout=head_run.stdout,
+                stderr=head_run.stderr,
+            )
         return _json_result(
             VERDICT_BROKEN,
             reason="head-test-failed",
@@ -1034,6 +1147,7 @@ def main(argv: list[str] | None = None) -> int:
         base=args.base,
         head=args.head,
         enforce_tamper=not args.no_tamper_check,
+        pr_body=body,
     )
     _write_github_output(verdict=str(result["verdict"]))
     print(json.dumps(result, sort_keys=True))
