@@ -12,7 +12,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lms.audit.repository import record_audit_event
@@ -25,6 +28,7 @@ from lms.graphs.models import (
     OWNERSHIP_SCOPES,
     KnowledgeEdge,
     KnowledgeNode,
+    knowledge_graph_scope_locks,
 )
 
 # Edge types that impose a learning order between nodes. A cycle among these
@@ -41,6 +45,67 @@ ORDERING_EDGE_TYPES: tuple[str, ...] = (
 # ``nullable=False``, so an explicit null there is a client error, not a clear.
 CLEARABLE_EDGE_FIELDS: frozenset[str] = frozenset({"confidence", "notes"})
 MUTABLE_EDGE_FIELDS: frozenset[str] = frozenset({"edge_type", "confidence", "status", "notes"})
+
+
+def _is_edge_identity_conflict(error: IntegrityError) -> bool:
+    """Recognize only the five-column edge identity constraint."""
+    original = error.orig
+    sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+    if sqlstate is not None:
+        return (
+            sqlstate == "23505"
+            and getattr(getattr(original, "diag", None), "constraint_name", None)
+            == "uq_knowledge_edges_identity"
+        )
+    return getattr(original, "sqlite_errorname", None) == "SQLITE_CONSTRAINT_UNIQUE" and str(
+        original
+    ) == (
+        "UNIQUE constraint failed: knowledge_edges.source_node_id, "
+        "knowledge_edges.target_node_id, knowledge_edges.edge_type, "
+        "knowledge_edges.source_scope, knowledge_edges.target_scope"
+    )
+
+
+def _duplicate_edge_error(edge_type: str, scope: str) -> ValueError:
+    return ValueError(
+        "duplicate knowledge edge: an identical "
+        f"{edge_type!r} edge already exists in scope {scope!r}"
+    )
+
+
+def _acquire_edge_scope_lock(session: Session, scope: str) -> None:
+    """Acquire the transaction-scoped graph-writer lock for ``scope``.
+
+    The insert supports metadata-created test databases where migration seeding
+    has not run. The no-op update is deliberate: it locks the scope row on
+    PostgreSQL and starts SQLite's write transaction before graph reads.
+    """
+    table = knowledge_graph_scope_locks
+    dialect = session.get_bind().dialect.name
+    values = {"source_scope": scope, "lock_token": 0}
+    connection = session.connection()
+    if dialect == "postgresql":
+        connection.execute(
+            postgresql_insert(table)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=[table.c.source_scope])
+        )
+    elif dialect == "sqlite":
+        connection.execute(
+            sqlite_insert(table)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=[table.c.source_scope])
+        )
+    else:
+        raise RuntimeError(
+            "knowledge-edge concurrency locking supports only SQLite and PostgreSQL; "
+            f"got {dialect!r}"
+        )
+    result = connection.execute(
+        update(table).where(table.c.source_scope == scope).values(lock_token=table.c.lock_token)
+    )
+    if result.rowcount != 1:
+        raise RuntimeError(f"failed to acquire knowledge-graph scope lock for {scope!r}")
 
 
 def _require_scope(scope: str | None) -> str:
@@ -325,67 +390,71 @@ def create_knowledge_edge(
         )
     if confidence is not None and not 0.0 <= confidence <= 1.0:
         raise ValueError("confidence must be between 0.0 and 1.0 (inclusive)")
+    _acquire_edge_scope_lock(session, scope)
 
-    source_node = session.get(KnowledgeNode, source_node_id)
-    target_node = session.get(KnowledgeNode, target_node_id)
-    if source_node is None or target_node is None:
-        raise ValueError("source and target nodes must exist before creating an edge")
-    if source_node.ownership_scope != scope:
-        raise ValueError(
-            f"source node scope {source_node.ownership_scope!r} does not match "
-            f"requested edge scope {scope!r}"
-        )
-    if target_node.ownership_scope != target_scope:
-        raise ValueError(
-            f"target node scope {target_node.ownership_scope!r} does not match "
-            f"requested target_scope {target_scope!r}"
-        )
+    with session.begin_nested():
+        source_node = session.get(KnowledgeNode, source_node_id)
+        target_node = session.get(KnowledgeNode, target_node_id)
+        if source_node is None or target_node is None:
+            raise ValueError("source and target nodes must exist before creating an edge")
+        if source_node.ownership_scope != scope:
+            raise ValueError(
+                f"source node scope {source_node.ownership_scope!r} does not match "
+                f"requested edge scope {scope!r}"
+            )
+        if target_node.ownership_scope != target_scope:
+            raise ValueError(
+                f"target node scope {target_node.ownership_scope!r} does not match "
+                f"requested target_scope {target_scope!r}"
+            )
 
-    duplicate = session.scalars(
-        select(KnowledgeEdge).where(
-            KnowledgeEdge.source_node_id == source_node_id,
-            KnowledgeEdge.target_node_id == target_node_id,
-            KnowledgeEdge.edge_type == edge_type,
-            KnowledgeEdge.source_scope == scope,
-            KnowledgeEdge.target_scope == target_scope,
-        )
-    ).first()
-    if duplicate is not None:
-        raise ValueError(
-            "duplicate knowledge edge: an identical "
-            f"{edge_type!r} edge already exists in scope {scope!r}"
-        )
+        duplicate = session.scalars(
+            select(KnowledgeEdge).where(
+                KnowledgeEdge.source_node_id == source_node_id,
+                KnowledgeEdge.target_node_id == target_node_id,
+                KnowledgeEdge.edge_type == edge_type,
+                KnowledgeEdge.source_scope == scope,
+                KnowledgeEdge.target_scope == target_scope,
+            )
+        ).first()
+        if duplicate is not None:
+            raise _duplicate_edge_error(edge_type, scope)
 
-    if edge_type in ORDERING_EDGE_TYPES and _ordering_edge_closes_cycle(
-        session,
-        source_node_id=source_node_id,
-        target_node_id=target_node_id,
-        scope=scope,
-    ):
-        raise ValueError("edge would create a prerequisite cycle")
+        if edge_type in ORDERING_EDGE_TYPES and _ordering_edge_closes_cycle(
+            session,
+            source_node_id=source_node_id,
+            target_node_id=target_node_id,
+            scope=scope,
+        ):
+            raise ValueError("edge would create a prerequisite cycle")
 
-    edge = KnowledgeEdge(
-        source_node_id=source_node_id,
-        target_node_id=target_node_id,
-        edge_type=edge_type,
-        source_scope=scope,
-        target_scope=target_scope,
-        is_graph_reference=is_graph_reference,
-        confidence=confidence,
-        status=status,
-        notes=notes,
-    )
-    session.add(edge)
-    session.flush()
-    record_audit_event(
-        session,
-        actor_id=actor_id,
-        action="create",
-        entity_type="KnowledgeEdge",
-        entity_id=edge.id,
-        source_subsystem=source_subsystem,
-        after_summary=_edge_summary(edge),
-    )
+        edge = KnowledgeEdge(
+            source_node_id=source_node_id,
+            target_node_id=target_node_id,
+            edge_type=edge_type,
+            source_scope=scope,
+            target_scope=target_scope,
+            is_graph_reference=is_graph_reference,
+            confidence=confidence,
+            status=status,
+            notes=notes,
+        )
+        session.add(edge)
+        try:
+            session.flush()
+        except IntegrityError as error:
+            if _is_edge_identity_conflict(error):
+                raise _duplicate_edge_error(edge_type, scope) from error
+            raise
+        record_audit_event(
+            session,
+            actor_id=actor_id,
+            action="create",
+            entity_type="KnowledgeEdge",
+            entity_id=edge.id,
+            source_subsystem=source_subsystem,
+            after_summary=_edge_summary(edge),
+        )
     return edge
 
 
@@ -442,7 +511,6 @@ def update_knowledge_edge(
     PATCH that reaches a state creation would have refused leaves the same
     invalid graph behind.
     """
-    before = _edge_summary(edge)
     unknown = set(changes) - MUTABLE_EDGE_FIELDS
     if unknown:
         raise ValueError(
@@ -461,50 +529,57 @@ def update_knowledge_edge(
         elif field == "confidence" and not 0.0 <= value <= 1.0:
             raise ValueError("confidence must be between 0.0 and 1.0 (inclusive)")
 
-    new_edge_type = changes.get("edge_type")
-    if new_edge_type is not None and new_edge_type != edge.edge_type:
-        # Endpoints and scopes are immutable, so only a type change can collide
-        # with a sibling edge. Without this, retyping one of two parallel edges
-        # onto the other's type persists a pair that ``create_knowledge_edge``
-        # rejects as a duplicate -- and for an ordering type the cycle check
-        # cannot catch it, because a same-direction sibling closes no cycle.
-        duplicate = session.scalars(
-            select(KnowledgeEdge).where(
-                KnowledgeEdge.id != edge.id,
-                KnowledgeEdge.source_node_id == edge.source_node_id,
-                KnowledgeEdge.target_node_id == edge.target_node_id,
-                KnowledgeEdge.edge_type == new_edge_type,
-                KnowledgeEdge.source_scope == edge.source_scope,
-                KnowledgeEdge.target_scope == edge.target_scope,
-            )
-        ).first()
-        if duplicate is not None:
-            raise ValueError(
-                "duplicate knowledge edge: an identical "
-                f"{new_edge_type!r} edge already exists in scope {edge.source_scope!r}"
-            )
+    _acquire_edge_scope_lock(session, edge.source_scope)
 
-    if new_edge_type in ORDERING_EDGE_TYPES and _ordering_edge_closes_cycle(
-        session,
-        source_node_id=edge.source_node_id,
-        target_node_id=edge.target_node_id,
-        scope=edge.source_scope,
-        exclude_edge_id=edge.id,
-    ):
-        raise ValueError("edge would create a prerequisite cycle")
-    for field, value in changes.items():
-        setattr(edge, field, value)
-    session.flush()
-    record_audit_event(
-        session,
-        actor_id=actor_id,
-        action="update",
-        entity_type="KnowledgeEdge",
-        entity_id=edge.id,
-        source_subsystem=source_subsystem,
-        before_summary=before,
-        after_summary=_edge_summary(edge),
-    )
+    with session.begin_nested():
+        session.refresh(edge)
+        before = _edge_summary(edge)
+        new_edge_type = changes.get("edge_type")
+        if new_edge_type is not None and new_edge_type != edge.edge_type:
+            # Endpoints and scopes are immutable, so only a type change can collide
+            # with a sibling edge. Without this, retyping one of two parallel edges
+            # onto the other's type persists a pair that ``create_knowledge_edge``
+            # rejects as a duplicate -- and for an ordering type the cycle check
+            # cannot catch it, because a same-direction sibling closes no cycle.
+            duplicate = session.scalars(
+                select(KnowledgeEdge).where(
+                    KnowledgeEdge.id != edge.id,
+                    KnowledgeEdge.source_node_id == edge.source_node_id,
+                    KnowledgeEdge.target_node_id == edge.target_node_id,
+                    KnowledgeEdge.edge_type == new_edge_type,
+                    KnowledgeEdge.source_scope == edge.source_scope,
+                    KnowledgeEdge.target_scope == edge.target_scope,
+                )
+            ).first()
+            if duplicate is not None:
+                raise _duplicate_edge_error(new_edge_type, edge.source_scope)
+
+        if new_edge_type in ORDERING_EDGE_TYPES and _ordering_edge_closes_cycle(
+            session,
+            source_node_id=edge.source_node_id,
+            target_node_id=edge.target_node_id,
+            scope=edge.source_scope,
+            exclude_edge_id=edge.id,
+        ):
+            raise ValueError("edge would create a prerequisite cycle")
+        for field, value in changes.items():
+            setattr(edge, field, value)
+        try:
+            session.flush()
+        except IntegrityError as error:
+            if _is_edge_identity_conflict(error):
+                raise _duplicate_edge_error(edge.edge_type, edge.source_scope) from error
+            raise
+        record_audit_event(
+            session,
+            actor_id=actor_id,
+            action="update",
+            entity_type="KnowledgeEdge",
+            entity_id=edge.id,
+            source_subsystem=source_subsystem,
+            before_summary=before,
+            after_summary=_edge_summary(edge),
+        )
     return edge
 
 
