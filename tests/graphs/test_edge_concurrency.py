@@ -239,6 +239,49 @@ def test_concurrent_cycle_updates_serialize_before_traversal(
         engine.dispose()
 
 
+def test_concurrent_duplicate_creates_leave_one_edge(tmp_path: Path) -> None:
+    """Two concurrent identical creates leave one edge and reject the loser."""
+    engine, factory = _file_session_factory(tmp_path / "duplicate-create.db")
+    try:
+        unique_names = {
+            constraint["name"]
+            for constraint in inspect(engine).get_unique_constraints("knowledge_edges")
+        }
+        assert "uq_knowledge_edges_identity" in unique_names
+        with factory() as session:
+            session.add_all([_node("a", "A"), _node("b", "B")])
+            session.commit()
+
+        def create_duplicate(session: Session) -> None:
+            create_knowledge_edge(
+                session,
+                source_node_id="a",
+                target_node_id="b",
+                edge_type="analogy",
+                scope="personal",
+                actor_id=f"writer:{threading.current_thread().name}",
+            )
+
+        assert _run_competing_writes(
+            create_duplicate,
+            create_duplicate,
+            factory,
+            threading.Event(),
+        ) == [
+            ("first", "committed"),
+            (
+                "second",
+                "ValueError: duplicate knowledge edge: an identical "
+                "'analogy' edge already exists in scope 'personal'",
+            ),
+        ]
+        with factory() as session:
+            assert session.scalar(select(func.count()).select_from(KnowledgeEdge)) == 1
+            assert session.scalar(select(func.count()).select_from(AuditLog)) == 1
+    finally:
+        engine.dispose()
+
+
 def test_database_unique_floor_rejects_direct_duplicate(db_session: Session) -> None:
     """Direct writers cannot bypass the five-column edge identity invariant."""
     db_session.add_all([_node("a", "A"), _node("b", "B")])
