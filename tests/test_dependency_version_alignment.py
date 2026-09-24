@@ -5,7 +5,6 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from packaging.specifiers import SpecifierSet
 
 _OPERATORS = ("==", ">=", "<=", "~=", "!=", ">", "<", "===")
 
@@ -93,8 +92,11 @@ def test_sqlalchemy_install_stays_on_validated_major_minor() -> None:
     dependencies = pyproject["project"]["dependencies"]
     requirement = next(dependency for dependency in dependencies if dependency.startswith("sqlalchemy"))
     assert requirement == "sqlalchemy>=2.0.50,<2.1"
-    allowed_versions = SpecifierSet(requirement.removeprefix("sqlalchemy"))
-    assert "2.0.0" not in allowed_versions
+    lower_bound = (2, 0, 50)
+    upper_bound = (2, 1)
     for lock_name in ("requirements.lock", "requirements-dev.lock"):
         version = _load_lock_versions(Path(lock_name))["sqlalchemy"]
-        assert version in allowed_versions, f"{lock_name} pins unsupported SQLAlchemy {version}"
+        pinned = tuple(int(part) for part in version.split("."))
+        assert lower_bound <= pinned < upper_bound, (
+            f"{lock_name} pins unsupported SQLAlchemy {version}"
+        )
