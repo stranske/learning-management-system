@@ -224,6 +224,6 @@ knowledge_graph_scope_locks = Table(
     # domain model. They coordinate writers and carry no user data.
     CheckConstraint(
         f"source_scope IN ({_sql_values(OWNERSHIP_SCOPES)})",
-        name="knowledge_graph_scope_lock_scope_valid",
+        name="scope_valid",
     ),
 )

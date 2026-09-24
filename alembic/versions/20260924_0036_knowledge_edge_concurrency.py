@@ -56,7 +56,7 @@ def upgrade() -> None:
         sa.Column("lock_token", sa.Integer(), nullable=False, server_default="0"),
         sa.CheckConstraint(
             "source_scope IN ('personal', 'institutional')",
-            name="knowledge_graph_scope_lock_scope_valid",
+            name="scope_valid",
         ),
     )
     lock_table = sa.table(

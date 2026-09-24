@@ -564,11 +564,15 @@ def update_knowledge_edge(
             raise ValueError("edge would create a prerequisite cycle")
         for field, value in changes.items():
             setattr(edge, field, value)
+        duplicate_edge_type = edge.edge_type
+        duplicate_scope = edge.source_scope
         try:
             session.flush()
         except IntegrityError as error:
             if _is_edge_identity_conflict(error):
-                raise _duplicate_edge_error(edge.edge_type, edge.source_scope) from error
+                # A failed flush expires ORM state before this savepoint exits,
+                # so build the public error from values captured beforehand.
+                raise _duplicate_edge_error(duplicate_edge_type, duplicate_scope) from error
             raise
         record_audit_event(
             session,

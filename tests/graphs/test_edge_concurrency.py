@@ -252,9 +252,88 @@ def test_database_unique_floor_rejects_direct_duplicate(db_session: Session) -> 
     }
     db_session.add(KnowledgeEdge(id="edge-1", **identity))
     db_session.flush()
-    with pytest.raises(IntegrityError, match="UNIQUE constraint failed"), db_session.begin_nested():
+    with (
+        pytest.raises(IntegrityError, match="UNIQUE constraint failed") as excinfo,
+        db_session.begin_nested(),
+    ):
         db_session.add(KnowledgeEdge(id="edge-2", **identity))
         db_session.flush()
+    assert graph_repository._is_edge_identity_conflict(excinfo.value)
+
+
+def test_create_translates_database_identity_conflict(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A create-time uniqueness race surfaces as the repository duplicate error."""
+    db_session.add_all([_node("a", "A"), _node("b", "B")])
+    db_session.add(
+        KnowledgeEdge(
+            id="edge-1",
+            source_node_id="a",
+            target_node_id="b",
+            edge_type="analogy",
+            source_scope="personal",
+            target_scope="personal",
+        )
+    )
+    db_session.flush()
+
+    class _NoDuplicate:
+        @staticmethod
+        def first() -> None:
+            return None
+
+    monkeypatch.setattr(db_session, "scalars", lambda *args, **kwargs: _NoDuplicate())
+
+    with pytest.raises(ValueError, match="duplicate knowledge edge"):
+        create_knowledge_edge(
+            db_session,
+            source_node_id="a",
+            target_node_id="b",
+            edge_type="analogy",
+            scope="personal",
+            actor_id="writer",
+        )
+
+
+def test_update_translates_database_identity_conflict(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An update-time uniqueness race surfaces as the repository duplicate error."""
+    db_session.add_all([_node("a", "A"), _node("b", "B")])
+    existing = KnowledgeEdge(
+        id="edge-1",
+        source_node_id="a",
+        target_node_id="b",
+        edge_type="analogy",
+        source_scope="personal",
+        target_scope="personal",
+    )
+    candidate = KnowledgeEdge(
+        id="edge-2",
+        source_node_id="a",
+        target_node_id="b",
+        edge_type="contrast",
+        source_scope="personal",
+        target_scope="personal",
+    )
+    db_session.add_all([existing, candidate])
+    db_session.flush()
+
+    class _NoDuplicate:
+        @staticmethod
+        def first() -> None:
+            return None
+
+    monkeypatch.setattr(db_session, "scalars", lambda *args, **kwargs: _NoDuplicate())
+
+    with pytest.raises(ValueError, match="duplicate knowledge edge"):
+        update_knowledge_edge(
+            db_session,
+            candidate,
+            actor_id="writer",
+            edge_type="analogy",
+        )
 
 
 def test_edge_and_audit_rollback_with_outer_transaction(tmp_path: Path) -> None:
