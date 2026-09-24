@@ -7,11 +7,15 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Column,
     DateTime,
     Float,
     ForeignKey,
+    Integer,
     String,
+    Table,
     Text,
+    UniqueConstraint,
     false,
     func,
 )
@@ -132,6 +136,14 @@ class KnowledgeEdge(Base):
 
     __tablename__ = "knowledge_edges"
     __table_args__ = (
+        UniqueConstraint(
+            "source_node_id",
+            "target_node_id",
+            "edge_type",
+            "source_scope",
+            "target_scope",
+            name="uq_knowledge_edges_identity",
+        ),
         CheckConstraint(
             f"edge_type IN ({_sql_values(EDGE_TYPES)})",
             name="edge_type_valid",
@@ -201,3 +213,17 @@ class KnowledgeEdge(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+
+knowledge_graph_scope_locks = Table(
+    "knowledge_graph_scope_locks",
+    Base.metadata,
+    Column("source_scope", String(32), primary_key=True),
+    Column("lock_token", Integer, nullable=False, default=0, server_default="0"),
+    # Operational lock rows are Core table metadata rather than an exported
+    # domain model. They coordinate writers and carry no user data.
+    CheckConstraint(
+        f"source_scope IN ({_sql_values(OWNERSHIP_SCOPES)})",
+        name="scope_valid",
+    ),
+)
