@@ -25,7 +25,9 @@ dependencies = [
     "pydantic>=2.9.0",
     "pydantic-settings>=2.14.1",
     "PyYAML>=6.0.3",
-    "sqlalchemy>=2.0.50",
+    # SQLAlchemy 2.1.0 sdist has duplicate normalized extra names; uv rejects
+    # its metadata in the Python 3.14 Compose smoke install before tests run.
+    "sqlalchemy>=2.0.50,<2.1",
     "alembic>=1.18.4",
     "psycopg[binary]>=3.3.4",
     "uvicorn[standard]>=0.49.0",
