@@ -83,3 +83,13 @@ def test_all_pyproject_dependencies_are_in_lock() -> None:
             missing.append(dependency)
 
     assert not missing, "requirements.lock is missing pinned versions for: " + ", ".join(missing)
+
+
+def test_sqlalchemy_install_stays_on_validated_major_minor() -> None:
+    """Avoid the SQLAlchemy 2.1.0 sdist metadata failure in Compose smoke."""
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+    assert "sqlalchemy>=2.0.50,<2.1" in dependencies
+    for lock_name in ("requirements.lock", "requirements-dev.lock"):
+        version = _load_lock_versions(Path(lock_name))["sqlalchemy"]
+        assert version.startswith("2.0."), f"{lock_name} pins unsupported SQLAlchemy {version}"
