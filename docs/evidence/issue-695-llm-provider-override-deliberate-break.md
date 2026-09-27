@@ -41,7 +41,17 @@ E       AssertionError: assert 'anthropic' == 'fake'
 
 Restore the override-aware fields exactly, then rerun the named command.
 
-Result: **1 passed**. A production-file cleanup check also passed:
+Observed restored pass (2026-09-27):
+
+```text
+collected 1 item
+
+tests/llm/test_client_routing.py .                                       [100%]
+
+========================= 1 passed, 1 warning in 0.31s =========================
+```
+
+A production-file cleanup check also passed:
 
 ```bash
 git diff --exit-code -- src/lms/llm/config.py
