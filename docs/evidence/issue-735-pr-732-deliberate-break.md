@@ -1,33 +1,26 @@
-# Issue #735: PR #732 fork Gate deliberate-break replay
+# Issue #737: fresh fork Gate deliberate-break evidence
 
-This is a fresh replay on current `main` at `9554a876b65f4844989310d29212181529111cc2`, not reconstructed output from merged PR #732. Follow-up issue #737 also adds the same replay as a required Gate job so later runs preserve the exact command, mutation, outputs, exit statuses, and restoration proof as a downloadable artifact.
+This replay used current `main` commit `f6e59e60bfb16e1177a09162e49b3983c482dfce` on 2026-09-29. It supersedes the earlier transcript in this document, whose command provenance was ambiguous. The workflow in `.github/workflows/pr-00-gate.yml` already runs this exact command for both branches and uploads future replay logs as a CI artifact. The transcript below is a **new local execution**, not a claim that CI wrote back to this tracked document. The only output normalization is the local `rootdir` path, displayed as `<repository-root>`; test output, failures, and exit results are otherwise preserved. `pyproject.toml` supplies `-v` in `addopts`, so the literal `-q` invocation still emits a pytest session header and assertion details.
 
-## Baseline
+## Deliberate mutation
 
-Command:
-
-```text
-uv run pytest tests/test_gate_commit_status_fork_tolerance.py -q --no-cov
-```
-
-Observed output:
-
-```text
-collected 13 items
-
-tests/test_gate_commit_status_fork_tolerance.py .............            [100%]
-
-============================== 13 passed in 0.36s ==============================
-```
-
-## RED: disable only the fork read-only fallback
-
-The deliberate break replaced only this production expression in `.github/workflows/pr-00-gate.yml`:
+Exactly one production expression was temporarily changed:
 
 ```diff
+diff --git a/.github/workflows/pr-00-gate.yml b/.github/workflows/pr-00-gate.yml
+index 1239859..c0109e1 100644
+--- a/.github/workflows/pr-00-gate.yml
++++ b/.github/workflows/pr-00-gate.yml
+@@ -382,8 +382,7 @@ jobs:
+                 baseRepo &&
+                   (headRepoObject === null || (headRepo && headRepo !== baseRepo)),
+               );
 -              const readOnlyForkToken =
 -                error?.status === 403 && isForkPullRequest && !hitRateLimit;
 +              const readOnlyForkToken = false;
+               if (hitRateLimit) {
+                 core.warning('Rate limit prevented Gate from updating the commit status.');
+                 if (state !== 'success') {
 ```
 
 Command:
@@ -36,32 +29,18 @@ Command:
 uv run pytest tests/test_gate_commit_status_fork_tolerance.py -q --no-cov
 ```
 
-Observed output and exit status: exit `1`.
+Exit status: `1` (six named fork/deleted-fork failures; seven other cases passed).
 
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.2, pytest-9.1.1, pluggy-1.6.0 -- /opt/anaconda3/bin/python
-cachedir: .pytest_cache
-hypothesis profile 'default'
+platform darwin -- Python 3.12.2, pytest-9.1.1, pluggy-1.6.0
 rootdir: <repository-root>
 configfile: pyproject.toml
 plugins: langsmith-0.10.9, cov-7.1.0, xdist-3.8.0, rerunfailures-16.3, datadir-1.8.0, typeguard-4.5.1, asyncio-1.3.0, pytest_httpserver-1.1.3, hypothesis-6.155.7, regressions-2.11.0, Faker-40.39.0, anyio-4.13.0
 asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collecting ... collected 13 items
+collected 13 items
 
-tests/test_gate_commit_status_fork_tolerance.py::test_fork_read_only_403_does_not_fail_the_gate FAILED [  7%]
-tests/test_gate_commit_status_fork_tolerance.py::test_fork_read_only_403_reports_the_real_verdict FAILED [ 15%]
-tests/test_gate_commit_status_fork_tolerance.py::test_fork_read_only_403_preserves_failure_verdict FAILED [ 23%]
-tests/test_gate_commit_status_fork_tolerance.py::test_fork_read_only_403_fails_closed_for_other_non_success_verdicts[error] FAILED [ 30%]
-tests/test_gate_commit_status_fork_tolerance.py::test_fork_read_only_403_fails_closed_for_other_non_success_verdicts[pending] FAILED [ 38%]
-tests/test_gate_commit_status_fork_tolerance.py::test_deleted_fork_read_only_403_reports_the_verdict FAILED [ 46%]
-tests/test_gate_commit_status_fork_tolerance.py::test_same_repo_403_still_fails_the_gate PASSED [ 53%]
-tests/test_gate_commit_status_fork_tolerance.py::test_rate_limit_403_keeps_its_own_path PASSED [ 61%]
-tests/test_gate_commit_status_fork_tolerance.py::test_rate_limit_403_fails_closed_for_non_success_verdicts[failure] PASSED [ 69%]
-tests/test_gate_commit_status_fork_tolerance.py::test_rate_limit_403_fails_closed_for_non_success_verdicts[error] PASSED [ 76%]
-tests/test_gate_commit_status_fork_tolerance.py::test_rate_limit_403_fails_closed_for_non_success_verdicts[pending] PASSED [ 84%]
-tests/test_gate_commit_status_fork_tolerance.py::test_non_403_errors_still_fail_the_gate PASSED [ 92%]
-tests/test_gate_commit_status_fork_tolerance.py::test_successful_status_write_is_silent PASSED [100%]
+tests/test_gate_commit_status_fork_tolerance.py FFFFFF.......            [100%]
 
 =================================== FAILURES ===================================
 ________________ test_fork_read_only_403_does_not_fail_the_gate ________________
@@ -147,45 +126,31 @@ FAILED tests/test_gate_commit_status_fork_tolerance.py::test_fork_read_only_403_
 FAILED tests/test_gate_commit_status_fork_tolerance.py::test_fork_read_only_403_fails_closed_for_other_non_success_verdicts[error]
 FAILED tests/test_gate_commit_status_fork_tolerance.py::test_fork_read_only_403_fails_closed_for_other_non_success_verdicts[pending]
 FAILED tests/test_gate_commit_status_fork_tolerance.py::test_deleted_fork_read_only_403_reports_the_verdict
-========================= 6 failed, 7 passed in 3.06s ==========================
+========================= 6 failed, 7 passed in 0.52s ==========================
 ```
 
-The six failures are confined to fork and deleted-fork read-only-token behavior, which is the regression the issue names.
+## Exact restoration
 
-## GREEN: exact restoration
-
-The workflow expression was restored byte-for-byte and the same command was rerun.
+The original workflow bytes were copied back and compared to the saved original. `git diff --exit-code HEAD -- .github/workflows/pr-00-gate.yml tests/test_gate_commit_status_fork_tolerance.py` exited `0` before the restored test run. The same exact command was run again:
 
 ```text
+uv run pytest tests/test_gate_commit_status_fork_tolerance.py -q --no-cov
+```
+
+Exit status: `0` (13 passed).
+
+```text
+============================= test session starts ==============================
+platform darwin -- Python 3.12.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: <repository-root>
+configfile: pyproject.toml
+plugins: langsmith-0.10.9, cov-7.1.0, xdist-3.8.0, rerunfailures-16.3, datadir-1.8.0, typeguard-4.5.1, asyncio-1.3.0, pytest_httpserver-1.1.3, hypothesis-6.155.7, regressions-2.11.0, Faker-40.39.0, anyio-4.13.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
 collected 13 items
 
 tests/test_gate_commit_status_fork_tolerance.py .............            [100%]
 
-============================== 13 passed in 0.33s ==============================
+============================== 13 passed in 0.36s ==============================
 ```
 
-Restoration check:
-
-```text
-$ git diff --exit-code HEAD -- .github/workflows/pr-00-gate.yml tests/test_gate_commit_status_fork_tolerance.py
-$ echo $?
-0
-$ git diff --check origin/main...HEAD
-$ echo $?
-0
-```
-
-No deliberate-break workflow or test change remains in the branch.
-
-## Automated replay evidence
-
-The `Fork status deliberate-break replay` Gate job now runs on every pull request, including workflow-only changes. It:
-
-1. records the tested commit and the literal command;
-2. replaces exactly one production `readOnlyForkToken` expression with `false`;
-3. runs `uv run pytest tests/test_gate_commit_status_fork_tolerance.py -q --no-cov` and requires exit `1` with the named fork and deleted-fork failures;
-4. restores the workflow byte-for-byte;
-5. reruns the same command and requires exit `0`; and
-6. verifies `git diff --exit-code HEAD --` for the workflow and test before uploading the replay artifact.
-
-The artifact contains `metadata.txt`, `mutation.diff`, `red.log`, `red.exit`, `green.log`, `green.exit`, and `restoration.diff`. The upload step runs even when replay validation fails, so a broken replay remains diagnosable without weakening the Gate result.
+The test file was never modified. The workflow contains a CI replay job that writes `red.log`, `red.exit`, `green.log`, `green.exit`, `mutation.diff`, and `restoration.diff` to a run-scoped artifact; it does not alter the PR's committed evidence file. This document records the independently observed current-main replay. The separate `git diff --check origin/main...HEAD` acceptance check is a pre-push repository check, not a command within the Gate job.
