@@ -1,6 +1,6 @@
 # Issue #735: PR #732 fork Gate deliberate-break replay
 
-This is a fresh replay on current `main` at `6fe2644f78da12a8df757fc538e02fd00936fc8e`, not reconstructed output from merged PR #732. The final deliverable changes documentation only.
+This is a fresh replay on current `main` at `9554a876b65f4844989310d29212181529111cc2`, not reconstructed output from merged PR #732. Follow-up issue #737 also adds the same replay as a required Gate job so later runs preserve the exact command, mutation, outputs, exit statuses, and restoration proof as a downloadable artifact.
 
 ## Baseline
 
@@ -33,7 +33,7 @@ The deliberate break replaced only this production expression in `.github/workfl
 Command:
 
 ```text
-uv run pytest tests/test_gate_commit_status_fork_tolerance.py --no-cov
+uv run pytest tests/test_gate_commit_status_fork_tolerance.py -q --no-cov
 ```
 
 Observed output and exit status: exit `1`.
@@ -43,7 +43,7 @@ Observed output and exit status: exit `1`.
 platform darwin -- Python 3.12.2, pytest-9.1.1, pluggy-1.6.0 -- /opt/anaconda3/bin/python
 cachedir: .pytest_cache
 hypothesis profile 'default'
-rootdir: /Users/teacher/.codex/automations/pd-workloop-resume/worktrees/learning-management-system-issue-735
+rootdir: <repository-root>
 configfile: pyproject.toml
 plugins: langsmith-0.10.9, cov-7.1.0, xdist-3.8.0, rerunfailures-16.3, datadir-1.8.0, typeguard-4.5.1, asyncio-1.3.0, pytest_httpserver-1.1.3, hypothesis-6.155.7, regressions-2.11.0, Faker-40.39.0, anyio-4.13.0
 asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
@@ -176,3 +176,16 @@ $ echo $?
 ```
 
 No deliberate-break workflow or test change remains in the branch.
+
+## Automated replay evidence
+
+The `Fork status deliberate-break replay` Gate job now runs on every pull request, including workflow-only changes. It:
+
+1. records the tested commit and the literal command;
+2. replaces exactly one production `readOnlyForkToken` expression with `false`;
+3. runs `uv run pytest tests/test_gate_commit_status_fork_tolerance.py -q --no-cov` and requires exit `1` with the named fork and deleted-fork failures;
+4. restores the workflow byte-for-byte;
+5. reruns the same command and requires exit `0`; and
+6. verifies `git diff --exit-code HEAD --` for the workflow and test before uploading the replay artifact.
+
+The artifact contains `metadata.txt`, `mutation.diff`, `red.log`, `red.exit`, `green.log`, `green.exit`, and `restoration.diff`. The upload step runs even when replay validation fails, so a broken replay remains diagnosable without weakening the Gate result.
