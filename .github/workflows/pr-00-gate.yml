@@ -125,9 +125,118 @@ jobs:
           LMS_RUN_COMPOSE_SMOKE: "1"
         run: uv run pytest tests/test_compose_smoke.py -q --no-cov
 
+  fork-status-replay:
+    name: Fork status deliberate-break replay
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install test dependencies
+        run: uv sync --extra dev
+
+      - name: Capture deliberate break and exact restoration
+        shell: bash
+        env:
+          EVIDENCE: ${{ runner.temp }}/issue-737
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/pr-00-gate.yml
+          test_file=tests/test_gate_commit_status_fork_tolerance.py
+          mkdir -p "$EVIDENCE"
+
+          git diff --exit-code HEAD -- "$workflow" "$test_file"
+          cp "$workflow" "$EVIDENCE/original.yml"
+
+          restore() {
+            cp "$EVIDENCE/original.yml" "$workflow" &&
+              cmp "$EVIDENCE/original.yml" "$workflow"
+          }
+          cleanup() {
+            rc=$?
+            trap - EXIT
+            restore || rc=1
+            exit "$rc"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+
+          {
+            git rev-parse HEAD
+            printf 'run=%s attempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf '%s\n' \
+              'uv run pytest tests/test_gate_commit_status_fork_tolerance.py -q --no-cov'
+          } > "$EVIDENCE/metadata.txt"
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/pr-00-gate.yml")
+          original = path.read_bytes()
+          old = (
+              b"const readOnlyForkToken =\n"
+              b"                error?.status === 403 && isForkPullRequest && !hitRateLimit;"
+          )
+          new = b"const readOnlyForkToken = false;"
+          if original.count(old) != 1:
+              raise SystemExit("Expected exactly one production expression")
+          path.write_bytes(original.replace(old, new, 1))
+          PY
+
+          git diff -- "$workflow" > "$EVIDENCE/mutation.diff"
+
+          red=0
+          uv run pytest tests/test_gate_commit_status_fork_tolerance.py -q --no-cov \
+            > "$EVIDENCE/red.log" 2>&1 || red=$?
+          printf '%s\n' "$red" > "$EVIDENCE/red.exit"
+          cat "$EVIDENCE/red.log"
+
+          restore
+          git diff --exit-code HEAD -- "$workflow" "$test_file" \
+            > "$EVIDENCE/restoration.diff"
+
+          green=0
+          uv run pytest tests/test_gate_commit_status_fork_tolerance.py -q --no-cov \
+            > "$EVIDENCE/green.log" 2>&1 || green=$?
+          printf '%s\n' "$green" > "$EVIDENCE/green.exit"
+          cat "$EVIDENCE/green.log"
+
+          git diff --exit-code HEAD -- "$workflow" "$test_file"
+          test "$red" -eq 1
+          test "$green" -eq 0
+          grep -q 'test_fork_read_only_403' "$EVIDENCE/red.log"
+          grep -q 'test_deleted_fork_read_only_403' "$EVIDENCE/red.log"
+
+      - name: Preserve replay evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: issue-737-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/issue-737/
+          if-no-files-found: error
+          retention-days: 90
+
   summary:
     name: gate-summary
-    needs: [detect, python-ci, compose-smoke]
+    needs: [detect, python-ci, compose-smoke, fork-status-replay]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     permissions:
@@ -151,6 +260,7 @@ jobs:
           DETECT_RESULT: ${{ needs.detect.result || 'skipped' }}
           PYTHON_RESULT: ${{ needs.python-ci.result || 'skipped' }}
           COMPOSE_SMOKE_RESULT: ${{ needs.compose-smoke.result || 'skipped' }}
+          FORK_REPLAY_RESULT: ${{ needs.fork-status-replay.result || 'skipped' }}
         run: |
           set -euo pipefail
 
@@ -211,6 +321,11 @@ jobs:
               state="pending"
               description="Path classification status unknown"
             fi
+          fi
+
+          if [[ "${FORK_REPLAY_RESULT}" != "success" ]]; then
+            state="failure"
+            description="Fork status replay ${FORK_REPLAY_RESULT}"
           fi
 
           echo "state=${state}" >> "$GITHUB_OUTPUT"
