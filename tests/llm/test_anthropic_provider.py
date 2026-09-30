@@ -148,6 +148,23 @@ def test_anthropic_provider_passes_model_max_tokens_and_messages() -> None:
     assert call["max_tokens"] == 512
     assert call["messages"] == [{"role": "user", "content": "Explain spaced retrieval."}]
     assert call["timeout"] == 30.0
+    assert "thinking" not in call  # older models run without thinking by default
+
+
+def test_anthropic_provider_runs_sonnet_5_5_without_upfront_thinking() -> None:
+    # Sonnet 5.5 thinks by default and 400s on thinking.type=disabled; between_tools is its
+    # lowest setting and, with no tools, returns text only (matching the 4.6-era behavior).
+    factory = _stub_factory()
+    provider = AnthropicProvider(api_key="test-key", client_factory=factory)
+    provider.complete(
+        model="claude-sonnet-5-5",
+        prompt="Explain spaced retrieval.",
+        max_tokens=None,
+        timeout_seconds=None,
+    )
+    call = provider._client.messages.calls[0]  # noqa: SLF001
+    assert call["thinking"] == {"type": "between_tools"}
+    assert "temperature" not in call
 
 
 def test_anthropic_provider_omits_timeout_when_not_set() -> None:

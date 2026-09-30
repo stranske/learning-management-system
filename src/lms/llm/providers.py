@@ -155,6 +155,8 @@ _ANTHROPIC_PRICES_USD_PER_MTOKENS: Mapping[str, tuple[float, float]] = {
     "claude-sonnet-4-5": (3.00, 15.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-sonnet-4-7": (3.00, 15.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
     "claude-opus-4-7": (5.00, 25.00),
     "claude-opus-4-8": (5.00, 25.00),
     "claude-opus-5": (5.00, 25.00),
@@ -164,6 +166,13 @@ _ANTHROPIC_PRICES_USD_PER_MTOKENS: Mapping[str, tuple[float, float]] = {
     "claude-3-opus-20240229": (15.00, 75.00),
 }
 _DEFAULT_PRICE: tuple[float, float] = (3.00, 15.00)
+
+# Models that think by default and whose lowest thinking setting is ``between_tools``
+# (``disabled`` is a 400 there). LMS calls are single-turn and tool-free, and every mode was
+# tuned on Sonnet 4.6 / Haiku 4.5, which ran WITHOUT thinking; with thinking on, reasoning
+# tokens would also consume ``default_max_tokens`` (1024) that budget preflight priced as
+# answer text. ``between_tools`` with no tools returns text only, preserving that behavior.
+_BETWEEN_TOOLS_THINKING_MODELS: frozenset[str] = frozenset({"claude-sonnet-5-5"})
 
 
 def _anthropic_cost_micro_usd(
@@ -272,6 +281,8 @@ class AnthropicProvider:
         }
         if timeout_seconds is not None:
             call_kwargs["timeout"] = timeout_seconds
+        if model in _BETWEEN_TOOLS_THINKING_MODELS:
+            call_kwargs["thinking"] = {"type": "between_tools"}
         message = self._create_with_retry(client, call_kwargs)
 
         # The SDK returns a list of content blocks; the common case is one

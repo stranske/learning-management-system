@@ -18,8 +18,8 @@ from lms.llm.models import LLM_MODES
 DEFAULT_MODE_MODELS: Mapping[str, str] = {
     "study-coach": "claude-haiku-4-5",
     "practice": "claude-haiku-4-5",
-    "transfer": "claude-sonnet-4-6",
-    "authoring-assist": "claude-sonnet-4-6",
+    "transfer": "claude-sonnet-5-5",
+    "authoring-assist": "claude-sonnet-5-5",
 }
 
 
