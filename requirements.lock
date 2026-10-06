@@ -39,7 +39,7 @@ babel==2.18.0
     # via jupyterlab-server
 beautifulsoup4==4.15.0
     # via nbconvert
-black==26.5.1
+black==26.10.0
     # via lms (pyproject.toml)
 bleach==6.4.0
     # via nbconvert
@@ -67,7 +67,7 @@ comm==0.2.3
     # via
     #   ipykernel
     #   ipywidgets
-coverage==7.16.1
+coverage==7.16.2
     # via pytest-cov
 debugpy==1.8.21
     # via ipykernel
@@ -222,7 +222,7 @@ mistune==3.3.4
     # via
     #   lms (pyproject.toml)
     #   nbconvert
-mypy==2.3.1
+mypy==2.4.0
     # via lms (pyproject.toml)
 mypy-extensions==1.1.0
     # via
@@ -390,7 +390,7 @@ rpds-py==2026.6.3
     # via
     #   jsonschema
     #   referencing
-ruff==0.16.9
+ruff==0.16.10
     # via lms (pyproject.toml)
 send2trash==2.1.0
     # via jupyter-server
