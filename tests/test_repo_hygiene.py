@@ -1,4 +1,4 @@
-"""Regression coverage for root-only generated dependency artifacts."""
+"""Regression coverage for generated dependency, tool cache, and coverage artifacts."""
 
 from __future__ import annotations
 
@@ -38,3 +38,16 @@ def test_generated_dirs_untracked_and_vendored_preserved() -> None:
         text=True,
     )
     assert vendor_probe.returncode == 1
+
+
+def test_tool_caches_and_coverage_artifacts_are_ignored() -> None:
+    """Require every probe: check-ignore succeeds even when only one path is ignored."""
+    paths = [
+        ".mypy_cache/probe",
+        ".pytest_cache/probe",
+        ".ruff_cache/probe",
+        "coverage.xml",
+        ".coverage",
+    ]
+    result = _git("check-ignore", "--no-index", "--", *paths)
+    assert result.stdout.splitlines() == paths

@@ -110,3 +110,6 @@ node_modules/
 
 # Local derived GitNexus cache
 .gitnexus
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
