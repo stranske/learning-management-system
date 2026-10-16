@@ -53,7 +53,6 @@ def test_llm_session_response_includes_controls_model_and_cost(
         json={
             "learner_id": "learner-1",
             "mode": "study-coach",
-            "prompt_id": "prompt-1",
             "user_message": "Can you orient me first?",
             "coaching_intensity": "quiet",
         },
