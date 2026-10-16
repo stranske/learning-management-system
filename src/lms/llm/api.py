@@ -353,19 +353,16 @@ def _validate_study_coach_session_boundary(
         prompt = get_prompt(session, prompt_id)
         if prompt is None:
             raise HTTPException(status_code=404, detail="Prompt not found")
+        if enforce_ownership and prompt.learning_goal.learner_id != learner_id:
+            raise HTTPException(status_code=404, detail="Learner resource not found.")
         try:
             require_publishable_prompt(prompt)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if enforce_ownership and prompt.learning_goal.learner_id != learner_id:
-            raise HTTPException(status_code=404, detail="Learner resource not found.")
 
-    if source_constraints:
-        if prompt is None:
-            raise HTTPException(
-                status_code=422,
-                detail="source constraints require a published prompt",
-            )
+    # Promptless study turns (including the UI) retain citation constraints.
+    # Source authorization applies when a prompt supplies the allowed references.
+    if source_constraints and prompt is not None:
         allowed = _authorized_source_constraints(prompt)
         unauthorized = [
             constraint for constraint in source_constraints if constraint not in allowed

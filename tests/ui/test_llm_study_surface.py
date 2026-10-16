@@ -79,7 +79,7 @@ def test_llm_study_surface_applies_forget_control(
 def test_llm_study_surface_flags_uncited_claims_as_unverified(
     api_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
-    client, _ = api_client
+    client, session_factory = api_client
 
     response = client.post(
         "/app/learner/llm-study/sessions",
@@ -93,7 +93,12 @@ def test_llm_study_surface_flags_uncited_claims_as_unverified(
     )
 
     assert response.status_code == 200
+    assert "<dt>Trace class</dt><dd>formative</dd>" in response.text
     assert "unverified" in response.text
+    with session_factory() as session:
+        stored = session.query(LLMSession).one()
+        assert stored.learner_id == "learner-1"
+        assert stored.cost_micro_usd > 0
 
 
 def test_llm_study_surface_documents_formative_and_ephemeral_trace_handling(
