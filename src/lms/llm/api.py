@@ -367,7 +367,9 @@ def _validate_study_coach_session_boundary(
                 detail="source constraints require a published prompt",
             )
         allowed = _authorized_source_constraints(prompt)
-        unauthorized = [constraint for constraint in source_constraints if constraint not in allowed]
+        unauthorized = [
+            constraint for constraint in source_constraints if constraint not in allowed
+        ]
         if unauthorized:
             raise HTTPException(
                 status_code=422,

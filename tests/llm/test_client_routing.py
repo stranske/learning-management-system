@@ -775,3 +775,42 @@ def test_http_sessions_explicit_fake_override_stays_deterministic(
     assert stored is not None
     assert stored.provider == "fake"
     assert stored.model == "fake-learning-policy"
+
+
+def test_http_sessions_no_key_mode_stays_deterministic(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Without provider keys, POST /llm/sessions stays on the fake adapter."""
+    from lms.llm import api as llm_api
+    from lms.llm.models import LLMSession
+    from lms.settings import get_settings
+
+    http_client, session_factory = api_client
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    request.addfinalizer(get_settings.cache_clear)
+    monkeypatch.delenv("CLAUDE_API_STRANSKE", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_DEFAULT_PROVIDER", raising=False)
+    get_settings.cache_clear()
+    llm_api._default_client.cache_clear()
+
+    response = http_client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": "learner-1",
+            "mode": "study-coach",
+            "user_message": "Give me an overview.",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    with session_factory() as session:
+        stored = session.get(LLMSession, body["session_id"])
+    assert stored is not None
+    assert stored.provider == "fake"
+    assert stored.model == "fake-learning-policy"
+    assert body["model"] == "fake-learning-policy"
