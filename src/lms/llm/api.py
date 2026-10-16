@@ -353,12 +353,14 @@ def _validate_study_coach_session_boundary(
         prompt = get_prompt(session, prompt_id)
         if prompt is None:
             raise HTTPException(status_code=404, detail="Prompt not found")
+        # Ownership before publication status: unpublished foreign prompts must
+        # not disclose status/authoring_method via a 422 publishability error.
+        if enforce_ownership and prompt.learning_goal.learner_id != learner_id:
+            raise HTTPException(status_code=404, detail="Learner resource not found.")
         try:
             require_publishable_prompt(prompt)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if enforce_ownership and prompt.learning_goal.learner_id != learner_id:
-            raise HTTPException(status_code=404, detail="Learner resource not found.")
 
     if source_constraints:
         if prompt is None:
@@ -658,7 +660,13 @@ def create_llm_session_route(
             prompt_template_version="study-coach-policy-v1",
         )
         flags = flag_uncited_claims(response.text, decision.source_constraints)
-    except SourceConstraintViolation:
+    except SourceConstraintViolation as citation_exc:
+        # First attempt was already budget-committed; fold its billable totals
+        # into the retry session so persisted cost matches both provider calls
+        # without charging the budget for the failed attempt again.
+        prior_input_tokens = citation_exc.input_tokens
+        prior_output_tokens = citation_exc.output_tokens
+        prior_cost_micro_usd = citation_exc.cost_micro_usd
         response = client.complete(
             mode=payload.mode,
             prompt=prompt,
@@ -667,6 +675,9 @@ def create_llm_session_route(
             coaching_intensity=payload.coaching_intensity,
             prompt_template_version="study-coach-policy-v1",
         )
+        response.session.input_tokens += prior_input_tokens
+        response.session.output_tokens += prior_output_tokens
+        response.session.cost_micro_usd += prior_cost_micro_usd
         flags = ("unverified",)
     session.add(response.session)
     event = LLMFeedbackEvent(

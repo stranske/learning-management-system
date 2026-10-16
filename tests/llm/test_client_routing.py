@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from lms.llm.budgets import DailyBudgetTracker
@@ -707,7 +708,7 @@ def test_http_sessions_citation_fallback_keeps_same_provider(
     request: pytest.FixtureRequest,
 ) -> None:
     from lms.llm import api as llm_api
-    from lms.llm.models import LLMSession
+    from lms.llm.models import LLMFeedbackEvent, LLMSession
 
     http_client, session_factory = api_client
     with session_factory() as session:
@@ -735,10 +736,132 @@ def test_http_sessions_citation_fallback_keeps_same_provider(
     assert calls == [("alt", "routing-model"), ("alt", "routing-model")]
     body = response.json()
     assert "unverified" in body["flags"]
+    billed_total = recording_client.budget.spent_micro_usd()
+    assert billed_total > 0
     with session_factory() as session:
         stored = session.get(LLMSession, body["session_id"])
-    assert stored is not None
+        assert stored is not None
+        events = list(
+            session.scalars(
+                select(LLMFeedbackEvent).where(LLMFeedbackEvent.llm_session_id == stored.id)
+            )
+        )
     assert stored.provider == "alt"
+    # Both already-charged attempts are retained once in persisted totals.
+    assert stored.cost_micro_usd == billed_total
+    assert body["cost_micro_usd"] == billed_total
+    assert len(events) == 1
+    assert events[0].cost_metadata["cost_micro_usd"] == billed_total
+
+
+def test_http_sessions_rejects_cross_learner_unpublished_prompt_without_disclosure(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Foreign unpublished prompts must 404 like foreign published ones."""
+    from fastapi import FastAPI
+
+    from lms.auth.login import require_authenticated_user
+    from lms.auth.models import User
+    from lms.graphs.repository import create_knowledge_node
+    from lms.learners.repository import create_learner_for_user, create_learning_goal
+    from lms.llm import api as llm_api
+    from lms.prompts.repository import create_prompt
+    from lms.settings import Settings, get_settings
+    from lms.sources.repository import create_source_reference
+
+    http_client, session_factory = api_client
+    with session_factory() as session:
+        owner = User(
+            id="user-owner-routing",
+            email="owner-routing@example.test",
+            username="owner-routing",
+            display_name="Owner",
+        )
+        foreign = User(
+            id="user-foreign-routing",
+            email="foreign-routing@example.test",
+            username="foreign-routing",
+            display_name="Foreign",
+        )
+        session.add_all([owner, foreign])
+        session.flush()
+        owner_learner = create_learner_for_user(
+            session, user_id=owner.id, display_name="Owner Learner"
+        )
+        foreign_learner = create_learner_for_user(
+            session, user_id=foreign.id, display_name="Foreign Learner"
+        )
+        node = create_knowledge_node(
+            session,
+            title="Foreign draft prompt node",
+            knowledge_type="conceptual",
+            scope="personal",
+            status="published",
+            actor_id=f"user:{foreign.id}",
+        )
+        goal = create_learning_goal(
+            session,
+            learner_id=foreign_learner.id,
+            title="Foreign draft goal",
+            knowledge_type="conceptual",
+            target_node_ids=[node.id],
+            ownership_scope="personal",
+        )
+        source = create_source_reference(
+            session,
+            source_type="url",
+            stable_locator="source:foreign-draft",
+            content="foreign draft fixture",
+            actor_id=f"user:{foreign.id}",
+        )
+        draft_prompt = create_prompt(
+            session,
+            target_node_id=node.id,
+            learning_goal_id=goal.id,
+            knowledge_type="conceptual",
+            intended_cognitive_action="explain",
+            demand_level="medium",
+            expected_answer_form="short-text",
+            body="Draft foreign prompt body.",
+            source_reference_ids=[source.id],
+            authoring_method="human-authored",
+            authoring_actor=f"user:{foreign.id}",
+        )
+        session.commit()
+        owner_learner_id = owner_learner.id
+        draft_prompt_id = draft_prompt.id
+        owner_user = owner
+
+    app = http_client.app
+    assert isinstance(app, FastAPI)
+    app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
+    app.dependency_overrides[require_authenticated_user] = lambda: owner_user
+    request.addfinalizer(lambda: app.dependency_overrides.pop(get_settings, None))
+    request.addfinalizer(lambda: app.dependency_overrides.pop(require_authenticated_user, None))
+
+    recording_client, _, calls = _recording_client(default_provider="alt")
+    llm_api._default_client.cache_clear()
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    monkeypatch.setattr(llm_api, "_default_client", lambda: recording_client)
+
+    response = http_client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": owner_learner_id,
+            "mode": "study-coach",
+            "prompt_id": draft_prompt_id,
+            "user_message": "Explain this.",
+        },
+    )
+
+    assert response.status_code == 404
+    detail = response.json()["detail"]
+    assert detail == "Learner resource not found."
+    assert "status=" not in detail
+    assert "authoring_method=" not in detail
+    assert calls == []
 
 
 def test_http_sessions_explicit_fake_override_stays_deterministic(

@@ -72,12 +72,17 @@ override, a successful study-coach turn persists the resolved provider and model
 on the returned `LLMSession` (not the historical forced-fake override).
 
 Exercise the HTTP learner path against a running app (or the FastAPI test client
-in CI) with a minimal JSON body:
+in CI) with a minimal JSON body. When `AUTH_REQUIRED=true`, include the signed
+`lms_session` cookie from `POST /login` and use a `learner_id` that belongs to
+that authenticated user — otherwise auth or ownership checks stop the request
+before provider routing:
 
 ```bash
 curl -sS -X POST "$BASE_URL/llm/sessions" \
   -H 'Content-Type: application/json' \
-  -d '{"learner_id":"<learner-id>","mode":"study-coach","user_message":"Give me an overview."}'
+  -H 'Accept: application/json' \
+  -b "lms_session=<session-cookie-from-login>" \
+  -d '{"learner_id":"<learner-id-owned-by-signed-in-user>","mode":"study-coach","user_message":"Give me an overview."}'
 ```
 
 Expected JSON fields on success:

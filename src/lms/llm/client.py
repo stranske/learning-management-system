@@ -156,7 +156,12 @@ class LLMClient:
             if missing:
                 raise SourceConstraintViolation(
                     f"mode '{mode}' requires citations {list(source_constraints)}; "
-                    f"missing: {missing}"
+                    f"missing: {missing}",
+                    input_tokens=provider_response.input_tokens,
+                    output_tokens=provider_response.output_tokens,
+                    cost_micro_usd=provider_response.cost_micro_usd,
+                    provider=provider_response.provider,
+                    model=provider_response.model,
                 )
 
         session = LLMSession(
