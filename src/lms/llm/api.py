@@ -36,6 +36,8 @@ from lms.llm.models import (
 )
 from lms.llm.providers import build_default_providers
 from lms.llm.trace_controls import apply_trace_control
+from lms.prompts.models import Prompt
+from lms.prompts.repository import get_prompt, require_publishable_prompt
 from lms.settings import get_settings
 
 router = APIRouter(prefix="/llm", tags=["llm"])
@@ -328,6 +330,51 @@ def _validate_feedback_event_links(
     return llm_session, skill
 
 
+def _authorized_source_constraints(prompt: Prompt) -> frozenset[str]:
+    """Stable locators and ids the learner may cite for this prompt."""
+    allowed: set[str] = set()
+    for reference in prompt.source_references:
+        allowed.add(reference.id)
+        allowed.add(reference.stable_locator)
+    return frozenset(allowed)
+
+
+def _validate_study_coach_session_boundary(
+    session: Session,
+    *,
+    learner_id: str,
+    prompt_id: str | None,
+    source_constraints: list[str],
+    enforce_ownership: bool,
+) -> None:
+    """Reject unknown prompts and unauthorized sources before any provider call."""
+    prompt: Prompt | None = None
+    if prompt_id is not None:
+        prompt = get_prompt(session, prompt_id)
+        if prompt is None:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        try:
+            require_publishable_prompt(prompt)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if enforce_ownership and prompt.learning_goal.learner_id != learner_id:
+            raise HTTPException(status_code=404, detail="Learner resource not found.")
+
+    if source_constraints:
+        if prompt is None:
+            raise HTTPException(
+                status_code=422,
+                detail="source constraints require a published prompt",
+            )
+        allowed = _authorized_source_constraints(prompt)
+        unauthorized = [constraint for constraint in source_constraints if constraint not in allowed]
+        if unauthorized:
+            raise HTTPException(
+                status_code=422,
+                detail=f"unauthorized source references: {unauthorized}",
+            )
+
+
 def _validate_skill_consistency(
     skill: LearningInteractionSkill,
     *,
@@ -559,9 +606,16 @@ def create_llm_session_route(
     current_user: CurrentUserDep,
     settings: SettingsDep,
 ) -> LLMSessionRead:
-    """Create and persist a fake-provider study/practice LLM turn."""
+    """Create and persist a study/practice LLM turn through the configured provider."""
     require_learner_ownership(
         session, user=current_user, settings=settings, learner_id=payload.learner_id
+    )
+    _validate_study_coach_session_boundary(
+        session,
+        learner_id=payload.learner_id,
+        prompt_id=payload.prompt_id,
+        source_constraints=list(payload.source_constraints),
+        enforce_ownership=settings.auth_required,
     )
     _, skill = _validate_feedback_event_links(
         session,
@@ -600,7 +654,6 @@ def create_llm_session_route(
             learner_id=payload.learner_id,
             coaching_intensity=payload.coaching_intensity,
             prompt_template_version="study-coach-policy-v1",
-            provider_name="fake",
         )
         flags = flag_uncited_claims(response.text, decision.source_constraints)
     except SourceConstraintViolation:
@@ -611,7 +664,6 @@ def create_llm_session_route(
             learner_id=payload.learner_id,
             coaching_intensity=payload.coaching_intensity,
             prompt_template_version="study-coach-policy-v1",
-            provider_name="fake",
         )
         flags = ("unverified",)
     session.add(response.session)

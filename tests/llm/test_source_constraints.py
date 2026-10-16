@@ -21,6 +21,7 @@ from lms.db.base import Base
 from lms.db.session import get_session
 from lms.llm.interaction_policy import flag_uncited_claims
 from lms.main import create_app
+from tests.llm.test_client_routing import _seed_published_study_prompt
 
 
 def test_uncited_claim_is_flagged_unverified() -> None:
@@ -87,18 +88,22 @@ def _client() -> Generator[TestClient, None, None]:
         engine.dispose()
 
 
-def test_post_llm_sessions_sets_unverified_flag_when_sources_missing() -> None:
-    with _client() as client:
-        response = client.post(
-            "/llm/sessions",
-            json={
-                "learner_id": "learner-1",
-                "mode": "study-coach",
-                "prompt_id": "prompt-1",
-                "user_message": "Explain this concept briefly.",
-                "source_constraints": ["source:required-1"],
-            },
-        )
+def test_post_llm_sessions_sets_unverified_flag_when_sources_missing(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = api_client
+    with session_factory() as session:
+        ids = _seed_published_study_prompt(session, stable_locator="source:required-1")
+    response = client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": ids["learner_id"],
+            "mode": "study-coach",
+            "prompt_id": ids["prompt_id"],
+            "user_message": "Explain this concept briefly.",
+            "source_constraints": [ids["stable_locator"]],
+        },
+    )
 
     assert response.status_code == 200
     body = response.json()

@@ -188,7 +188,6 @@ def test_post_llm_sessions_runs_fake_provider_study_coach_turn() -> None:
             json={
                 "learner_id": "learner-1",
                 "mode": "study-coach",
-                "prompt_id": "prompt-1",
                 "user_message": "Tell me the answer",
                 "retrieval_active": True,
             },
