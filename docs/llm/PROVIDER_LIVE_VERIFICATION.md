@@ -66,8 +66,35 @@ authoring-assist proposal complete: proposal=<uuid> node=<uuid> prompt=<uuid> mo
 
 ## study-coach Routing Check
 
-To verify the provider chosen by the running API client, inspect the resolved
-client configuration (without issuing a provider call):
+The learner HTTP path (`POST /llm/sessions`) routes through the same configured
+client as the CLI helpers. With a key configured and no `LLM_DEFAULT_PROVIDER`
+override, a successful study-coach turn persists the resolved provider and model
+on the returned `LLMSession` (not the historical forced-fake override).
+
+When `AUTH_REQUIRED=true`, authenticate through `/login` and send the signed
+session cookie. Without a valid session, JSON callers receive HTTP 401. The
+`<learner-id>` must belong to the signed-in user. Local development and test mode
+(`AUTH_REQUIRED=false`) does not require credentials; omit the cookie option
+below in that mode.
+
+Exercise the HTTP learner path against a running app (or the FastAPI test client
+in CI) with a minimal JSON body:
+
+```bash
+curl -sS -X POST "$BASE_URL/llm/sessions" \
+  -H 'Content-Type: application/json' \
+  -b "lms_session=<session-cookie-from-login>" \
+  -d '{"learner_id":"<learner-id>","mode":"study-coach","user_message":"Give me an overview."}'
+```
+
+Expected JSON fields on success:
+
+- `model` names the configured study-coach model (for example `claude-haiku-4-5`
+  when Anthropic is the default provider), not a hardcoded fake-only route.
+- The persisted session row records matching `provider`, `model`, and
+  `cost_micro_usd` for the turn.
+
+To inspect configuration without issuing a provider call:
 
 ```python
 from lms.llm.api import _default_client

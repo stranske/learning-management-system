@@ -73,7 +73,6 @@ def test_ephemeral_feedback_event_excludes_verbatim_body_by_default(
             "learner_id": "learner-1",
             "mode": "study-coach",
             "user_message": "I think this is true without a source.",
-            "source_constraints": ["source-1"],
             "retrieval_active": False,
         },
     )

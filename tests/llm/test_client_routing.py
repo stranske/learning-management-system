@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session, sessionmaker
 
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import GoldSetEntry, LLMClient
@@ -473,3 +477,416 @@ def test_unregistered_provider_override_is_rejected(
 
     with pytest.raises(ValueError, match=f"LLM_DEFAULT_PROVIDER='{override}' is not registered"):
         llm_api._default_client()
+
+
+# ---------------------------------------------------------------------------
+# study-coach HTTP route provider selection (issue #763)
+# ---------------------------------------------------------------------------
+
+
+def _seed_published_study_prompt(
+    session: Session,
+    *,
+    stable_locator: str = "source:study-coach-1",
+) -> dict[str, str]:
+    from lms.graphs.repository import create_knowledge_node
+    from lms.learners.repository import create_learner_for_user, create_learning_goal
+    from lms.prompts.repository import create_prompt, publish_prompt
+    from lms.sources.repository import create_source_reference
+
+    user_id = "user-study-coach-routing"
+    node = create_knowledge_node(
+        session,
+        title="Study coach routing",
+        knowledge_type="conceptual",
+        scope="personal",
+        status="published",
+        actor_id=f"user:{user_id}",
+    )
+    learner = create_learner_for_user(
+        session,
+        user_id=user_id,
+        display_name="Routing Learner",
+    )
+    goal = create_learning_goal(
+        session,
+        learner_id=learner.id,
+        title="Routing goal",
+        knowledge_type="conceptual",
+        target_node_ids=[node.id],
+        ownership_scope="personal",
+    )
+    source = create_source_reference(
+        session,
+        source_type="url",
+        stable_locator=stable_locator,
+        content="study coach routing fixture",
+        actor_id=f"user:{user_id}",
+    )
+    prompt = create_prompt(
+        session,
+        target_node_id=node.id,
+        learning_goal_id=goal.id,
+        knowledge_type="conceptual",
+        intended_cognitive_action="explain",
+        demand_level="medium",
+        expected_answer_form="short-text",
+        body="Explain the routing fixture.",
+        source_reference_ids=[source.id],
+        authoring_method="human-authored",
+        authoring_actor=f"user:{user_id}",
+    )
+    publish_prompt(session, prompt, reviewing_actor=f"user:{user_id}")
+    session.commit()
+    return {
+        "learner_id": learner.id,
+        "prompt_id": prompt.id,
+        "stable_locator": stable_locator,
+        "source_id": source.id,
+    }
+
+
+def _recording_client(
+    *,
+    default_provider: str,
+    responder: Callable[[str, str, str], str] | None = None,
+) -> tuple[LLMClient, dict[str, FakeProvider], list[tuple[str, str]]]:
+    calls: list[tuple[str, str]] = []
+
+    def _record(name: str, model: str, prompt: str) -> str:
+        calls.append((name, model))
+        if responder is not None:
+            return responder(name, model, prompt)
+        return "Here is a concise explanation tied to the requested learning goal."
+
+    providers = {
+        name: FakeProvider(
+            name=name,
+            responder=partial(_record, name),
+        )
+        for name in ("fake", "alt")
+    }
+    config = LLMConfig(
+        mode_models=dict.fromkeys(DEFAULT_MODE_MODELS, "routing-model"),
+        global_daily_cap_micro_usd=10_000_000,
+        default_provider=default_provider,
+    )
+    budget = DailyBudgetTracker(mode_caps_micro_usd={}, global_cap_micro_usd=10_000_000)
+    client = LLMClient(config=config, providers=providers, budget=budget)
+    return client, providers, calls
+
+
+def test_http_sessions_rejects_unknown_prompt_before_provider_call(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    from lms.llm import api as llm_api
+
+    client, _session_factory = api_client
+    recording_client, _, calls = _recording_client(default_provider="alt")
+    llm_api._default_client.cache_clear()
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    monkeypatch.setattr(llm_api, "_default_client", lambda: recording_client)
+
+    response = client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": "learner-1",
+            "mode": "study-coach",
+            "prompt_id": "missing-prompt-id",
+            "user_message": "Explain this.",
+        },
+    )
+
+    assert response.status_code == 404
+    assert calls == []
+
+
+def test_http_sessions_rejects_unauthorized_source_before_provider_call(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    from lms.llm import api as llm_api
+
+    http_client, session_factory = api_client
+    with session_factory() as session:
+        ids = _seed_published_study_prompt(session)
+    recording_client, _, calls = _recording_client(default_provider="alt")
+    llm_api._default_client.cache_clear()
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    monkeypatch.setattr(llm_api, "_default_client", lambda: recording_client)
+
+    response = http_client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": ids["learner_id"],
+            "mode": "study-coach",
+            "prompt_id": ids["prompt_id"],
+            "user_message": "Explain this.",
+            "source_constraints": ["source:not-linked"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "unauthorized source references" in response.json()["detail"]
+    assert calls == []
+
+
+def test_http_sessions_rejects_unauthorized_source_before_citation_fallback(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Citation fallback must not run when source references fail the boundary."""
+    from lms.llm import api as llm_api
+
+    http_client, session_factory = api_client
+    with session_factory() as session:
+        ids = _seed_published_study_prompt(session)
+    recording_client, _, calls = _recording_client(
+        default_provider="alt",
+        responder=lambda _name, _model, _prompt: "uncited generated text",
+    )
+    llm_api._default_client.cache_clear()
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    monkeypatch.setattr(llm_api, "_default_client", lambda: recording_client)
+
+    response = http_client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": ids["learner_id"],
+            "mode": "study-coach",
+            "prompt_id": ids["prompt_id"],
+            "user_message": "Explain this.",
+            "source_constraints": ["source:not-linked"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert calls == []
+
+
+def test_http_sessions_uses_configured_default_provider(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    from lms.llm import api as llm_api
+    from lms.llm.models import LLMSession
+
+    http_client, session_factory = api_client
+    recording_client, _, calls = _recording_client(default_provider="alt")
+    llm_api._default_client.cache_clear()
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    monkeypatch.setattr(llm_api, "_default_client", lambda: recording_client)
+
+    response = http_client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": "learner-1",
+            "mode": "study-coach",
+            "user_message": "Give me an overview.",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert calls == [("alt", "routing-model")]
+    with session_factory() as session:
+        stored = session.get(LLMSession, body["session_id"])
+    assert stored is not None
+    assert stored.provider == "alt"
+    assert stored.model == "routing-model"
+    assert stored.cost_micro_usd > 0
+
+
+def test_http_sessions_citation_fallback_keeps_same_provider(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    from lms.llm import api as llm_api
+    from lms.llm.models import LLMSession
+
+    http_client, session_factory = api_client
+    with session_factory() as session:
+        ids = _seed_published_study_prompt(session, stable_locator="source:cited-1")
+    recording_client, _, calls = _recording_client(
+        default_provider="alt",
+        responder=lambda _name, _model, _prompt: "uncited generated text",
+    )
+    llm_api._default_client.cache_clear()
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    monkeypatch.setattr(llm_api, "_default_client", lambda: recording_client)
+
+    response = http_client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": ids["learner_id"],
+            "mode": "study-coach",
+            "prompt_id": ids["prompt_id"],
+            "user_message": "Explain this.",
+            "source_constraints": [ids["stable_locator"]],
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls == [("alt", "routing-model"), ("alt", "routing-model")]
+    body = response.json()
+    assert "unverified" in body["flags"]
+    with session_factory() as session:
+        stored = session.get(LLMSession, body["session_id"])
+    assert stored is not None
+    assert stored.provider == "alt"
+
+
+def test_http_sessions_explicit_fake_override_stays_deterministic(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    from lms.llm import api as llm_api
+    from lms.llm.models import LLMSession
+    from lms.settings import get_settings
+
+    http_client, session_factory = api_client
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    request.addfinalizer(get_settings.cache_clear)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-for-real-provider")
+    monkeypatch.delenv("CLAUDE_API_STRANSKE", raising=False)
+    monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_DEFAULT_PROVIDER", "fake")
+
+    def reject_real_call(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("explicit fake override reached the real provider")
+
+    monkeypatch.setattr(AnthropicProvider, "complete", reject_real_call)
+    get_settings.cache_clear()
+    llm_api._default_client.cache_clear()
+    assert get_settings().anthropic_api_key == "test-key-for-real-provider"
+    assert "anthropic" in llm_api._default_client().providers
+
+    response = http_client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": "learner-1",
+            "mode": "study-coach",
+            "user_message": "Give me an overview.",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    with session_factory() as session:
+        stored = session.get(LLMSession, body["session_id"])
+    assert stored is not None
+    assert stored.provider == "fake"
+    # The configured key selects model defaults; the override selects the adapter.
+    assert stored.model == "claude-haiku-4-5"
+
+
+def test_http_sessions_no_key_without_override_stays_deterministic(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> None:
+    from lms.llm import api as llm_api
+    from lms.llm.models import LLMSession
+    from lms.settings import Settings, get_settings
+
+    http_client, session_factory = api_client
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    request.addfinalizer(get_settings.cache_clear)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_API_STRANSKE", raising=False)
+    monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_DEFAULT_PROVIDER", raising=False)
+    # Prove that a developer's dotenv credentials cannot affect this no-key case.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "ANTHROPIC_API_KEY=dummy-dotenv-key\nLLM_DEFAULT_PROVIDER=anthropic\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(llm_api, "get_settings", lambda: Settings(_env_file=None))
+
+    def reject_real_call(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("no-key mode reached the real provider")
+
+    monkeypatch.setattr(AnthropicProvider, "complete", reject_real_call)
+    get_settings.cache_clear()
+    llm_api._default_client.cache_clear()
+    assert llm_api.get_settings().anthropic_api_key is None
+    assert llm_api._default_client().config.default_provider == "fake"
+
+    response = http_client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": "learner-1",
+            "mode": "study-coach",
+            "user_message": "Give me an overview.",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    with session_factory() as session:
+        stored = session.get(LLMSession, body["session_id"])
+    assert stored is not None
+    assert stored.provider == "fake"
+    assert stored.model == "fake-learning-policy"
+
+
+def test_http_sessions_unpublished_foreign_prompt_returns_404_before_provider_call(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lms.auth.login import require_authenticated_user
+    from lms.auth.models import User
+    from lms.learners.repository import create_learner_for_user
+    from lms.llm import api as llm_api
+    from lms.prompts.models import Prompt
+    from lms.settings import Settings, get_settings
+
+    http_client, session_factory = api_client
+    with session_factory() as session:
+        ids = _seed_published_study_prompt(session)
+        prompt = session.get(Prompt, ids["prompt_id"])
+        assert prompt is not None
+        prompt.status = "draft"
+        owner = User(
+            id="routing-other-user",
+            email="routing-other@example.test",
+            username="routing-other",
+            display_name="Other learner",
+        )
+        session.add(owner)
+        session.flush()
+        learner = create_learner_for_user(
+            session,
+            user_id=owner.id,
+            display_name="Other learner",
+        )
+        session.commit()
+        learner_id = learner.id
+
+    http_client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
+    http_client.app.dependency_overrides[require_authenticated_user] = lambda: owner
+    recording_client, _, calls = _recording_client(default_provider="alt")
+    monkeypatch.setattr(llm_api, "_default_client", lambda: recording_client)
+
+    response = http_client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": learner_id,
+            "mode": "study-coach",
+            "prompt_id": ids["prompt_id"],
+            "user_message": "Explain this.",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Learner resource not found."
+    assert calls == []
