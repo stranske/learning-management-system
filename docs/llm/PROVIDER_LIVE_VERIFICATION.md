@@ -71,12 +71,19 @@ client as the CLI helpers. With a key configured and no `LLM_DEFAULT_PROVIDER`
 override, a successful study-coach turn persists the resolved provider and model
 on the returned `LLMSession` (not the historical forced-fake override).
 
+When `AUTH_REQUIRED=true`, authenticate through `/login` and send the signed
+session cookie. Without a valid session, JSON callers receive HTTP 401. The
+`<learner-id>` must belong to the signed-in user. Local development and test mode
+(`AUTH_REQUIRED=false`) does not require credentials; omit the cookie option
+below in that mode.
+
 Exercise the HTTP learner path against a running app (or the FastAPI test client
 in CI) with a minimal JSON body:
 
 ```bash
 curl -sS -X POST "$BASE_URL/llm/sessions" \
   -H 'Content-Type: application/json' \
+  -b "lms_session=<session-cookie-from-login>" \
   -d '{"learner_id":"<learner-id>","mode":"study-coach","user_message":"Give me an overview."}'
 ```
 

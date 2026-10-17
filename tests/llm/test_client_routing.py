@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -790,10 +791,11 @@ def test_http_sessions_no_key_without_override_stays_deterministic(
     api_client: tuple[TestClient, sessionmaker[Session]],
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
+    tmp_path: Path,
 ) -> None:
     from lms.llm import api as llm_api
     from lms.llm.models import LLMSession
-    from lms.settings import get_settings
+    from lms.settings import Settings, get_settings
 
     http_client, session_factory = api_client
     request.addfinalizer(llm_api._default_client.cache_clear)
@@ -802,8 +804,22 @@ def test_http_sessions_no_key_without_override_stays_deterministic(
     monkeypatch.delenv("CLAUDE_API_STRANSKE", raising=False)
     monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
     monkeypatch.delenv("LLM_DEFAULT_PROVIDER", raising=False)
+    # Prove that a developer's dotenv credentials cannot affect this no-key case.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "ANTHROPIC_API_KEY=dummy-dotenv-key\nLLM_DEFAULT_PROVIDER=anthropic\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(llm_api, "get_settings", lambda: Settings(_env_file=None))
+
+    def reject_real_call(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("no-key mode reached the real provider")
+
+    monkeypatch.setattr(AnthropicProvider, "complete", reject_real_call)
     get_settings.cache_clear()
     llm_api._default_client.cache_clear()
+    assert llm_api.get_settings().anthropic_api_key is None
+    assert llm_api._default_client().config.default_provider == "fake"
 
     response = http_client.post(
         "/llm/sessions",
