@@ -609,6 +609,8 @@ def create_llm_session_route(
     require_learner_ownership(
         session, user=current_user, settings=settings, learner_id=payload.learner_id
     )
+    # Boundary check before client resolution / provider routing: unknown prompts
+    # and unauthorized source references must never reach a configured adapter.
     _validate_study_coach_session_boundary(
         session,
         learner_id=payload.learner_id,
@@ -641,6 +643,9 @@ def create_llm_session_route(
     decision = decide_interaction_policy(context)
     if skill is not None:
         _validate_skill_consistency(skill, mode=payload.mode, trace_class=decision.trace_class)
+    # Use the configured default provider (including citation-fallback retries).
+    # Do not force provider_name="fake" here; explicit fake / no-key modes are
+    # selected by _default_client() / LLM_DEFAULT_PROVIDER instead.
     client = _default_client()
     prompt = build_policy_prompt(context, decision)
     flags: tuple[str, ...] = ()

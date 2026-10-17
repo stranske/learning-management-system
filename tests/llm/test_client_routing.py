@@ -585,9 +585,15 @@ def test_http_sessions_rejects_unknown_prompt_before_provider_call(
 
     client, _session_factory = api_client
     recording_client, _, calls = _recording_client(default_provider="alt")
+    client_factory_calls: list[str] = []
+
+    def tracking_default_client() -> LLMClient:
+        client_factory_calls.append("default-client")
+        return recording_client
+
     llm_api._default_client.cache_clear()
     request.addfinalizer(llm_api._default_client.cache_clear)
-    monkeypatch.setattr(llm_api, "_default_client", lambda: recording_client)
+    monkeypatch.setattr(llm_api, "_default_client", tracking_default_client)
 
     response = client.post(
         "/llm/sessions",
@@ -600,6 +606,8 @@ def test_http_sessions_rejects_unknown_prompt_before_provider_call(
     )
 
     assert response.status_code == 404
+    # Boundary rejection must run before client resolution and provider traffic.
+    assert client_factory_calls == []
     assert calls == []
 
 
@@ -614,9 +622,15 @@ def test_http_sessions_rejects_unauthorized_source_before_provider_call(
     with session_factory() as session:
         ids = _seed_published_study_prompt(session)
     recording_client, _, calls = _recording_client(default_provider="alt")
+    client_factory_calls: list[str] = []
+
+    def tracking_default_client() -> LLMClient:
+        client_factory_calls.append("default-client")
+        return recording_client
+
     llm_api._default_client.cache_clear()
     request.addfinalizer(llm_api._default_client.cache_clear)
-    monkeypatch.setattr(llm_api, "_default_client", lambda: recording_client)
+    monkeypatch.setattr(llm_api, "_default_client", tracking_default_client)
 
     response = http_client.post(
         "/llm/sessions",
@@ -631,6 +645,7 @@ def test_http_sessions_rejects_unauthorized_source_before_provider_call(
 
     assert response.status_code == 422
     assert "unauthorized source references" in response.json()["detail"]
+    assert client_factory_calls == []
     assert calls == []
 
 
@@ -649,9 +664,15 @@ def test_http_sessions_rejects_unauthorized_source_before_citation_fallback(
         default_provider="alt",
         responder=lambda _name, _model, _prompt: "uncited generated text",
     )
+    client_factory_calls: list[str] = []
+
+    def tracking_default_client() -> LLMClient:
+        client_factory_calls.append("default-client")
+        return recording_client
+
     llm_api._default_client.cache_clear()
     request.addfinalizer(llm_api._default_client.cache_clear)
-    monkeypatch.setattr(llm_api, "_default_client", lambda: recording_client)
+    monkeypatch.setattr(llm_api, "_default_client", tracking_default_client)
 
     response = http_client.post(
         "/llm/sessions",
@@ -665,6 +686,7 @@ def test_http_sessions_rejects_unauthorized_source_before_citation_fallback(
     )
 
     assert response.status_code == 422
+    assert client_factory_calls == []
     assert calls == []
 
 
@@ -694,6 +716,8 @@ def test_http_sessions_uses_configured_default_provider(
     assert response.status_code == 200
     body = response.json()
     assert calls == [("alt", "routing-model")]
+    assert body["model"] == "routing-model"
+    assert body["cost_micro_usd"] > 0
     with session_factory() as session:
         stored = session.get(LLMSession, body["session_id"])
     assert stored is not None
@@ -736,10 +760,14 @@ def test_http_sessions_citation_fallback_keeps_same_provider(
     assert calls == [("alt", "routing-model"), ("alt", "routing-model")]
     body = response.json()
     assert "unverified" in body["flags"]
+    assert body["model"] == "routing-model"
+    assert body["cost_micro_usd"] > 0
     with session_factory() as session:
         stored = session.get(LLMSession, body["session_id"])
     assert stored is not None
     assert stored.provider == "alt"
+    assert stored.model == "routing-model"
+    assert stored.cost_micro_usd > 0
 
 
 def test_http_sessions_explicit_fake_override_stays_deterministic(
@@ -842,6 +870,7 @@ def test_http_sessions_no_key_without_override_stays_deterministic(
 def test_http_sessions_unpublished_foreign_prompt_returns_404_before_provider_call(
     api_client: tuple[TestClient, sessionmaker[Session]],
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     from lms.auth.login import require_authenticated_user
     from lms.auth.models import User
@@ -875,7 +904,15 @@ def test_http_sessions_unpublished_foreign_prompt_returns_404_before_provider_ca
     http_client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
     http_client.app.dependency_overrides[require_authenticated_user] = lambda: owner
     recording_client, _, calls = _recording_client(default_provider="alt")
-    monkeypatch.setattr(llm_api, "_default_client", lambda: recording_client)
+    client_factory_calls: list[str] = []
+
+    def tracking_default_client() -> LLMClient:
+        client_factory_calls.append("default-client")
+        return recording_client
+
+    llm_api._default_client.cache_clear()
+    request.addfinalizer(llm_api._default_client.cache_clear)
+    monkeypatch.setattr(llm_api, "_default_client", tracking_default_client)
 
     response = http_client.post(
         "/llm/sessions",
@@ -889,4 +926,7 @@ def test_http_sessions_unpublished_foreign_prompt_returns_404_before_provider_ca
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Learner resource not found."
+    # Unpublished / foreign prompts must fail the ownership boundary before client
+    # resolution, matching unknown-prompt and unauthorized-source rejection.
+    assert client_factory_calls == []
     assert calls == []
