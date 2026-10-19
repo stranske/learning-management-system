@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from sqlalchemy.orm import Session
 
 from lms.auth.models import User
 from lms.capability.models import CapabilityEstimate
 from lms.cases.models import EvidencePacket
-from lms.export_import import export_jsonl
+from lms.export_import import ExportImportError, export_jsonl
 from lms.llm.models import LLMSession
 from lms.sources.models import SourceReference
 
@@ -115,3 +118,424 @@ def test_m5_redaction_excludes_inferred_capability_and_formative_llm_bodies(
     assert "verbatim formative coaching trace" not in "\n".join(
         json.dumps(record) for record in records
     )
+
+
+@pytest.mark.parametrize("heading_style", ["atx", "setext"])
+@pytest.mark.parametrize("reverse_records", [False, True])
+@pytest.mark.parametrize("nested_directory", [False, True])
+def test_markdown_note_body_redacted_across_whole_default_export(
+    db_session: Session,
+    tmp_path: Path,
+    heading_style: str,
+    reverse_records: bool,
+    nested_directory: bool,
+) -> None:
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    note = tmp_path / "private.md"
+    sentinels = ("SENTINEL_PRIVATE_PARENT_BODY_757", "SENTINEL_PRIVATE_CHILD_BODY_757")
+    headings = (
+        ("# Public heading", "## Child heading")
+        if heading_style == "atx"
+        else ("Public heading\n==============", "Child heading\n-------------")
+    )
+    notes = [note]
+    if nested_directory:
+        nested = tmp_path / "nested"
+        nested.mkdir()
+        notes.append(nested / "second-private.md")
+    for path in notes:
+        path.write_text(
+            f"{headings[0]}\n{sentinels[0]}\n\n{headings[1]}\n{sentinels[1]}\n", encoding="utf-8"
+        )
+    import_markdown_notes(db_session, tmp_path if nested_directory else note)
+    db_session.commit()
+    nodes = db_session.query(KnowledgeNode).all()
+    assert len(nodes) == 2 * len(notes)
+    for node in nodes:
+        source = db_session.get(SourceReference, node.source_reference_id)
+        assert source is not None
+        assert source.stable_locator == node.imported_from
+        assert Path(source.stable_locator) in notes
+    descriptions = {node.id: node.description for node in nodes}
+    expected_sentinels = dict(zip(("Public heading", "Child heading"), sentinels, strict=True))
+    assert all(expected_sentinels[node.title] in (node.description or "") for node in nodes)
+    for options in ({}, {"include_source_content": "none"}):
+        lines = list(export_jsonl(db_session, **options))
+        assert all(sentinel not in "\n".join(lines) for sentinel in sentinels)
+        exported = [json.loads(line) for line in lines]
+        exported_nodes = [r["record"] for r in exported if r["type"] == "KnowledgeNode"]
+        assert {r["id"] for r in exported_nodes} == {n.id for n in nodes}
+        assert all(r["description"] is None for r in exported_nodes)
+        assert all(r["source_reference_id"] for r in exported_nodes)
+        assert sum(r["type"] == "KnowledgeEdge" for r in exported) == len(notes)
+        assert all(r["record"]["content_hash"] for r in exported if r["type"] == "SourceReference")
+    opted_in = [
+        json.loads(line)
+        for line in export_jsonl(db_session, include_source_content="all", confirm_all=True)
+    ]
+    assert {
+        entry["record"]["id"]: entry["record"]["description"]
+        for entry in opted_in
+        if entry["type"] == "KnowledgeNode"
+    } == descriptions
+    assert {node.id: node.description for node in nodes} == descriptions
+    from sqlalchemy import create_engine
+
+    from lms.db.base import Base
+    from lms.export_import import import_jsonl
+    from lms.graphs.models import KnowledgeEdge
+
+    source_ids = {node.id: node.source_reference_id for node in nodes}
+    source_hashes = {source.id: source.content_hash for source in db_session.query(SourceReference)}
+    graph_links = {
+        edge.id: (edge.source_node_id, edge.target_node_id, edge.edge_type)
+        for edge in db_session.query(KnowledgeEdge)
+    }
+    for mode in ("public-only", "none"):
+        path = tmp_path / f"redacted-{mode}.jsonl"
+        with patch.object(db_session, "get", wraps=db_session.get) as session_get:
+            lines = list(export_jsonl(db_session, include_source_content=mode))
+        if mode == "none":
+            assert all(call.args[0] is not SourceReference for call in session_get.call_args_list)
+        if reverse_records:
+            lines.reverse()
+        path.write_text(
+            "\n".join(lines) + "\n",
+            encoding="utf-8",
+        )
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        try:
+            with engine.begin() as connection:
+                connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+                assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+                Base.metadata.create_all(connection)
+            with Session(engine) as destination:
+                import_jsonl(destination, path, dry_run=False)
+                destination.commit()
+                destination.expunge_all()
+                restored = destination.query(KnowledgeNode).all()
+                assert {node.id: node.source_reference_id for node in restored} == source_ids
+                assert all(node.description is None for node in restored)
+                assert {
+                    source.id: source.content_hash for source in destination.query(SourceReference)
+                } == source_hashes
+                assert {
+                    edge.id: (edge.source_node_id, edge.target_node_id, edge.edge_type)
+                    for edge in destination.query(KnowledgeEdge)
+                } == graph_links
+                # Source locators survive the round-trip, but they must not
+                # recover withheld bodies, even when the next export opts in.
+                restored_stream = "\n".join(
+                    export_jsonl(destination, include_source_content="all", confirm_all=True)
+                )
+                assert all(sentinel not in restored_stream for sentinel in sentinels)
+        finally:
+            engine.dispose()
+
+
+@pytest.mark.parametrize("content_mode", ["public-only", "none"])
+def test_redacted_export_preserves_persisted_excerpt_for_later_opt_in(
+    db_session: Session, tmp_path: Path, content_mode: str
+) -> None:
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinel = "SENTINEL_PERSISTED_PRIVATE_BODY_757"
+    note = tmp_path / "persisted.md"
+    content = f"# Persisted excerpt\n{sentinel}\n"
+    note.write_text(content, encoding="utf-8")
+    import_markdown_notes(db_session, note)
+    db_session.commit()
+    db_session.expunge_all()
+
+    redacted_stream = "\n".join(export_jsonl(db_session, include_source_content=content_mode))
+    assert sentinel not in redacted_stream
+    # A caller may commit other work after exporting. Redaction must not dirty
+    # the source-derived description and erase the retained local excerpt.
+    db_session.commit()
+    db_session.expunge_all()
+    assert db_session.query(KnowledgeNode).one().description == sentinel
+    assert note.read_text(encoding="utf-8") == content
+
+    opted_in_stream = "\n".join(
+        export_jsonl(db_session, include_source_content="all", confirm_all=True)
+    )
+    opted_in_node = next(
+        entry["record"]
+        for entry in map(json.loads, opted_in_stream.splitlines())
+        if entry["type"] == "KnowledgeNode"
+    )
+    assert opted_in_node["description"] == sentinel
+
+
+def test_public_imported_description_obeys_none_and_preserves_authored_text(db_session, tmp_path):
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    note = tmp_path / "public.md"
+    sentinel = "SENTINEL_PUBLIC_BODY_757"
+    note.write_text(f"# Heading\n{sentinel}\n")
+    import_markdown_notes(db_session, note, source_visibility="public")
+    db_session.add(
+        KnowledgeNode(
+            id="authored",
+            title="Authored",
+            description="Authored description",
+            knowledge_type="factual",
+            ownership_scope="personal",
+            provenance="manual",
+        )
+    )
+    db_session.add(
+        KnowledgeNode(
+            id="legacy",
+            title="Legacy import",
+            description="SENTINEL_UNBOUND_757",
+            knowledge_type="factual",
+            ownership_scope="personal",
+            provenance="imported",
+        )
+    )
+    db_session.commit()
+    public = "\n".join(export_jsonl(db_session))
+    assert sentinel in public
+    assert "SENTINEL_UNBOUND_757" not in public
+    none = "\n".join(export_jsonl(db_session, include_source_content="none"))
+    assert sentinel not in none
+    assert "Authored description" in none
+
+
+@pytest.mark.parametrize("visibility", ["public", "local-only"])
+@pytest.mark.parametrize("content_mode", ["public-only", "none", "all"])
+def test_authored_description_citing_source_survives_excerpt_redaction(
+    db_session: Session, tmp_path: Path, visibility: str, content_mode: str
+) -> None:
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinel = "SENTINEL_CITED_SOURCE_BODY_757"
+    note = tmp_path / "cited.md"
+    note.write_text(f"# Cited source\n{sentinel}\n", encoding="utf-8")
+    import_markdown_notes(db_session, note, source_visibility=visibility)
+    db_session.commit()
+    imported = db_session.query(KnowledgeNode).one()
+    imported_id, source_id = imported.id, imported.source_reference_id
+    authored_description = "My independently authored explanation with a source citation."
+    db_session.add(
+        KnowledgeNode(
+            id="authored-with-citation",
+            title="Authored explanation",
+            description=authored_description,
+            knowledge_type="factual",
+            ownership_scope="personal",
+            provenance="manual",
+            source_reference_id=source_id,
+        )
+    )
+    db_session.commit()
+    db_session.expunge_all()
+
+    stream = "\n".join(
+        export_jsonl(
+            db_session, include_source_content=content_mode, confirm_all=content_mode == "all"
+        )
+    )
+    nodes = {
+        entry["record"]["id"]: entry["record"]
+        for entry in map(json.loads, stream.splitlines())
+        if entry["type"] == "KnowledgeNode"
+    }
+    visible = content_mode == "all" or (content_mode == "public-only" and visibility == "public")
+    assert (sentinel in stream) is visible
+    assert nodes[imported_id]["description"] == (sentinel if visible else None)
+    assert nodes["authored-with-citation"]["description"] == authored_description
+    assert {node["source_reference_id"] for node in nodes.values()} == {source_id}
+
+
+def test_private_import_requires_confirmation_before_exporting_any_records(
+    db_session: Session, tmp_path: Path
+) -> None:
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinel = "SENTINEL_UNCONFIRMED_PRIVATE_BODY_757"
+    note = tmp_path / "confirmation.md"
+    note.write_text(f"# Confirmation probe\n{sentinel}\n", encoding="utf-8")
+    import_markdown_notes(db_session, note)
+    db_session.commit()
+
+    # Consume the generator inside the assertion: validation must precede even
+    # the first metadata record, so a failed export cannot leave a partial bundle.
+    emitted: list[str] = []
+    with pytest.raises(ExportImportError, match="requires --yes-i-mean-it"):
+        emitted.extend(export_jsonl(db_session, include_source_content="all"))
+    assert emitted == []
+
+    confirmed = "\n".join(export_jsonl(db_session, include_source_content="all", confirm_all=True))
+    assert sentinel in confirmed
+    # Consent applies to one export; later exports still use private defaults.
+    assert sentinel not in "\n".join(export_jsonl(db_session))
+    assert sentinel not in "\n".join(export_jsonl(db_session, include_source_content="none"))
+    assert db_session.query(KnowledgeNode).one().description == sentinel
+
+
+@pytest.mark.parametrize("source_reference_id", [None, "missing-source"])
+@pytest.mark.parametrize("content_mode", ["public-only", "none", "all"])
+def test_imported_excerpt_with_unresolved_source_requires_explicit_opt_in(
+    db_session: Session,
+    tmp_path: Path,
+    source_reference_id: str | None,
+    content_mode: str,
+) -> None:
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinel = "SENTINEL_UNRESOLVED_SOURCE_BODY_757"
+    note = tmp_path / "unresolved.md"
+    note.write_text(f"# Unresolved source\n{sentinel}\n", encoding="utf-8")
+    import_markdown_notes(db_session, note)
+    db_session.commit()
+    node = db_session.query(KnowledgeNode).one()
+    # Legacy data may lack its source link or point to an unavailable source.
+    # Neither case supplies evidence that the excerpt is public.
+    node.source_reference_id = source_reference_id
+    db_session.commit()
+    db_session.expunge_all()
+
+    stream = "\n".join(
+        export_jsonl(
+            db_session,
+            include_source_content=content_mode,
+            confirm_all=content_mode == "all",
+        )
+    )
+    exported_node = next(
+        entry["record"]
+        for entry in map(json.loads, stream.splitlines())
+        if entry["type"] == "KnowledgeNode"
+    )
+    assert (sentinel in stream) is (content_mode == "all")
+    assert exported_node["description"] == (sentinel if content_mode == "all" else None)
+    assert exported_node["source_reference_id"] == source_reference_id
+    assert db_session.query(KnowledgeNode).one().description == sentinel
+
+
+@pytest.mark.parametrize(
+    "initial_visibility,current_visibility", [("public", "local-only"), ("local-only", "public")]
+)
+@pytest.mark.parametrize("content_mode", ["public-only", "none", "all"])
+def test_imported_excerpt_export_uses_current_source_visibility(
+    db_session: Session,
+    tmp_path: Path,
+    initial_visibility: str,
+    current_visibility: str,
+    content_mode: str,
+) -> None:
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinel = "SENTINEL_RECLASSIFIED_SOURCE_BODY_757"
+    note = tmp_path / "reclassified.md"
+    note.write_text(f"# Reclassified source\n{sentinel}\n", encoding="utf-8")
+    import_markdown_notes(db_session, note, source_visibility=initial_visibility)
+    db_session.commit()
+    node = db_session.query(KnowledgeNode).one()
+    source = db_session.get(SourceReference, node.source_reference_id)
+    assert source is not None
+    source_id, content_hash = source.id, source.content_hash
+
+    # An export before reclassification must not cache the original permission.
+    initial_stream = "\n".join(export_jsonl(db_session))
+    assert (sentinel in initial_stream) is (initial_visibility == "public")
+    source.source_visibility = current_visibility
+    db_session.commit()
+    db_session.expunge_all()
+
+    stream = "\n".join(
+        export_jsonl(
+            db_session,
+            include_source_content=content_mode,
+            confirm_all=content_mode == "all",
+        )
+    )
+    records = {entry["type"]: entry["record"] for entry in map(json.loads, stream.splitlines())}
+    visible = content_mode == "all" or (
+        content_mode == "public-only" and current_visibility == "public"
+    )
+    assert (sentinel in stream) is visible
+    assert records["KnowledgeNode"]["description"] == (sentinel if visible else None)
+    assert records["KnowledgeNode"]["source_reference_id"] == source_id
+    assert records["SourceReference"]["source_visibility"] == current_visibility
+    assert records["SourceReference"]["content_hash"] == content_hash
+    assert db_session.query(KnowledgeNode).one().description == sentinel
+
+
+@pytest.mark.parametrize("content_mode", ["public-only", "none", "all"])
+def test_mixed_visibility_round_trip_preserves_only_exported_excerpts(
+    db_session: Session, tmp_path: Path, content_mode: str
+) -> None:
+    from sqlalchemy import create_engine
+
+    from lms.db.base import Base
+    from lms.export_import import import_jsonl
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinels = {
+        "public": "SENTINEL_ROUND_TRIP_PUBLIC_BODY_757",
+        "local-only": "SENTINEL_ROUND_TRIP_PRIVATE_BODY_757",
+    }
+    for visibility, sentinel in sentinels.items():
+        note = tmp_path / f"{visibility}.md"
+        note.write_text(f"# {visibility}\n{sentinel}\n", encoding="utf-8")
+        import_markdown_notes(db_session, note, source_visibility=visibility)
+    db_session.commit()
+
+    expected_descriptions = {
+        node.id: (
+            sentinels[node.title]
+            if content_mode == "all" or (content_mode == "public-only" and node.title == "public")
+            else None
+        )
+        for node in db_session.query(KnowledgeNode)
+    }
+    source_links = {node.id: node.source_reference_id for node in db_session.query(KnowledgeNode)}
+    source_metadata = {
+        source.id: (source.content_hash, source.source_visibility)
+        for source in db_session.query(SourceReference)
+    }
+    stream = "\n".join(
+        export_jsonl(
+            db_session, include_source_content=content_mode, confirm_all=content_mode == "all"
+        )
+    )
+    path = tmp_path / "mixed.jsonl"
+    path.write_text(stream + "\n", encoding="utf-8")
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as destination:
+            import_jsonl(destination, path, dry_run=False)
+            destination.commit()
+            destination.expunge_all()
+            restored = destination.query(KnowledgeNode).all()
+            assert {node.id: node.description for node in restored} == expected_descriptions
+            assert {node.id: node.source_reference_id for node in restored} == source_links
+            assert {
+                source.id: (source.content_hash, source.source_visibility)
+                for source in destination.query(SourceReference)
+            } == source_metadata
+            # Even a later opt-in can only emit the excerpts the bundle retained.
+            restored_stream = "\n".join(
+                export_jsonl(destination, include_source_content="all", confirm_all=True)
+            )
+            for visibility, sentinel in sentinels.items():
+                visible = content_mode == "all" or (
+                    content_mode == "public-only" and visibility == "public"
+                )
+                assert (sentinel in stream) is visible
+                assert (sentinel in restored_stream) is visible
+    finally:
+        engine.dispose()

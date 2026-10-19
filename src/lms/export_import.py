@@ -473,6 +473,7 @@ def export_jsonl(
                 continue
             payload = _model_to_record(
                 row,
+                session=session,
                 include_pii=include_pii,
                 include_source_content=include_source_content,
             )
@@ -578,7 +579,9 @@ def _export_statement(model: type[Any]) -> Any:
     return statement
 
 
-def _model_to_record(row: Any, *, include_pii: str, include_source_content: str) -> dict[str, Any]:
+def _model_to_record(
+    row: Any, *, session: Session, include_pii: str, include_source_content: str
+) -> dict[str, Any]:
     mapper = inspect(row).mapper
     record_type = row.__class__.__name__
     record: dict[str, Any] = {}
@@ -587,6 +590,24 @@ def _model_to_record(row: Any, *, include_pii: str, include_source_content: str)
     redacted_fields = set()
     if include_source_content != ALL_VALUE:
         redacted_fields.update(DEFAULT_REDACTED_FIELDS.get(record_type, set()))
+    # Imported descriptions are source excerpts. Their existing provenance/link
+    # also covers older Markdown imports; unknown visibility fails closed.
+    redact_description = False
+    if (
+        isinstance(row, KnowledgeNode)
+        and row.provenance == "imported"
+        and include_source_content != ALL_VALUE
+    ):
+        if include_source_content == "none":
+            # Every imported excerpt is withheld; skip the SourceReference lookup.
+            redact_description = True
+        else:
+            source = (
+                session.get(SourceReference, row.source_reference_id)
+                if row.source_reference_id
+                else None
+            )
+            redact_description = source is None or source.source_visibility != "public"
     source_content_fields = set()
     if record_type == "SourceReference" and include_source_content != ALL_VALUE:
         source_content_fields = SOURCE_CONTENT_FIELDS
@@ -601,6 +622,8 @@ def _model_to_record(row: Any, *, include_pii: str, include_source_content: str)
             record[column.key] = REDACTED_FIELD_VALUES[(record_type, column.key)]
             continue
         record[column.key] = _dump_value(getattr(row, column.key))
+    if redact_description:
+        record["description"] = None
     if isinstance(row, LearningGoal):
         record["target_node_ids"] = [node.id for node in row.target_nodes]
     if isinstance(row, Prompt):
@@ -742,8 +765,15 @@ def _apply_pii_import_defaults(record_type: str, record: dict[str, Any]) -> None
 def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
     pending_relationships: list[tuple[str, str, str, list[str]]] = []
     pending_session_parents: list[tuple[LLMSession, str]] = []
-    for entry in entries:
+    type_order = {model.__name__: index for index, model in enumerate(EXPORT_ORDER)}
+    current_model: type[Any] | None = None
+    for entry in sorted(entries, key=lambda entry: type_order[entry["type"]]):
         model = MODEL_BY_TYPE[entry["type"]]
+        if model is not current_model:
+            # Column-only foreign keys do not establish ORM flush ordering.
+            # Persist each dependency type before adding its dependent rows.
+            session.flush()
+            current_model = model
         record = dict(entry["record"])
         _apply_pii_import_defaults(entry["type"], record)
         for key in RELATIONSHIP_KEYS.get(entry["type"], ()):

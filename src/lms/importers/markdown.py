@@ -136,6 +136,8 @@ def import_markdown_notes(
             scope=scope,
             actor_id=actor_id,
             status="draft",
+            # This provenance plus the source link marks the description as an
+            # excerpt, so export applies that reference's visibility policy.
             provenance="imported",
             imported_from=str(heading.file_path),
             source_reference_id=source.id,
@@ -347,6 +349,14 @@ def _normalize_source_heading_title(title: str) -> str:
 
 
 def _section_description(content: str) -> str | None:
+    """Build a short local excerpt from a Markdown section body.
+
+    The returned text is source-derived and remains stored on the KnowledgeNode
+    for local use. Export redaction follows the bound SourceReference via the
+    ``source_reference_id`` set on ``create_knowledge_node`` (Local-Only Source
+    Policy): default/`public-only` withholds local-only or unknown sources,
+    ``none`` withholds all imported excerpts, and confirmed ``all`` keeps them.
+    """
     lines = content.splitlines()
     # Only the underline immediately after a Setext heading is heading syntax.
     setext_section = bool(
