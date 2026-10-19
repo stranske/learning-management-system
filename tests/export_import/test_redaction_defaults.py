@@ -127,21 +127,25 @@ def test_markdown_note_body_redacted_across_whole_default_export(
     from lms.importers.markdown import import_markdown_notes
 
     note = tmp_path / "private.md"
-    sentinel = "SENTINEL_PRIVATE_BODY_757"
+    sentinels = ("SENTINEL_PRIVATE_PARENT_BODY_757", "SENTINEL_PRIVATE_CHILD_BODY_757")
     headings = (
         ("# Public heading", "## Child heading")
         if heading_style == "atx"
         else ("Public heading\n==============", "Child heading\n-------------")
     )
-    note.write_text(f"{headings[0]}\n{sentinel}\n\n{headings[1]}\n{sentinel}\n", encoding="utf-8")
+    note.write_text(
+        f"{headings[0]}\n{sentinels[0]}\n\n{headings[1]}\n{sentinels[1]}\n", encoding="utf-8"
+    )
     import_markdown_notes(db_session, note)
     db_session.commit()
     nodes = db_session.query(KnowledgeNode).all()
     assert len(nodes) == 2
-    assert all(sentinel in node.description for node in nodes)
+    descriptions = {node.id: node.description for node in nodes}
+    expected_sentinels = dict(zip(("Public heading", "Child heading"), sentinels, strict=True))
+    assert all(expected_sentinels[node.title] in (node.description or "") for node in nodes)
     for options in ({}, {"include_source_content": "none"}):
         lines = list(export_jsonl(db_session, **options))
-        assert sentinel not in "\n".join(lines)
+        assert all(sentinel not in "\n".join(lines) for sentinel in sentinels)
         exported = [json.loads(line) for line in lines]
         exported_nodes = [r["record"] for r in exported if r["type"] == "KnowledgeNode"]
         assert {r["id"] for r in exported_nodes} == {n.id for n in nodes}
@@ -149,10 +153,16 @@ def test_markdown_note_body_redacted_across_whole_default_export(
         assert all(r["source_reference_id"] for r in exported_nodes)
         assert any(r["type"] == "KnowledgeEdge" for r in exported)
         assert all(r["record"]["content_hash"] for r in exported if r["type"] == "SourceReference")
-    assert sentinel in "\n".join(
-        export_jsonl(db_session, include_source_content="all", confirm_all=True)
-    )
-    assert all(sentinel in node.description for node in nodes), "export must not mutate local notes"
+    opted_in = [
+        json.loads(line)
+        for line in export_jsonl(db_session, include_source_content="all", confirm_all=True)
+    ]
+    assert {
+        entry["record"]["id"]: entry["record"]["description"]
+        for entry in opted_in
+        if entry["type"] == "KnowledgeNode"
+    } == descriptions
+    assert {node.id: node.description for node in nodes} == descriptions
     from sqlalchemy import create_engine
 
     from lms.db.base import Base
