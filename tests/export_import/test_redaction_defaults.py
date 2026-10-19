@@ -287,6 +287,53 @@ def test_public_imported_description_obeys_none_and_preserves_authored_text(db_s
     assert "Authored description" in none
 
 
+@pytest.mark.parametrize("visibility", ["public", "local-only"])
+@pytest.mark.parametrize("content_mode", ["public-only", "none", "all"])
+def test_authored_description_citing_source_survives_excerpt_redaction(
+    db_session: Session, tmp_path: Path, visibility: str, content_mode: str
+) -> None:
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinel = "SENTINEL_CITED_SOURCE_BODY_757"
+    note = tmp_path / "cited.md"
+    note.write_text(f"# Cited source\n{sentinel}\n", encoding="utf-8")
+    import_markdown_notes(db_session, note, source_visibility=visibility)
+    db_session.commit()
+    imported = db_session.query(KnowledgeNode).one()
+    imported_id, source_id = imported.id, imported.source_reference_id
+    authored_description = "My independently authored explanation with a source citation."
+    db_session.add(
+        KnowledgeNode(
+            id="authored-with-citation",
+            title="Authored explanation",
+            description=authored_description,
+            knowledge_type="factual",
+            ownership_scope="personal",
+            provenance="manual",
+            source_reference_id=source_id,
+        )
+    )
+    db_session.commit()
+    db_session.expunge_all()
+
+    stream = "\n".join(
+        export_jsonl(
+            db_session, include_source_content=content_mode, confirm_all=content_mode == "all"
+        )
+    )
+    nodes = {
+        entry["record"]["id"]: entry["record"]
+        for entry in map(json.loads, stream.splitlines())
+        if entry["type"] == "KnowledgeNode"
+    }
+    visible = content_mode == "all" or (content_mode == "public-only" and visibility == "public")
+    assert (sentinel in stream) is visible
+    assert nodes[imported_id]["description"] == (sentinel if visible else None)
+    assert nodes["authored-with-citation"]["description"] == authored_description
+    assert {node["source_reference_id"] for node in nodes.values()} == {source_id}
+
+
 def test_private_import_requires_confirmation_before_exporting_any_records(
     db_session: Session, tmp_path: Path
 ) -> None:
