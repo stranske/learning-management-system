@@ -121,8 +121,13 @@ def test_m5_redaction_excludes_inferred_capability_and_formative_llm_bodies(
 
 @pytest.mark.parametrize("heading_style", ["atx", "setext"])
 @pytest.mark.parametrize("reverse_records", [False, True])
+@pytest.mark.parametrize("nested_directory", [False, True])
 def test_markdown_note_body_redacted_across_whole_default_export(
-    db_session: Session, tmp_path: Path, heading_style: str, reverse_records: bool
+    db_session: Session,
+    tmp_path: Path,
+    heading_style: str,
+    reverse_records: bool,
+    nested_directory: bool,
 ) -> None:
     from lms.graphs.models import KnowledgeNode
     from lms.importers.markdown import import_markdown_notes
@@ -134,13 +139,24 @@ def test_markdown_note_body_redacted_across_whole_default_export(
         if heading_style == "atx"
         else ("Public heading\n==============", "Child heading\n-------------")
     )
-    note.write_text(
-        f"{headings[0]}\n{sentinels[0]}\n\n{headings[1]}\n{sentinels[1]}\n", encoding="utf-8"
-    )
-    import_markdown_notes(db_session, note)
+    notes = [note]
+    if nested_directory:
+        nested = tmp_path / "nested"
+        nested.mkdir()
+        notes.append(nested / "second-private.md")
+    for path in notes:
+        path.write_text(
+            f"{headings[0]}\n{sentinels[0]}\n\n{headings[1]}\n{sentinels[1]}\n", encoding="utf-8"
+        )
+    import_markdown_notes(db_session, tmp_path if nested_directory else note)
     db_session.commit()
     nodes = db_session.query(KnowledgeNode).all()
-    assert len(nodes) == 2
+    assert len(nodes) == 2 * len(notes)
+    for node in nodes:
+        source = db_session.get(SourceReference, node.source_reference_id)
+        assert source is not None
+        assert source.stable_locator == node.imported_from
+        assert Path(source.stable_locator) in notes
     descriptions = {node.id: node.description for node in nodes}
     expected_sentinels = dict(zip(("Public heading", "Child heading"), sentinels, strict=True))
     assert all(expected_sentinels[node.title] in (node.description or "") for node in nodes)
@@ -152,7 +168,7 @@ def test_markdown_note_body_redacted_across_whole_default_export(
         assert {r["id"] for r in exported_nodes} == {n.id for n in nodes}
         assert all(r["description"] is None for r in exported_nodes)
         assert all(r["source_reference_id"] for r in exported_nodes)
-        assert any(r["type"] == "KnowledgeEdge" for r in exported)
+        assert sum(r["type"] == "KnowledgeEdge" for r in exported) == len(notes)
         assert all(r["record"]["content_hash"] for r in exported if r["type"] == "SourceReference")
     opted_in = [
         json.loads(line)
