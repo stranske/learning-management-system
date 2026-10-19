@@ -11,7 +11,7 @@ queue-status writes, pinning the wiring between the tested units.
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import UTC
+from datetime import UTC, timedelta
 from unittest.mock import Mock
 
 import pytest
@@ -648,10 +648,11 @@ def test_duplicate_scoring_does_not_inflate_prompt_timing_history(
 
 
 @pytest.mark.parametrize(
-    "excluded", ["learner", "scope", "class", "hint", "low-confidence", "transfer", "unscored"]
+    "excluded",
+    ["learner", "scope", "class", "hint", "low-confidence", "transfer", "unscored", "future"],
 )
 def test_prompt_timing_history_does_not_cross_boundaries(loop_client, excluded):
-    from lms.evidence.models import EvidenceRecord
+    from lms.evidence.models import Attempt, EvidenceRecord
 
     client, factory = loop_client
     learner, node, prompt = _seed_learner_node_prompt(factory)
@@ -682,6 +683,12 @@ def test_prompt_timing_history_does_not_cross_boundaries(loop_client, excluded):
                 evidence.correctness = None
                 evidence.normalized_score = None
                 evidence.raw_score = None
+            if excluded == "future":
+                attempt = session.get(Attempt, response.json()["id"])
+                assert attempt is not None
+                # Imported attempts may be dated after the response being scheduled.
+                # They cannot establish that response's timing threshold.
+                attempt.created_at += timedelta(days=1)
             session.commit()
     payload = _attempt_payload(learner, node, prompt, response_text="current")
     payload.update(confidence_rating=5, elapsed_seconds=1)
