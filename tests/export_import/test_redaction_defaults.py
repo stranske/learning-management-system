@@ -148,20 +148,37 @@ def test_markdown_note_body_redacted_across_whole_default_export(db_session, tmp
     from lms.export_import import import_jsonl
     from lms.graphs.models import KnowledgeEdge
 
-    path = tmp_path / "redacted.jsonl"
-    path.write_text("\n".join(export_jsonl(db_session)) + "\n")
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    try:
-        Base.metadata.create_all(engine)
-        with Session(engine) as destination:
-            import_jsonl(destination, path, dry_run=False)
-            restored = destination.query(KnowledgeNode).all()
-            assert {n.id for n in restored} == {n.id for n in nodes}
-            assert all(n.description is None and n.source_reference_id for n in restored)
-            assert destination.query(KnowledgeEdge).count() == 1
-            assert destination.query(SourceReference).count() == 2
-    finally:
-        engine.dispose()
+    source_ids = {node.id: node.source_reference_id for node in nodes}
+    source_hashes = {source.id: source.content_hash for source in db_session.query(SourceReference)}
+    graph_links = {
+        edge.id: (edge.source_node_id, edge.target_node_id, edge.edge_type)
+        for edge in db_session.query(KnowledgeEdge)
+    }
+    for mode in ("public-only", "none"):
+        path = tmp_path / f"redacted-{mode}.jsonl"
+        path.write_text(
+            "\n".join(export_jsonl(db_session, include_source_content=mode)) + "\n",
+            encoding="utf-8",
+        )
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        try:
+            Base.metadata.create_all(engine)
+            with Session(engine) as destination:
+                import_jsonl(destination, path, dry_run=False)
+                destination.commit()
+                destination.expunge_all()
+                restored = destination.query(KnowledgeNode).all()
+                assert {node.id: node.source_reference_id for node in restored} == source_ids
+                assert all(node.description is None for node in restored)
+                assert {
+                    source.id: source.content_hash for source in destination.query(SourceReference)
+                } == source_hashes
+                assert {
+                    edge.id: (edge.source_node_id, edge.target_node_id, edge.edge_type)
+                    for edge in destination.query(KnowledgeEdge)
+                } == graph_links
+        finally:
+            engine.dispose()
 
 
 def test_public_imported_description_obeys_none_and_preserves_authored_text(db_session, tmp_path):

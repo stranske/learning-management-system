@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 
 import lms.__main__ as lms_main
 from lms.audit.models import AuditLog
+from lms.export_import import export_jsonl
 from lms.graphs.models import KnowledgeEdge, KnowledgeNode
 from lms.importers.markdown import import_markdown_notes
 from lms.sources.models import SourceReference
@@ -373,3 +375,54 @@ def test_imported_excerpt_export_follows_bound_source_visibility(db_session, tmp
     assert sentinel in "\n".join(
         export_jsonl(db_session, include_source_content="all", confirm_all=True)
     )
+
+
+@pytest.mark.parametrize("import_order", [("public", "local-only"), ("local-only", "public")])
+@pytest.mark.parametrize("content_mode", ["public-only", "none", "all"])
+def test_mixed_visibility_imports_export_using_each_nodes_source(
+    db_session: Session, tmp_path: Path, import_order: tuple[str, str], content_mode: str
+) -> None:
+    sentinels = {
+        "public": "SENTINEL_MIXED_PUBLIC_BODY_757",
+        "local-only": "SENTINEL_MIXED_PRIVATE_BODY_757",
+    }
+    for visibility in import_order:
+        note = tmp_path / f"{visibility}.md"
+        note.write_text(f"# {visibility}\n{sentinels[visibility]}\n", encoding="utf-8")
+        import_markdown_notes(db_session, note, source_visibility=visibility)
+    db_session.commit()
+    # Resolve provenance and visibility from persisted rows, not the importer's
+    # in-memory objects. Mixed imports must not share a visibility decision.
+    db_session.expunge_all()
+    nodes = db_session.query(KnowledgeNode).all()
+    assert len(nodes) == 2
+    for node in nodes:
+        source = db_session.get(SourceReference, node.source_reference_id)
+        assert source is not None
+        assert source.source_visibility == node.title
+        assert source.stable_locator == str(tmp_path / f"{node.title}.md")
+        assert node.provenance == "imported"
+        assert node.description == sentinels[node.title]
+
+    stream = "\n".join(
+        export_jsonl(
+            db_session,
+            include_source_content=content_mode,
+            confirm_all=content_mode == "all",
+        )
+    )
+    exported_nodes = {
+        entry["record"]["id"]: entry["record"]
+        for entry in map(json.loads, stream.splitlines())
+        if entry["type"] == "KnowledgeNode"
+    }
+    assert set(exported_nodes) == {node.id for node in nodes}
+    for node in nodes:
+        visible = content_mode == "all" or (
+            content_mode == "public-only" and node.title == "public"
+        )
+        sentinel = sentinels[node.title]
+        assert (sentinel in stream) is visible
+        assert exported_nodes[node.id]["description"] == (sentinel if visible else None)
+        assert exported_nodes[node.id]["source_reference_id"] == node.source_reference_id
+        assert node.description == sentinel
