@@ -98,3 +98,21 @@ result and are not product-defect evidence. Storage in SQLite, browser-free
 HTTP tests and offline execution do not establish hosted deployment behavior.
 
 Restored proof: [385-pass transcript](evidence/fsrs-consumer-762/lms762-restored.txt) and [control source hashes](evidence/fsrs-consumer-762/lms762-controls.json). Negative controls: [Easy](evidence/fsrs-consumer-762/lms762-easy-red.txt), [exclusion](evidence/fsrs-consumer-762/lms762-excluded-red.txt), [binary selection](evidence/fsrs-consumer-762/lms762-binary-red.txt).
+
+Follow-up prevention check (2026-10-19):
+`test_transfer_exclusion_preserves_all_committed_consumers` covers near/far/novel
+with both empty and existing scheduler state. Fresh database sessions compare
+every card, queue, schedule and decision column before and after commit, while
+confirming that the excluded evidence and receipt persist. A process-local
+negative control that changes an existing queue item's status to `skipped`
+after exclusion fails all three existing-state cases at the snapshot assertion.
+No production files are modified by this control.
+
+`python -m pytest tests/scheduling/test_fsrs_adapter.py -q --no-cov -m "not slow"`
+reports **109 passed**. With coverage enabled,
+`python -m pytest tests/scheduling/test_fsrs_adapter.py -q -m "not slow"`
+also reports **109 passed**, then exits 1 because subset coverage is 33.98%
+against the unchanged 80% repository floor. The HTTP audit could not complete
+in this follow-up sandbox: local socketpair sends used by TestClient's thread
+wakeup raise `PermissionError`. These new checks verify the direct scheduler
+and committed persistence path, without claiming fresh HTTP verification.

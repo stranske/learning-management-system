@@ -747,6 +747,77 @@ def test_transfer_exclusion_trace_freezes_persisted_card_state(db_session: Sessi
     assert attempt.response_metadata["scheduling_outcome"]["card_mutated"] is False
 
 
+@pytest.mark.parametrize("distance", ["near", "far", "novel"])
+@pytest.mark.parametrize("has_history", [False, True], ids=["cold", "existing"])
+def test_transfer_exclusion_preserves_all_committed_consumers(
+    db_session: Session, distance: str, has_history: bool
+) -> None:
+    """Excluded evidence preserves existing rows as well as avoiding new ones."""
+    from copy import deepcopy
+    from typing import Any
+
+    from sqlalchemy import select
+
+    from lms.evidence.models import Attempt
+    from lms.scheduling.models import (
+        ReviewCardState,
+        ReviewQueueItem,
+        ReviewSchedule,
+        SchedulerDecision,
+    )
+    from lms.scheduling.service import ExcludedSchedulingOutcome, schedule_from_attempt
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    def snapshot(session: Session) -> dict[str, list[dict[str, Any]]]:
+        return {
+            model.__tablename__: [
+                deepcopy(
+                    {column.key: getattr(row, column.key) for column in model.__table__.columns}
+                )
+                for row in session.scalars(select(model).order_by(model.id))
+            ]
+            for model in (ReviewCardState, ReviewQueueItem, ReviewSchedule, SchedulerDecision)
+        }
+
+    if has_history:
+        prior_attempt, prior_evidence = _make_attempt(db_session)
+        prior_item = schedule_from_attempt(
+            db_session, attempt=prior_attempt, evidence_record=prior_evidence
+        )
+        assert isinstance(prior_item, ReviewQueueItem)
+        db_session.commit()
+
+    # Both snapshots use fresh sessions so ORM identity-map state cannot hide
+    # writes, and SQLite datetime values have the same persisted representation.
+    bind = db_session.get_bind()
+    with Session(bind) as session:
+        before = snapshot(session)
+        assert all(len(rows) == int(has_history) for rows in before.values())
+
+    attempt, evidence = _make_attempt(db_session, prompt_id="transfer-prompt")
+    evidence.transfer_distance = distance
+    db_session.flush()
+    outcome = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert isinstance(outcome, ExcludedSchedulingOutcome)
+    attempt_id, evidence_id = attempt.id, evidence.id
+    db_session.commit()
+
+    with Session(bind) as session:
+        persisted_attempt = session.get(Attempt, attempt_id)
+        persisted_evidence = session.get(EvidenceRecord, evidence_id)
+        assert persisted_evidence is not None
+        assert persisted_evidence.attempt_id == attempt_id
+        assert persisted_evidence.transfer_distance == distance
+        assert persisted_attempt is not None
+        assert persisted_attempt.response_metadata is not None
+        receipt = persisted_attempt.response_metadata["scheduling_outcome"]
+        assert receipt["fsrs_rating"]["rule_id"] == "transfer-excluded"
+        assert receipt["fsrs_rating"]["scheduling_included"] is False
+        assert receipt["card_mutated"] is False
+        assert receipt["output"]["due_at"] is None
+        assert snapshot(session) == before
+
+
 def test_easy_versus_good_persist_distinct_engine_ratings(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
