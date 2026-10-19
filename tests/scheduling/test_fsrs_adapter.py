@@ -714,9 +714,9 @@ def test_transfer_exclusion_trace_freezes_persisted_card_state(db_session: Sessi
     """scheduling_included=false must not fall back into card/queue/schedule mutation."""
     import copy
 
+    from lms.scheduling.card_state import get_or_seed_card_state
     from lms.scheduling.models import ReviewCardState, ReviewQueueItem, ReviewSchedule
     from lms.scheduling.service import ExcludedSchedulingOutcome, schedule_from_attempt
-    from lms.scheduling.card_state import get_or_seed_card_state
     from tests.scheduling.test_review_queue import _make_attempt
 
     card = get_or_seed_card_state(
