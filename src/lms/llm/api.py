@@ -56,7 +56,14 @@ class LLMSessionCreate(BaseModel):
     user_message: str = Field(min_length=1)
     prompt_id: str | None = Field(default=None, max_length=36)
     mastery_context: str | None = None
-    source_constraints: list[str] = Field(default_factory=list)
+    source_constraints: list[str] = Field(
+        default_factory=list,
+        description=(
+            "For a linked prompt, caller ids/locators must belong to its sources; "
+            "they cannot replace or remove the server-resolved required source set. "
+            "Promptless turns retain the supplied constraints."
+        ),
+    )
     assessment_restricted: bool = False
     retrieval_active: bool = False
     hint_count: int = Field(default=0, ge=0)
@@ -346,8 +353,8 @@ def _validate_study_coach_session_boundary(
     prompt_id: str | None,
     source_constraints: list[str],
     enforce_ownership: bool,
-) -> None:
-    """Reject unknown prompts and unauthorized sources before any provider call."""
+) -> tuple[str, ...]:
+    """Validate then resolve mandatory canonical prompt citations before providers."""
     prompt: Prompt | None = None
     if prompt_id is not None:
         prompt = get_prompt(session, prompt_id)
@@ -372,6 +379,12 @@ def _validate_study_coach_session_boundary(
                 status_code=422,
                 detail=f"unauthorized source references: {unauthorized}",
             )
+
+    if prompt is None:
+        return tuple(source_constraints)
+    # One stable locator per linked reference, never both its id and locator.
+    # An allowed caller subset/alias cannot remove another required reference.
+    return tuple(sorted({reference.stable_locator for reference in prompt.source_references}))
 
 
 def _validate_skill_consistency(
@@ -611,7 +624,7 @@ def create_llm_session_route(
     )
     # Boundary check before client resolution / provider routing: unknown prompts
     # and unauthorized source references must never reach a configured adapter.
-    _validate_study_coach_session_boundary(
+    source_constraints = _validate_study_coach_session_boundary(
         session,
         learner_id=payload.learner_id,
         prompt_id=payload.prompt_id,
@@ -632,7 +645,7 @@ def create_llm_session_route(
         user_message=payload.user_message,
         prompt_id=payload.prompt_id,
         mastery_context=payload.mastery_context,
-        source_constraints=tuple(payload.source_constraints),
+        source_constraints=source_constraints,
         assessment_restricted=payload.assessment_restricted,
         retrieval_active=payload.retrieval_active,
         hint_count=payload.hint_count,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from contextlib import contextmanager
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -108,3 +109,120 @@ def test_post_llm_sessions_sets_unverified_flag_when_sources_missing(
     assert response.status_code == 200
     body = response.json()
     assert "unverified" in body["flags"]
+
+
+@pytest.mark.parametrize("caller", ["omitted", "id", "locator"])
+def test_linked_prompt_omitted_or_alias_constraints_cannot_disable_citations(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    caller: str,
+) -> None:
+    from lms.llm import api as llm_api
+    from lms.llm.models import LLMFeedbackEvent
+    from tests.llm.test_client_routing import _recording_client
+
+    client, factory = api_client
+    with factory() as session:
+        ids = _seed_published_study_prompt(session, stable_locator="source:approved-linked")
+    prompts: list[str] = []
+
+    def answer(_provider: str, _model: str, prompt: str) -> str:
+        prompts.append(prompt)
+        return "An uncited explanation."
+
+    recording, _, calls = _recording_client(default_provider="fake", responder=answer)
+    monkeypatch.setattr(llm_api, "_default_client", lambda: recording)
+    payload = {
+        "learner_id": ids["learner_id"],
+        "prompt_id": ids["prompt_id"],
+        "user_message": "Explain this.",
+    }
+    if caller != "omitted":
+        payload["source_constraints"] = [
+            ids["source_id"] if caller == "id" else ids["stable_locator"]
+        ]
+    response = client.post("/llm/sessions", json=payload)
+    assert response.status_code == 200
+    assert response.json()["flags"] == ["unverified"]
+    assert calls and all(ids["stable_locator"] in prompt for prompt in prompts)
+    with factory() as session:
+        event = session.query(LLMFeedbackEvent).one()
+        assert event.source_reference_ids == [ids["stable_locator"]]
+        assert event.unverified
+
+
+def test_caller_subset_cannot_remove_another_linked_source(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lms.llm import api as llm_api
+    from lms.llm.models import LLMFeedbackEvent
+    from lms.prompts.models import Prompt
+    from lms.sources.repository import create_source_reference
+    from tests.llm.test_client_routing import _recording_client
+
+    client, factory = api_client
+    with factory() as session:
+        ids = _seed_published_study_prompt(session, stable_locator="source:approved-one")
+        source = create_source_reference(
+            session,
+            source_type="url",
+            stable_locator="source:approved-two",
+            content="Second source",
+            actor_id="user:user-study-coach-routing",
+        )
+        prompt = session.get(Prompt, ids["prompt_id"])
+        assert prompt is not None
+        prompt.source_references.append(source)
+        session.commit()
+    recording, _, _ = _recording_client(
+        default_provider="fake", responder=lambda *_: "Per source:approved-one, this holds."
+    )
+    monkeypatch.setattr(llm_api, "_default_client", lambda: recording)
+    response = client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": ids["learner_id"],
+            "prompt_id": ids["prompt_id"],
+            "user_message": "Explain this.",
+            "source_constraints": [ids["source_id"]],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["flags"] == ["unverified"]
+    with factory() as session:
+        assert session.query(LLMFeedbackEvent).one().source_reference_ids == [
+            "source:approved-one",
+            "source:approved-two",
+        ]
+
+
+@pytest.mark.parametrize("unknown_prompt", [False, True])
+def test_bad_linked_context_is_rejected_before_provider_resolution(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    unknown_prompt: bool,
+) -> None:
+    from lms.llm import api as llm_api
+
+    client, factory = api_client
+    with factory() as session:
+        ids = _seed_published_study_prompt(session)
+    resolutions: list[bool] = []
+
+    def forbidden_client():
+        resolutions.append(True)
+        raise AssertionError("Provider must not be resolved")
+
+    monkeypatch.setattr(llm_api, "_default_client", forbidden_client)
+    response = client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": ids["learner_id"],
+            "prompt_id": "missing" if unknown_prompt else ids["prompt_id"],
+            "user_message": "Explain this.",
+            "source_constraints": ["source:unrelated"],
+        },
+    )
+    assert response.status_code == (404 if unknown_prompt else 422)
+    assert resolutions == []
