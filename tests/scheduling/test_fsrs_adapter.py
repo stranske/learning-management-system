@@ -319,7 +319,7 @@ def test_fast_high_confidence_first_attempt_maps_to_easy(db_session: Session) ->
         support_level="none",
     )
 
-    rating = evidence_to_fsrs_rating(record)
+    rating = evidence_to_fsrs_rating(record, prompt_class_median_seconds=12)
 
     assert rating.label == "easy"
     assert rating.value == 4
@@ -338,7 +338,7 @@ def test_fast_high_confidence_non_first_attempt_does_not_map_to_easy(db_session:
         attempt_context={"attempt_number": 2},
     )
 
-    rating = evidence_to_fsrs_rating(record)
+    rating = evidence_to_fsrs_rating(record, prompt_class_median_seconds=12)
 
     assert rating.label == "good"
     assert rating.value == 3
@@ -478,7 +478,7 @@ def test_service_honors_adapter_eligibility_before_any_card_write(db_session, mo
     monkeypatch.setattr(
         service,
         "evidence_to_fsrs_rating",
-        lambda _: FSRSRating(
+        lambda _, **context: FSRSRating(
             label="excluded",
             value=None,
             scheduling_included=False,
@@ -490,3 +490,32 @@ def test_service_honors_adapter_eligibility_before_any_card_write(db_session, mo
     assert outcome.decision_log["rule"] == "custom-exclusion"
     assert outcome.due_at is None
     assert db_session.query(ReviewCardState).count() == 0
+
+
+@pytest.mark.parametrize("score, expected", [(0.49, 1), (0.5, 2), (0.7, 2), (0.849, 2), (0.85, 3)])
+def test_real_self_grade_partial_boundaries(db_session, score, expected):
+    from lms.ui.attempts import _SELF_GRADES
+
+    grade = dict(_SELF_GRADES["partial"])
+    grade["normalized_score"] = score
+    record = create_evidence_record(
+        db_session, learner_id="l", knowledge_node_id="n", confidence_rating=5, **grade
+    )
+    assert evidence_to_fsrs_rating(record).value == expected
+
+
+@pytest.mark.parametrize(
+    "median, seconds, expected", [(20, 20, 4), (20, 21, 3), (10, 20, 3), (None, 1, 3)]
+)
+def test_binary_score_retains_timed_easy(db_session, median, seconds, expected):
+    from lms.ui.attempts import _SELF_GRADES
+
+    record = create_evidence_record(
+        db_session,
+        learner_id="l",
+        knowledge_node_id="n",
+        confidence_rating=5,
+        response_time_seconds=seconds,
+        **_SELF_GRADES["correct"],
+    )
+    assert evidence_to_fsrs_rating(record, prompt_class_median_seconds=median).value == expected

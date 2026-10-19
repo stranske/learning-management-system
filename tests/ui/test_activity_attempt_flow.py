@@ -378,3 +378,35 @@ def _seed_rubric(session: Session) -> tuple[str, str]:
     )
     session.commit()
     return rubric.id, rubric.criteria[0].id
+
+
+def test_partial_self_grade_sends_hard_to_scheduler(api_client):
+    from lms.scheduling.models import ReviewQueueItem
+
+    client, factory = api_client
+    with factory() as session:
+        _seed_prompt(session, visibility="public", locator="https://example.test/source")
+    submitted = client.post(
+        ATTEMPTS_PATH,
+        data={
+            "learner_id": "learner-1",
+            "prompt_id": "prompt-1",
+            "response_text": "Partly remembered",
+            "confidence_rating": "4",
+        },
+    )
+    assert submitted.status_code == 200
+    with factory() as session:
+        attempt = session.scalar(select(Attempt).where(Attempt.learner_id == "learner-1"))
+        attempt_id = attempt.id
+    graded = client.post(
+        "/app/learner/attempts/self-grade",
+        data={"learner_id": "learner-1", "attempt_id": attempt_id, "grade": "partial"},
+    )
+    assert graded.status_code == 200
+    with factory() as session:
+        item = session.scalar(
+            select(ReviewQueueItem).where(ReviewQueueItem.source_attempt_id == attempt_id)
+        )
+        assert item.decision_log["fsrs_rating"]["value"] == 2
+        assert item.decision_log["signal"] == "low-confidence-success"

@@ -99,10 +99,9 @@ scenarios:
     response_time_seconds: 60
     prior_successes: 6
 
-  # Fast, high-confidence, unsupported, scoreless first attempt -> FSRS "easy"
-  # (4). (With no normalized_score the score rules don't pre-empt the
-  # fast-first-attempt rule.) Still success-ramp-step-0 on the interval side,
-  # so this isolates the FSRS rating dimension.
+  # Fast first retrieval without eligible prompt-class timing history stays
+  # Good. A short absolute time alone cannot establish Easy; real HTTP timing
+  # populations and rating-4 engine delivery are covered in scheduling e2e tests.
   - id: fast_first_easy
     correctness: true
     normalized_score: null
@@ -222,13 +221,12 @@ directionals:
     metric: next_interval_days
     direction: increase
     enforce: true
-  # A fast high-confidence first attempt earns a HIGHER FSRS rating (easy=4 >
-  # good=3) than the base good retrieval.
-  - id: fast_first_raises_fsrs_rating
+  # With no eligible timing population, short latency leaves Good unchanged.
+  - id: fast_first_without_history_stays_good
     scenario: fast_first_easy
     control: base
     metric: fsrs_rating_value
-    direction: increase
+    direction: unchanged
     enforce: true
   # Transfer evidence is excluded from the FSRS interval calc (flag drops 1->0).
   - id: transfer_excluded_drops_inclusion

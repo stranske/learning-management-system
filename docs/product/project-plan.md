@@ -587,7 +587,20 @@ Partial-credit items pre-threshold the normalized score before applying the tabl
 
 Transfer items (`transfer_distance≥near`): the rating is recorded for evidence purposes but excluded from FSRS-driven scheduling until a separate transfer scheduler exists. Transfer evidence is used for capability/gap analysis, not for spaced-review interval calculation.
 
-The adapter is implemented as a pure function `evidence_to_fsrs_rating(EvidenceRecord) -> FSRSRating` with the rule table as a data-driven config. Tests assert the mapping for each row above and at least one edge case per row (e.g., a partial-credit boundary at 0.85, a transfer item being excluded).
+Timing context is supplied explicitly to the pure adapter. A prompt class is the tuple
+`knowledge_type`, `intended_cognitive_action`, `demand_level`, and `expected_answer_form`.
+The service uses the median of at least three prior distinct scored attempts by the same
+learner in the same knowledge-node ownership scope and class. Samples must be unassisted,
+correct, confidence at least medium, with positive response time and no transfer exclusion.
+The current attempt, future attempts, duplicate scoring of one attempt, other learners,
+and other ownership scopes are excluded. With zero or fewer than three eligible samples,
+there is no Easy threshold; otherwise eligible binary-correct answers remain Good.
+Only the first attempt at that prompt can receive Easy, including equality at the median.
+Binary correctness with a normalized score of 1 is not partial credit. Partial self-grades
+retain their thresholds even when correctness is unspecified. The conservative blend retains
+all four numeric engine grades while preserving hint and low-confidence caps.
+
+The adapter is implemented as a pure function `evidence_to_fsrs_rating(EvidenceRecord, *, prompt_class_median_seconds=None, first_attempt=None) -> FSRSRating` with the rule table as a data-driven config. Tests assert the mapping for each row above and at least one edge case per row (e.g., a partial-credit boundary at 0.85, a transfer item being excluded).
 
 ### Current Capability And Certification
 
