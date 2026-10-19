@@ -124,12 +124,36 @@ def test_low_confidence_high_score_is_hard(db_session: Session) -> None:
     assert rating.rule_id == "supported-or-low-confidence-correct"
 
 
+def _self_grade_partial_record(
+    db_session: Session,
+    *,
+    normalized_score: float,
+    confidence_rating: int = 5,
+) -> EvidenceRecord:
+    """Build evidence from the real UI partial self-grade shape in attempts.py."""
+    from lms.ui.attempts import _SELF_GRADES
+
+    grade = dict(_SELF_GRADES["partial"])
+    # Pin the contract the adapter must honor: unspecified correctness and
+    # partial-credit scoring, with only the normalized score under test varying.
+    assert grade["correctness"] is None
+    assert grade["scoring_method"] == "partial-credit"
+    grade["normalized_score"] = normalized_score
+    return create_evidence_record(
+        db_session,
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        confidence_rating=confidence_rating,
+        **grade,
+    )
+
+
 @pytest.mark.parametrize(
-    ("score", "expected_label", "expected_rule_id"),
+    ("score", "expected_label", "expected_value", "expected_rule_id"),
     [
-        (0.30, "again", "partial-under-half"),
-        (0.70, "hard", "partial-under-mastery"),
-        (0.90, "good", "partial-at-mastery"),
+        (0.30, "again", 1, "partial-under-half"),
+        (0.70, "hard", 2, "partial-under-mastery"),
+        (0.90, "good", 3, "partial-at-mastery"),
     ],
     ids=["representative-under-half", "representative-under-mastery", "representative-at-mastery"],
 )
@@ -137,26 +161,23 @@ def test_partial_credit_representative_cases(
     db_session: Session,
     score: float,
     expected_label: str,
+    expected_value: int,
     expected_rule_id: str,
 ) -> None:
-    record = create_evidence_record(
-        db_session,
-        learner_id="learner-1",
-        knowledge_node_id="node-1",
-        correctness=True,
-        normalized_score=score,
-        confidence_rating=3,
-    )
+    record = _self_grade_partial_record(db_session, normalized_score=score)
     rating = evidence_to_fsrs_rating(record)
+    assert record.correctness is None
+    assert record.scoring_method == "partial-credit"
     assert rating.label == expected_label
+    assert rating.value == expected_value
     assert rating.rule_id == expected_rule_id
 
 
 @pytest.mark.parametrize(
-    ("score", "expected_label", "expected_rule_id"),
+    ("score", "expected_label", "expected_value", "expected_rule_id"),
     [
-        (0.49, "again", "partial-under-half"),
-        (0.50, "hard", "partial-under-mastery"),
+        (0.49, "again", 1, "partial-under-half"),
+        (0.50, "hard", 2, "partial-under-mastery"),
     ],
     ids=["under-half-upper-boundary", "under-mastery-lower-boundary"],
 )
@@ -164,26 +185,22 @@ def test_partial_credit_half_threshold_boundary(
     db_session: Session,
     score: float,
     expected_label: str,
+    expected_value: int,
     expected_rule_id: str,
 ) -> None:
-    record = create_evidence_record(
-        db_session,
-        learner_id="learner-1",
-        knowledge_node_id="node-1",
-        correctness=True,
-        normalized_score=score,
-        confidence_rating=3,
-    )
+    record = _self_grade_partial_record(db_session, normalized_score=score)
     rating = evidence_to_fsrs_rating(record)
+    assert record.correctness is None
     assert rating.label == expected_label
+    assert rating.value == expected_value
     assert rating.rule_id == expected_rule_id
 
 
 @pytest.mark.parametrize(
-    ("score", "expected_label", "expected_rule_id"),
+    ("score", "expected_label", "expected_value", "expected_rule_id"),
     [
-        (0.84, "hard", "partial-under-mastery"),
-        (0.85, "good", "partial-at-mastery"),
+        (0.84, "hard", 2, "partial-under-mastery"),
+        (0.85, "good", 3, "partial-at-mastery"),
     ],
     ids=["under-mastery-upper-boundary", "at-mastery-lower-boundary"],
 )
@@ -191,19 +208,34 @@ def test_partial_credit_mastery_threshold_boundary(
     db_session: Session,
     score: float,
     expected_label: str,
+    expected_value: int,
     expected_rule_id: str,
 ) -> None:
+    record = _self_grade_partial_record(db_session, normalized_score=score)
+    rating = evidence_to_fsrs_rating(record)
+    assert record.correctness is None
+    assert rating.label == expected_label
+    assert rating.value == expected_value
+    assert rating.rule_id == expected_rule_id
+
+
+def test_canonical_ui_partial_self_grade_maps_to_hard(db_session: Session) -> None:
+    """The exact UI partial payload (score 0.7, correctness=None) is Hard."""
+    from lms.ui.attempts import _SELF_GRADES
+
     record = create_evidence_record(
         db_session,
         learner_id="learner-1",
         knowledge_node_id="node-1",
-        correctness=True,
-        normalized_score=score,
-        confidence_rating=3,
+        confidence_rating=5,
+        **_SELF_GRADES["partial"],
     )
     rating = evidence_to_fsrs_rating(record)
-    assert rating.label == expected_label
-    assert rating.rule_id == expected_rule_id
+    assert record.correctness is None
+    assert record.normalized_score == 0.7
+    assert rating.label == "hard"
+    assert rating.value == 2
+    assert rating.rule_id == "partial-under-mastery"
 
 
 def test_mastery_score_without_correctness_maps_to_good(db_session: Session) -> None:
@@ -490,18 +522,6 @@ def test_service_honors_adapter_eligibility_before_any_card_write(db_session, mo
     assert outcome.decision_log["rule"] == "custom-exclusion"
     assert outcome.due_at is None
     assert db_session.query(ReviewCardState).count() == 0
-
-
-@pytest.mark.parametrize("score, expected", [(0.49, 1), (0.5, 2), (0.7, 2), (0.849, 2), (0.85, 3)])
-def test_real_self_grade_partial_boundaries(db_session, score, expected):
-    from lms.ui.attempts import _SELF_GRADES
-
-    grade = dict(_SELF_GRADES["partial"])
-    grade["normalized_score"] = score
-    record = create_evidence_record(
-        db_session, learner_id="l", knowledge_node_id="n", confidence_rating=5, **grade
-    )
-    assert evidence_to_fsrs_rating(record).value == expected
 
 
 @pytest.mark.parametrize(
