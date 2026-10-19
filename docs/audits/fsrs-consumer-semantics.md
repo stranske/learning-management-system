@@ -166,3 +166,25 @@ does not pass the coverage gate.
 `ruff check tests/scheduling/test_fsrs_adapter.py` passes (exit 0).
 `BLACK_NUM_WORKERS=1 black --check --line-length 100 --exclude '(\.workflows-lib|node_modules)' .`
 passes for all **448 files** (exit 0).
+
+Non-finite finding persistence follow-up (2026-10-19):
+`test_documents_current_nonfinite_fallback_behavior` now records the actual
+engine input (Good=3), calls the real engine, commits, and rereads evidence,
+card, queue, schedule and decision from a fresh session. The committed evidence
+still maps to Again=1, as recorded in the durable decision, while the stored
+card matches the real Good outcome. This remains a characterization of the
+known internal-path loss; an eventual repair must update it. Public API
+reachability remains unknown, and no repair or new issue is bundled.
+
+The [current receipt](evidence/fsrs-consumer-762/lms782-nonfinite-validation.txt)
+records **139 passed** for the adapter/card/engine scope with `--no-cov` and
+**115 passed** for the literal adapter command (slow tests excluded through
+`PYTEST_ADDOPTS`). The latter exits 1 at the unchanged global coverage floor:
+34.18% versus 80%. Black checks all 448 files and Ruff passes. Focused mypy
+reports 53 existing errors in the adapter/review-queue tests; the unmodified
+HEAD test file produces the same 53-error count using `--shadow-file`.
+
+Reconciliation: reviewed `469635d`, `896e995` and `eac0f44`; PR #782 already
+has all 12 task/acceptance checkboxes checked and is open with `draft=false`.
+The GitHub connector permits reading the PR, but updating its reconciliation
+note requires approval unavailable under this run's `never` approval policy.
