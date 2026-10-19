@@ -15,7 +15,7 @@ from datetime import UTC
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -337,13 +337,34 @@ def test_remediation_queue_item_can_be_cleared_after_failure(
         assert schedule.schedule_state == "completed"
 
 
+_CARD_FREEZE_FIELDS = (
+    "stability",
+    "difficulty",
+    "review_count",
+    "lapse_count",
+    "due_at",
+    "card_state",
+)
+
+
 @pytest.mark.parametrize("distance", ["near", "far", "novel"])
 @pytest.mark.parametrize("existing_card", [False, True])
-def test_transfer_attempt_keeps_fsrs_state_unchanged(loop_client, distance, existing_card):
+def test_transfer_attempt_keeps_fsrs_state_unchanged(
+    loop_client: tuple[TestClient, sessionmaker[Session]],
+    distance: str,
+    existing_card: bool,
+) -> None:
+    """Near/far/novel transfer must not seed or advance an FSRS card.
+
+    State-before/state-after: a cold learner gets no card and no due date; an
+    existing card keeps stability/difficulty/review_count/lapse_count/due_at.
+    The attempt receipt reports mutation and interval provenance, not only the
+    adapter inclusion flag.
+    """
     import copy
 
     from lms.evidence.models import Attempt, EvidenceRecord
-    from lms.scheduling.models import ReviewCardState
+    from lms.scheduling.models import ReviewCardState, ReviewSchedule
 
     client, session_factory = loop_client
     learner_id, node_id, prompt_id = _seed_learner_node_prompt(session_factory)
@@ -358,22 +379,46 @@ def test_transfer_attempt_keeps_fsrs_state_unchanged(loop_client, distance, exis
             copy.deepcopy({c.key: getattr(row, c.key) for c in ReviewCardState.__table__.columns})
             for row in session.scalars(select(ReviewCardState))
         ]
+        schedules_before = session.scalars(select(func.count()).select_from(ReviewSchedule)).one()
         queue_before = len(_queue_items(session_factory, learner_id))
+    if existing_card:
+        assert len(before) == 1
+    else:
+        assert before == []
+
     payload = _attempt_payload(learner_id, node_id, prompt_id, response_text="transfer")
-    payload["evidence"]["transfer_distance"] = distance
+    evidence = payload["evidence"]
+    assert isinstance(evidence, dict)
+    evidence["transfer_distance"] = distance
     result = client.post("/attempts", json=payload)
-    assert result.status_code == 201
+    assert result.status_code == 201, result.text
+
     with session_factory() as session:
         after = [
             copy.deepcopy({c.key: getattr(row, c.key) for c in ReviewCardState.__table__.columns})
             for row in session.scalars(select(ReviewCardState))
         ]
         assert after == before
+        if not existing_card:
+            assert after == [], "transfer must not seed a new FSRS card"
+        else:
+            for field in _CARD_FREEZE_FIELDS:
+                assert after[0][field] == before[0][field], field
         assert len(_queue_items(session_factory, learner_id)) == queue_before
+        assert (
+            session.scalars(select(func.count()).select_from(ReviewSchedule)).one()
+            == schedules_before
+        ), "transfer must not create a dated review schedule"
+
         attempt = session.get(Attempt, result.json()["id"])
+        assert attempt is not None
         receipt = attempt.response_metadata["scheduling_outcome"]
+        assert receipt["rule"] == "transfer-excluded"
         assert receipt["card_mutated"] is False
         assert receipt["interval_source"] == "none"
+        assert receipt["fsrs_state"] is None
+        assert receipt["fsrs_rating"]["scheduling_included"] is False
+        assert receipt["fsrs_rating"]["value"] is None
         assert receipt["output"]["due_at"] is None
         assert (
             session.scalar(
