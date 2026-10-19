@@ -958,6 +958,106 @@ def test_easy_versus_good_persist_distinct_engine_ratings(
             assert decision.decision_log["fsrs_rating"]["rule_id"] == rule
 
 
+@pytest.mark.parametrize(
+    ("normalized_score", "raw_score", "expected_score", "rating", "rule"),
+    [
+        pytest.param(0.0, 10.0, 0.0, 1, "partial-under-half", id="normalized-zero-wins"),
+        pytest.param(0.7, 0.0, 0.7, 2, "partial-under-mastery", id="normalized-partial-wins"),
+        pytest.param(0.9, 0.0, 0.9, 3, "partial-at-mastery", id="normalized-mastery-wins"),
+        pytest.param(None, 3.0, 0.3, 1, "partial-under-half", id="raw-under-half"),
+        pytest.param(None, 7.0, 0.7, 2, "partial-under-mastery", id="raw-under-mastery"),
+        pytest.param(None, 9.0, 0.9, 3, "partial-at-mastery", id="raw-at-mastery"),
+    ],
+)
+def test_score_selection_reaches_committed_consumers(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    normalized_score: float | None,
+    raw_score: float,
+    expected_score: float,
+    rating: int,
+    rule: str,
+) -> None:
+    """Prefer explicit normalized scores, including zero, through real card writes."""
+    from copy import deepcopy
+    from typing import Any
+
+    from sqlalchemy import select
+
+    from lms.scheduling import fsrs_engine, service
+    from lms.scheduling.models import (
+        ReviewCardState,
+        ReviewQueueItem,
+        ReviewSchedule,
+        SchedulerDecision,
+    )
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    attempt, evidence = _make_attempt(
+        db_session, correctness=True, normalized_score=normalized_score, confidence_rating=5
+    )
+    evidence.scoring_method = "partial-credit"
+    evidence.raw_score = raw_score
+    evidence.max_score = 10.0
+    db_session.flush()
+
+    assert _score(evidence) == expected_score
+    adapter_rating = evidence_to_fsrs_rating(evidence)
+    assert adapter_rating.value == rating
+    assert adapter_rating.rule_id == rule
+    observed: list[int] = []
+    outcomes: list[fsrs_engine.ScheduleOutcome] = []
+    real_review = fsrs_engine.review
+
+    def recording_review(**kwargs: Any) -> fsrs_engine.ScheduleOutcome:
+        observed.append(kwargs["rating_value"])
+        outcome = real_review(**kwargs)
+        outcomes.append(deepcopy(outcome))
+        return outcome
+
+    monkeypatch.setattr(fsrs_engine, "review", recording_review)
+    item = service.schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert isinstance(item, ReviewQueueItem)
+    assert observed == [rating]
+    item_id, attempt_id, evidence_id = item.id, attempt.id, evidence.id
+    db_session.commit()
+
+    with Session(db_session.get_bind()) as session:
+        saved_evidence = session.get(EvidenceRecord, evidence_id)
+        assert saved_evidence is not None
+        assert saved_evidence.normalized_score == normalized_score
+        assert saved_evidence.raw_score == raw_score
+        assert saved_evidence.max_score == 10.0
+        saved_item = session.get(ReviewQueueItem, item_id)
+        assert saved_item is not None
+        card = session.scalars(select(ReviewCardState)).one()
+        schedule = session.scalars(select(ReviewSchedule)).one()
+        decision = session.scalars(select(SchedulerDecision)).one()
+        outcome = outcomes[0]
+        assert card.learner_id == saved_evidence.learner_id
+        assert card.subject_id == saved_evidence.knowledge_node_id
+        assert card.card_state == outcome.card_state
+        assert card.stability == outcome.stability
+        assert card.difficulty == outcome.difficulty
+        assert card.review_count == outcome.review_count == 1
+        assert card.lapse_count == outcome.lapse_count
+        assert card.due_at == outcome.due_at.replace(tzinfo=None)
+        # Remediation queue dates can intentionally differ from the FSRS card.
+        assert saved_item.due_at == schedule.due_at
+        assert saved_item.source_attempt_id == attempt_id
+        assert schedule.review_queue_item_id == decision.review_queue_item_id == item_id
+        assert decision.review_schedule_id == schedule.id
+        assert (
+            saved_item.source_evidence_record_id
+            == schedule.source_evidence_record_id
+            == decision.source_evidence_record_id
+            == evidence_id
+        )
+        assert saved_item.decision_log == decision.decision_log
+        assert decision.decision_log["fsrs_rating"]["value"] == rating
+        assert decision.decision_log["fsrs_rating"]["rule_id"] == rule
+
+
 def test_known_repairs_link_owned_work_to_controls() -> None:
     """Known per-instance losses must point at existing owned issues/PRs and controls."""
     repair_ids = {entry.repair_id for entry in FSRS_KNOWN_REPAIRS}

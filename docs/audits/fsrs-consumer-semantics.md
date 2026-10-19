@@ -138,3 +138,31 @@ reports **109 passed**, then exits 1 at the unchanged repository coverage floor
 `BLACK_NUM_WORKERS=1 black --check --line-length 100 --exclude '(\.workflows-lib|node_modules)' .`
 passes for all **448 files**; one worker avoids the sandbox's multiprocessing
 socket restriction.
+
+Score-selection persistence follow-up (2026-10-19):
+`test_score_selection_reaches_committed_consumers` adds six finite-score cases
+under the existing partial-credit policy. Conflicting raw scores must not
+override explicit normalized scores of 0.0, 0.7 or 0.9; absent normalized
+scores use raw/max at 0.3, 0.7 and 0.9. Each case observes the real engine's
+rating and rereads the committed evidence, card state, queue, schedule and
+decision in a fresh session. The inputs have explicit true correctness and
+high confidence; these cases do not establish HTTP or nullable-correctness
+behavior. Remediation queue dates are checked against schedules, without
+assuming they equal the FSRS card date.
+
+A process-local negative control replaces `_score` with raw/max-first
+selection. Running the six cases with `-k score_selection_reaches_committed_consumers`
+produces **3 failed, 3 passed, 109 deselected** (exit 1): all three normalized
+precedence cases fail, while raw fallback cases pass. The override ends with
+that Python process; no production source changes are involved.
+
+Restored verification:
+`python -m pytest tests/scheduling/test_fsrs_adapter.py tests/scheduling/test_card_state.py tests/scheduling/test_fsrs_engine.py -q --no-cov -m "not slow"`
+reports **139 passed** (exit 0).
+`python -m pytest tests/scheduling/test_fsrs_adapter.py -q -m "not slow"`
+reports **115 passed**, then exits 1 at the unchanged repository coverage floor
+(34.18% versus 80%). The latter command passes all behavior assertions but
+does not pass the coverage gate.
+`ruff check tests/scheduling/test_fsrs_adapter.py` passes (exit 0).
+`BLACK_NUM_WORKERS=1 black --check --line-length 100 --exclude '(\.workflows-lib|node_modules)' .`
+passes for all **448 files** (exit 0).
