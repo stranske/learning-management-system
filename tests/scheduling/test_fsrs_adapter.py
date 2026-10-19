@@ -525,9 +525,19 @@ def test_service_honors_adapter_eligibility_before_any_card_write(db_session, mo
 
 
 @pytest.mark.parametrize(
-    "median, seconds, expected", [(20, 20, 4), (20, 21, 3), (10, 20, 3), (None, 1, 3)]
+    "grade, median, seconds, expected",
+    [
+        ("correct", 20, 20, 4),
+        ("correct", 20, 21, 3),
+        ("correct", 10, 20, 3),
+        ("correct", None, 1, 3),
+        ("partial", 20, 20, 2),
+        ("incorrect", 20, 20, 1),
+    ],
 )
-def test_binary_score_retains_timed_easy(db_session, median, seconds, expected):
+def test_ui_self_grades_preserve_distinct_ratings(
+    db_session: Session, grade: str, median: int | None, seconds: int, expected: int
+) -> None:
     from lms.ui.attempts import _SELF_GRADES
 
     record = create_evidence_record(
@@ -536,6 +546,8 @@ def test_binary_score_retains_timed_easy(db_session, median, seconds, expected):
         knowledge_node_id="n",
         confidence_rating=5,
         response_time_seconds=seconds,
-        **_SELF_GRADES["correct"],
+        **_SELF_GRADES[grade],
     )
-    assert evidence_to_fsrs_rating(record, prompt_class_median_seconds=median).value == expected
+    rating = evidence_to_fsrs_rating(record, prompt_class_median_seconds=median)
+    assert rating.value == expected
+    assert rating.scheduling_included is True
