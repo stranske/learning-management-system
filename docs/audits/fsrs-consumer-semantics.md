@@ -245,3 +245,35 @@ is submitted. This run does not establish a passing HTTP consumer suite; the
 PR #782 was verified open with `draft=false`. The required local commit could
 not be created: `git add` failed to create `.git/index.lock` because `.git` is
 read-only. The verified test changes and this evidence remain uncommitted.
+
+Partial-credit cap persistence follow-up (2026-10-19):
+`test_partial_credit_caps_reach_committed_consumers` adds eight internal-path
+cases: nullable correctness with normalized scores 0.7 and 0.85, each capped
+by low confidence, hint use, reference access or coach support. The shared
+persistence assertion observes Hard=2 entering the real engine and rereads
+committed evidence, card, queue, schedule and decision rows in a fresh session.
+It also verifies that confidence and support fields survive persistence.
+These cases extend the existing adapter-only cap checks without changing policy
+or establishing HTTP behavior.
+
+A process-local negative control changes `_signal_to_rating_value` to promote
+Hard=2 to Good=3 after normal signal conversion. All eight new cases fail at
+the actual engine-input assertion (`[3] != [2]`), with 121 tests deselected.
+The override ends with the process; production files are unchanged.
+
+Restored verification:
+`python -m pytest tests/scheduling/test_fsrs_adapter.py tests/scheduling/test_card_state.py tests/scheduling/test_fsrs_engine.py -q --no-cov -m "not slow"`
+reports **153 passed** (exit 0).
+`PYTEST_ADDOPTS='-m "not slow"' python -m pytest tests/scheduling/test_fsrs_adapter.py -q`
+collects and reports **129 passed in 8.25s**, then exits 1 at the unchanged
+global coverage floor (**34.24% versus 80%**).
+Black formats the changed Python file; the required repository-wide Black
+check passes for all 448 files with `BLACK_NUM_WORKERS=1`. Ruff passes.
+
+Reconciliation: reviewed recent commits through `ebea361`; live PR #782 has all
+12 task/acceptance checkboxes checked and remains open with `draft=false`.
+The GitHub connector rejected the PR-body reconciliation update because it
+requires approval under the run's `never` policy. Local staging also failed:
+Git cannot create `.git/index.lock` on the read-only filesystem, so this run
+cannot create the requested commit. The test changes and evidence remain in
+the working tree for a write-enabled run.

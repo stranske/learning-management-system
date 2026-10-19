@@ -983,6 +983,71 @@ def test_score_selection_reaches_committed_consumers(
     rule: str,
 ) -> None:
     """Prefer explicit normalized scores, including zero, through real card writes."""
+    _assert_score_selection_persisted(
+        db_session,
+        monkeypatch,
+        correctness=correctness,
+        normalized_score=normalized_score,
+        raw_score=raw_score,
+        expected_score=expected_score,
+        rating=rating,
+        rule=rule,
+    )
+
+
+@pytest.mark.parametrize("score", [0.7, 0.85], ids=["partial", "mastery-boundary"])
+@pytest.mark.parametrize(
+    "confidence, support_level, hint_used, reference_accessed",
+    [
+        (2, "none", False, False),
+        (5, "none", True, False),
+        (5, "none", False, True),
+        (5, "coach", False, False),
+    ],
+    ids=["low-confidence", "hint", "reference", "coach"],
+)
+def test_partial_credit_caps_reach_committed_consumers(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    score: float,
+    confidence: int,
+    support_level: str,
+    hint_used: bool,
+    reference_accessed: bool,
+) -> None:
+    """Partial self-grades retain support/confidence caps through real card writes."""
+    _assert_score_selection_persisted(
+        db_session,
+        monkeypatch,
+        correctness=None,
+        normalized_score=score,
+        raw_score=0.0,
+        expected_score=score,
+        rating=2,
+        rule="supported-or-low-confidence-correct",
+        confidence_rating=confidence,
+        support_level=support_level,
+        hint_used=hint_used,
+        reference_accessed=reference_accessed,
+    )
+
+
+def _assert_score_selection_persisted(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    correctness: bool | None,
+    normalized_score: float | None,
+    raw_score: float,
+    expected_score: float,
+    rating: int,
+    rule: str,
+    confidence_rating: int = 5,
+    support_level: str = "none",
+    hint_used: bool = False,
+    reference_accessed: bool = False,
+) -> None:
+    """Observe the real engine, then compare every committed scheduling consumer."""
     from copy import deepcopy
     from typing import Any
 
@@ -998,11 +1063,17 @@ def test_score_selection_reaches_committed_consumers(
     from tests.scheduling.test_review_queue import _make_attempt
 
     attempt, evidence = _make_attempt(
-        db_session, correctness=correctness, normalized_score=normalized_score, confidence_rating=5
+        db_session,
+        correctness=correctness,
+        normalized_score=normalized_score,
+        confidence_rating=confidence_rating,
+        support_level=support_level,
     )
     evidence.scoring_method = "partial-credit"
     evidence.raw_score = raw_score
     evidence.max_score = 10.0
+    evidence.hint_used = hint_used
+    evidence.reference_accessed = reference_accessed
     db_session.flush()
 
     assert _score(evidence) == expected_score
@@ -1034,6 +1105,10 @@ def test_score_selection_reaches_committed_consumers(
         assert saved_evidence.normalized_score == normalized_score
         assert saved_evidence.raw_score == raw_score
         assert saved_evidence.max_score == 10.0
+        assert saved_evidence.confidence_rating == confidence_rating
+        assert saved_evidence.support_level == support_level
+        assert saved_evidence.hint_used is hint_used
+        assert saved_evidence.reference_accessed is reference_accessed
         saved_item = session.get(ReviewQueueItem, item_id)
         assert saved_item is not None
         card = session.scalars(select(ReviewCardState)).one()
