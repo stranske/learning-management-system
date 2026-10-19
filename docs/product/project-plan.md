@@ -593,8 +593,10 @@ The service uses the median of at least three prior distinct scored attempts by 
 learner in the same knowledge-node ownership scope and class. Samples must be unassisted,
 correct, confidence at least medium, with positive response time and no transfer exclusion.
 The current attempt, future attempts, duplicate scoring of one attempt, other learners,
-and other ownership scopes are excluded. With zero or fewer than three eligible samples,
-there is no Easy threshold; otherwise eligible binary-correct answers remain Good.
+and other ownership scopes are excluded. Select the latest evidence row for each attempt
+by timestamp and then ID before applying eligibility; each retained row must also map to
+Good under the adapter. With fewer than three eligible samples, there is no Easy threshold,
+and eligible binary-correct answers remain Good.
 Only the first attempt at that prompt can receive Easy, including equality at the median.
 Binary correctness with a normalized score of 1 is not partial credit. Partial self-grades
 retain their thresholds even when correctness is unspecified. The conservative blend retains

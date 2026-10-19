@@ -742,12 +742,29 @@ def _prompt_class_timing_context(
     node = session.get(KnowledgeNode, evidence.knowledge_node_id)
     if prompt is None or node is None or prompt.target_node_id != node.id:
         return None, 0, first
+    # Resolve the current grade before filtering. Otherwise an older successful
+    # row survives a later failing/supported grade on the same attempt.
+    latest_evidence = (
+        select(
+            EvidenceRecord.id,
+            func.row_number()
+            .over(
+                partition_by=EvidenceRecord.attempt_id,
+                order_by=(EvidenceRecord.timestamp.desc(), EvidenceRecord.id.desc()),
+            )
+            .label("ordinal"),
+        )
+        .where(EvidenceRecord.attempt_id.is_not(None))
+        .subquery()
+    )
     samples = session.scalars(
         select(EvidenceRecord)
         .join(Attempt, EvidenceRecord.attempt_id == Attempt.id)
         .join(Prompt, EvidenceRecord.prompt_id == Prompt.id)
         .join(KnowledgeNode, Prompt.target_node_id == KnowledgeNode.id)
+        .join(latest_evidence, latest_evidence.c.id == EvidenceRecord.id)
         .where(
+            latest_evidence.c.ordinal == 1,
             *prior_attempt,
             EvidenceRecord.learner_id == attempt.learner_id,
             EvidenceRecord.knowledge_node_id == Prompt.target_node_id,

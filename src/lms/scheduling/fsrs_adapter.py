@@ -146,7 +146,7 @@ def _is_score_at_mastery(record: EvidenceRecord) -> bool:
         and not _is_low_confidence_correct(record)
         and score is not None
         and score >= 0.85
-        and record.scoring_method != "binary"
+        and not (record.scoring_method == "binary" and _is_good_unsupported_correct(record))
     )
 
 

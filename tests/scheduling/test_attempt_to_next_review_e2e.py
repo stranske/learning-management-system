@@ -908,3 +908,96 @@ def test_easy_timing_never_overrides_support_or_low_confidence(loop_client, monk
     p.update(change)
     assert client.post("/attempts", json=p).status_code == 201
     assert values == [2]
+
+
+def test_latest_rubric_failure_excludes_creation_time_timing(loop_client):
+    from lms.evidence.models import EvidenceRecord
+    from lms.feedback.repository import create_rubric
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(3):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="initial success")
+        payload.update(confidence_rating=5, elapsed_seconds=100)
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201
+    with factory() as session:
+        rubric = create_rubric(
+            session,
+            title="Later real rubric grade",
+            ownership_scope="personal",
+            authoring_actor=ACTOR,
+            prompt_id=old_prompt,
+            criteria=[
+                {"criterion_order": 1, "description": "Correct explanation", "max_points": 1}
+            ],
+        )
+        rubric_id, criterion = rubric.id, rubric.criteria[0].id
+        session.commit()
+    scored = client.post(
+        "/rubric-scores",
+        json={
+            "rubric_id": rubric_id,
+            "attempt_id": response.json()["id"],
+            "scorer_type": "human",
+            "criterion_scores": [{"criterion_id": criterion, "points": 0}],
+        },
+    )
+    assert scored.status_code == 201, scored.text
+    with factory() as session:
+        rows = list(
+            session.scalars(
+                select(EvidenceRecord)
+                .where(EvidenceRecord.attempt_id == response.json()["id"])
+                .order_by(EvidenceRecord.timestamp)
+            )
+        )
+        assert len(rows) == 2
+        assert rows[0].correctness is True and rows[-1].correctness is False
+    payload = _attempt_payload(learner, node, prompt, response_text="current")
+    payload.update(confidence_rating=5, elapsed_seconds=1)
+    assert client.post("/attempts", json=payload).status_code == 201
+    item = _queue_items(factory, learner)[-1]
+    assert item.decision_log["inputs"]["prompt_class_timing"]["sample_count"] == 2
+    assert item.decision_log["fsrs_rating"]["value"] == 3
+
+
+def test_latest_timing_evidence_tie_uses_id_before_eligibility(loop_client):
+    from lms.evidence.models import EvidenceRecord
+    from lms.evidence.repository import create_evidence_record
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(3):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="initial")
+        payload.update(confidence_rating=5, elapsed_seconds=100)
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201
+    with factory() as session:
+        original = session.scalar(
+            select(EvidenceRecord).where(EvidenceRecord.attempt_id == response.json()["id"])
+        )
+        latest = create_evidence_record(
+            session,
+            learner_id=learner,
+            knowledge_node_id=old_node,
+            prompt_id=old_prompt,
+            attempt_id=original.attempt_id,
+            timestamp=original.timestamp,
+            correctness=True,
+            normalized_score=1.0,
+            confidence_rating=5,
+            response_time_seconds=100,
+            hint_used=True,
+        )
+        latest.id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        assert latest.id > original.id
+        session.commit()
+    payload = _attempt_payload(learner, node, prompt, response_text="current")
+    payload.update(confidence_rating=5, elapsed_seconds=1)
+    assert client.post("/attempts", json=payload).status_code == 201
+    item = _queue_items(factory, learner)[-1]
+    assert item.decision_log["inputs"]["prompt_class_timing"]["sample_count"] == 2
+    assert item.decision_log["fsrs_rating"]["value"] == 3

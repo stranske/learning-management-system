@@ -634,3 +634,18 @@ def test_ui_self_grades_preserve_distinct_ratings(
     rating = evidence_to_fsrs_rating(record, prompt_class_median_seconds=median)
     assert rating.value == expected
     assert rating.scheduling_included is True
+
+
+@pytest.mark.parametrize("correctness", [True, None])
+def test_binary_mastery_without_confidence_keeps_good(db_session, correctness):
+    record = create_evidence_record(
+        db_session,
+        learner_id="l",
+        knowledge_node_id="n",
+        scoring_method="binary",
+        correctness=correctness,
+        normalized_score=1.0,
+    )
+    rating = evidence_to_fsrs_rating(record)
+    assert rating.value == 3
+    assert rating.rule_id != "insufficient-signal"
