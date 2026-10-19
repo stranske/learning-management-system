@@ -214,3 +214,34 @@ approval policy; the existing checked task state was not changed.
 The local commit attempt was also blocked: Git could not create
 `.git/index.lock` because `.git` is read-only. The verified changes remain in
 the working tree for a write-enabled run to commit.
+
+Generic eligibility prevention check (2026-10-19):
+`test_service_honors_adapter_eligibility_before_any_card_write` now covers a
+custom exclusion with both empty and existing scheduling state, and with
+either no rating value or Good=3. The input evidence is ordinary successful
+retrieval, so the exclusion depends on `scheduling_included=false` independently
+of the transfer rule or rating value. Card seeding and advancement must not be
+called. Fresh sessions verify exact preservation of every card, queue, schedule
+and decision column after commit, plus persisted evidence, the exclusion receipt
+and existing attempt metadata. No production behavior or policy changed.
+
+Validation:
+`python -m pytest tests/scheduling/test_fsrs_adapter.py tests/scheduling/test_card_state.py tests/scheduling/test_fsrs_engine.py -q --no-cov -m "not slow"`
+reports **145 passed in 6.63s** (exit 0).
+`PYTEST_ADDOPTS='-m "not slow"' python -m pytest tests/scheduling/test_fsrs_adapter.py -q`
+collects 121 tests and reports **121 passed in 10.13s**, then exits 1 at the
+unchanged global coverage floor (**34.18% versus 80%**).
+Ruff and the repository-wide Black check pass (448 files); Black uses
+`BLACK_NUM_WORKERS=1` because sandbox permissions prevent its default worker
+pool from opening a multiprocessing socket.
+
+The broader run stalled on the first HTTP consumer case. A diagnostic rerun,
+`timeout 40s python -m pytest 'tests/scheduling/test_fsrs_consumer_audit.py::test_rating_inventory_reaches_persisted_consumers[near]' -q --no-cov -m "not slow" -o faulthandler_timeout=15`,
+collected one test and exited 124. The trace shows TestClient waiting on the
+AnyIO portal during its first timing-history POST, before the target evidence
+is submitted. This run does not establish a passing HTTP consumer suite; the
+145-pass result above covers the adapter/card/engine scope only.
+
+PR #782 was verified open with `draft=false`. The required local commit could
+not be created: `git add` failed to create `.git/index.lock` because `.git` is
+read-only. The verified test changes and this evidence remain uncommitted.

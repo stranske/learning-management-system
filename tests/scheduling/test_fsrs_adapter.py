@@ -1278,28 +1278,102 @@ def test_non_finite_transfer_evidence_remains_excluded(correctness: bool) -> Non
     assert rating.value is None
 
 
-def test_service_honors_adapter_eligibility_before_any_card_write(db_session, monkeypatch):
+@pytest.mark.parametrize("has_history", [False, True], ids=["cold", "existing"])
+@pytest.mark.parametrize("value", [None, 3], ids=["unrated", "rated"])
+def test_service_honors_adapter_eligibility_before_any_card_write(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    has_history: bool,
+    value: int | None,
+) -> None:
+    """Eligibility gates all durable consumers independently of rating or rule ID."""
+    from copy import deepcopy
+    from typing import Any, NoReturn
+
+    from sqlalchemy import select
+
+    from lms.evidence.models import Attempt
     from lms.scheduling import service
     from lms.scheduling.fsrs_adapter import FSRSRating
-    from lms.scheduling.models import ReviewCardState
+    from lms.scheduling.models import (
+        ReviewCardState,
+        ReviewQueueItem,
+        ReviewSchedule,
+        SchedulerDecision,
+    )
     from tests.scheduling.test_review_queue import _make_attempt
 
-    attempt, evidence = _make_attempt(db_session)
+    def snapshot(session: Session) -> dict[str, list[dict[str, Any]]]:
+        return {
+            model.__tablename__: [
+                deepcopy(
+                    {column.key: getattr(row, column.key) for column in model.__table__.columns}
+                )
+                for row in session.scalars(select(model).order_by(model.id))
+            ]
+            for model in (ReviewCardState, ReviewQueueItem, ReviewSchedule, SchedulerDecision)
+        }
+
+    if has_history:
+        prior_attempt, prior_evidence = _make_attempt(db_session)
+        prior_item = service.schedule_from_attempt(
+            db_session, attempt=prior_attempt, evidence_record=prior_evidence
+        )
+        assert isinstance(prior_item, ReviewQueueItem)
+        db_session.commit()
+
+    bind = db_session.get_bind()
+    with Session(bind) as session:
+        before = snapshot(session)
+        assert all(len(rows) == int(has_history) for rows in before.values())
+
+    # Ordinary successful evidence makes an accidental classifier fallback mutate
+    # state. Only the adapter's inclusion flag authorizes this bypass.
+    attempt, evidence = _make_attempt(db_session, response_metadata={"origin": "audit"})
+    assert evidence.transfer_distance is None
+    excluded_rating = FSRSRating(
+        label="excluded" if value is None else "good",
+        value=value,
+        scheduling_included=False,
+        rule_id="custom-exclusion",
+        reason="excluded",
+    )
     monkeypatch.setattr(
         service,
         "evidence_to_fsrs_rating",
-        lambda _, **context: FSRSRating(
-            label="excluded",
-            value=None,
-            scheduling_included=False,
-            rule_id="custom-exclusion",
-            reason="excluded",
-        ),
+        lambda _, **context: excluded_rating,
     )
+
+    def unexpected_card_access(*_args: Any, **_kwargs: Any) -> NoReturn:
+        raise AssertionError("Excluded ratings must bypass card seeding and advancement")
+
+    monkeypatch.setattr(service, "get_or_seed_card_state", unexpected_card_access)
+    monkeypatch.setattr(service, "advance_card_state", unexpected_card_access)
     outcome = service.schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert isinstance(outcome, service.ExcludedSchedulingOutcome)
     assert outcome.decision_log["rule"] == "custom-exclusion"
     assert outcome.due_at is None
-    assert db_session.query(ReviewCardState).count() == 0
+    attempt_id, evidence_id = attempt.id, evidence.id
+    db_session.commit()
+
+    with Session(bind) as session:
+        assert snapshot(session) == before
+        saved_evidence = session.get(EvidenceRecord, evidence_id)
+        saved_attempt = session.get(Attempt, attempt_id)
+        assert saved_evidence is not None
+        assert saved_evidence.attempt_id == attempt_id
+        assert saved_attempt is not None
+        assert saved_attempt.response_metadata is not None
+        assert saved_attempt.response_metadata["origin"] == "audit"
+        receipt = saved_attempt.response_metadata["scheduling_outcome"]
+        assert receipt["card_mutated"] is False
+        assert receipt["fsrs_rating"] == {
+            "label": excluded_rating.label,
+            "value": value,
+            "rule_id": "custom-exclusion",
+            "scheduling_included": False,
+        }
+        assert receipt["output"]["due_at"] is None
 
 
 @pytest.mark.parametrize(
