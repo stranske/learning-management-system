@@ -188,3 +188,29 @@ Reconciliation: reviewed `469635d`, `896e995` and `eac0f44`; PR #782 already
 has all 12 task/acceptance checkboxes checked and is open with `draft=false`.
 The GitHub connector permits reading the PR, but updating its reconciliation
 note requires approval unavailable under this run's `never` approval policy.
+
+Nullable-correctness score-selection follow-up (2026-10-19):
+`test_score_selection_reaches_committed_consumers` now also covers
+`correctness=None` with normalized scores 0.0, 0.7 and 0.9 conflicting with
+raw/max. The real engine receives Again=1, Hard=2 and Good=3 respectively;
+fresh sessions verify committed evidence, card, queue, schedule and decision
+state. All nine cases also check that correctness and the partial-credit
+scoring method survive persistence. This adds internal-path prevention checks
+without changing scheduling policy or establishing HTTP behavior.
+
+Validation: `python -m pytest tests/scheduling/test_fsrs_adapter.py tests/scheduling/test_card_state.py tests/scheduling/test_fsrs_engine.py -q --no-cov -m "not slow"`
+reports **142 passed** (exit 0).
+`PYTEST_ADDOPTS='-m "not slow"' python -m pytest tests/scheduling/test_fsrs_adapter.py -q`
+collects and reports **118 passed in 9.06s**, then exits 1 at the unchanged
+global coverage floor (**34.18% versus 80%**). These are passing behavior
+assertions, not a passing repository coverage gate.
+Ruff and the required repository-wide Black check pass.
+
+Reconciliation: reviewed `469635d`, `896e995`, `eac0f44` and `394ac6c`.
+Live PR #782 has all 12 task/acceptance checkboxes checked and is open with
+`draft=false`. The attempted PR-body reconciliation update was rejected by
+the GitHub connector because it requires approval under the run's `never`
+approval policy; the existing checked task state was not changed.
+The local commit attempt was also blocked: Git could not create
+`.git/index.lock` because `.git` is read-only. The verified changes remain in
+the working tree for a write-enabled run to commit.

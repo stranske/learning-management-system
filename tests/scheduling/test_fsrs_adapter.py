@@ -959,19 +959,23 @@ def test_easy_versus_good_persist_distinct_engine_ratings(
 
 
 @pytest.mark.parametrize(
-    ("normalized_score", "raw_score", "expected_score", "rating", "rule"),
+    ("correctness", "normalized_score", "raw_score", "expected_score", "rating", "rule"),
     [
-        pytest.param(0.0, 10.0, 0.0, 1, "partial-under-half", id="normalized-zero-wins"),
-        pytest.param(0.7, 0.0, 0.7, 2, "partial-under-mastery", id="normalized-partial-wins"),
-        pytest.param(0.9, 0.0, 0.9, 3, "partial-at-mastery", id="normalized-mastery-wins"),
-        pytest.param(None, 3.0, 0.3, 1, "partial-under-half", id="raw-under-half"),
-        pytest.param(None, 7.0, 0.7, 2, "partial-under-mastery", id="raw-under-mastery"),
-        pytest.param(None, 9.0, 0.9, 3, "partial-at-mastery", id="raw-at-mastery"),
+        pytest.param(True, 0.0, 10.0, 0.0, 1, "partial-under-half", id="normalized-zero-wins"),
+        pytest.param(True, 0.7, 0.0, 0.7, 2, "partial-under-mastery", id="normalized-partial-wins"),
+        pytest.param(True, 0.9, 0.0, 0.9, 3, "partial-at-mastery", id="normalized-mastery-wins"),
+        pytest.param(True, None, 3.0, 0.3, 1, "partial-under-half", id="raw-under-half"),
+        pytest.param(True, None, 7.0, 0.7, 2, "partial-under-mastery", id="raw-under-mastery"),
+        pytest.param(True, None, 9.0, 0.9, 3, "partial-at-mastery", id="raw-at-mastery"),
+        pytest.param(None, 0.0, 10.0, 0.0, 1, "partial-under-half", id="nullable-zero-wins"),
+        pytest.param(None, 0.7, 0.0, 0.7, 2, "partial-under-mastery", id="nullable-partial-wins"),
+        pytest.param(None, 0.9, 0.0, 0.9, 3, "partial-at-mastery", id="nullable-mastery-wins"),
     ],
 )
 def test_score_selection_reaches_committed_consumers(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
+    correctness: bool | None,
     normalized_score: float | None,
     raw_score: float,
     expected_score: float,
@@ -994,7 +998,7 @@ def test_score_selection_reaches_committed_consumers(
     from tests.scheduling.test_review_queue import _make_attempt
 
     attempt, evidence = _make_attempt(
-        db_session, correctness=True, normalized_score=normalized_score, confidence_rating=5
+        db_session, correctness=correctness, normalized_score=normalized_score, confidence_rating=5
     )
     evidence.scoring_method = "partial-credit"
     evidence.raw_score = raw_score
@@ -1025,6 +1029,8 @@ def test_score_selection_reaches_committed_consumers(
     with Session(db_session.get_bind()) as session:
         saved_evidence = session.get(EvidenceRecord, evidence_id)
         assert saved_evidence is not None
+        assert saved_evidence.correctness is correctness
+        assert saved_evidence.scoring_method == "partial-credit"
         assert saved_evidence.normalized_score == normalized_score
         assert saved_evidence.raw_score == raw_score
         assert saved_evidence.max_score == 10.0
