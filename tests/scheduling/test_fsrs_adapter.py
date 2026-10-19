@@ -824,19 +824,34 @@ def test_transfer_exclusion_preserves_all_committed_consumers(
 def test_easy_versus_good_persist_distinct_engine_ratings(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Easy and Good must remain distinct through the real engine and persisted decision log."""
+    """Easy and Good must retain the real engine's result after commit."""
+    from copy import deepcopy
+    from typing import Any
+
+    from sqlalchemy import select
+
     from lms.scheduling import fsrs_engine, service
-    from lms.scheduling.models import ReviewQueueItem
+    from lms.scheduling.models import (
+        ReviewCardState,
+        ReviewQueueItem,
+        ReviewSchedule,
+        SchedulerDecision,
+    )
     from tests.scheduling.test_review_queue import _make_attempt
 
     observed: list[int] = []
+    outcomes: list[fsrs_engine.ScheduleOutcome] = []
     real_review = fsrs_engine.review
 
-    def recording_review(**kwargs: object) -> object:
+    def recording_review(**kwargs: Any) -> fsrs_engine.ScheduleOutcome:
         rating_value = kwargs["rating_value"]
         assert isinstance(rating_value, int)
         observed.append(rating_value)
-        return real_review(**kwargs)
+        outcome = real_review(**kwargs)
+        # Keep an independent expected result so subsequent ORM writes cannot
+        # silently change the spy's copy of the serialized card.
+        outcomes.append(deepcopy(outcome))
+        return outcome
 
     monkeypatch.setattr(fsrs_engine, "review", recording_review)
     monkeypatch.setattr(
@@ -896,6 +911,51 @@ def test_easy_versus_good_persist_distinct_engine_ratings(
         easy_item.decision_log["fsrs_rating"]["value"]
         != good_item.decision_log["fsrs_rating"]["value"]
     )
+
+    cases = [
+        (easy_item.id, easy_attempt.id, easy_evidence.id, 4, "fast-first-attempt", outcomes[0]),
+        (good_item.id, good_attempt.id, good_evidence.id, 3, "unsupported-correct", outcomes[1]),
+    ]
+    db_session.commit()
+
+    # Reread from the database rather than the scheduling session's identity
+    # map. Logging the right adapter value alone cannot prove a card was saved.
+    with Session(db_session.get_bind()) as session:
+        for item_id, attempt_id, evidence_id, rating, rule, outcome in cases:
+            item = session.get(ReviewQueueItem, item_id)
+            assert item is not None
+            card = session.scalars(
+                select(ReviewCardState).where(
+                    ReviewCardState.learner_id == item.learner_id,
+                    ReviewCardState.subject_id == item.knowledge_node_id,
+                )
+            ).one()
+            schedule = session.scalars(
+                select(ReviewSchedule).where(ReviewSchedule.review_queue_item_id == item_id)
+            ).one()
+            decision = session.scalars(
+                select(SchedulerDecision).where(SchedulerDecision.review_queue_item_id == item_id)
+            ).one()
+
+            assert card.card_state == outcome.card_state
+            assert card.stability == outcome.stability
+            assert card.difficulty == outcome.difficulty
+            assert card.review_count == outcome.review_count == 1
+            assert card.lapse_count == outcome.lapse_count == 0
+            # This fixture uses SQLite, which rereads DateTime without tzinfo.
+            assert card.due_at == outcome.due_at.replace(tzinfo=None)
+            assert item.due_at == schedule.due_at == card.due_at
+            assert item.source_attempt_id == attempt_id
+            assert (
+                item.source_evidence_record_id
+                == schedule.source_evidence_record_id
+                == decision.source_evidence_record_id
+                == evidence_id
+            )
+            assert decision.review_schedule_id == schedule.id
+            assert decision.decision_log == item.decision_log
+            assert decision.decision_log["fsrs_rating"]["value"] == rating
+            assert decision.decision_log["fsrs_rating"]["rule_id"] == rule
 
 
 def test_known_repairs_link_owned_work_to_controls() -> None:

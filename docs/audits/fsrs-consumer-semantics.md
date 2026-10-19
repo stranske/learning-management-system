@@ -116,3 +116,25 @@ against the unchanged 80% repository floor. The HTTP audit could not complete
 in this follow-up sandbox: local socketpair sends used by TestClient's thread
 wakeup raise `PermissionError`. These new checks verify the direct scheduler
 and committed persistence path, without claiming fresh HTTP verification.
+
+Easy/Good persistence follow-up (2026-10-19):
+`test_easy_versus_good_persist_distinct_engine_ratings` now commits both
+ratings and rereads them in a fresh session. It compares the stored serialized
+card, stability, difficulty, counters and due date against independently copied
+real-engine outcomes, and checks the queue, schedule and decision links and
+logged rating. Its existing fixed timing context remains a test input; this
+check does not establish timing-population selection or HTTP behavior.
+A process-local negative control that overwrites saved card difficulty with
+`0.0` after the real advance fails the new committed-state assertion
+(`0.0 != 1.0`); production files remain unchanged.
+
+Restored verification:
+`python -m pytest tests/scheduling/test_fsrs_adapter.py tests/scheduling/test_card_state.py tests/scheduling/test_fsrs_engine.py -q --no-cov -m "not slow"`
+reports **133 passed** (exit 0).
+`python -m pytest tests/scheduling/test_fsrs_adapter.py -q -m "not slow"`
+reports **109 passed**, then exits 1 at the unchanged repository coverage floor
+(33.98% versus 80%). This is assertion success, not a passing coverage gate.
+`ruff check tests/scheduling/test_fsrs_adapter.py` passes.
+`BLACK_NUM_WORKERS=1 black --check --line-length 100 --exclude '(\.workflows-lib|node_modules)' .`
+passes for all **448 files**; one worker avoids the sandbox's multiprocessing
+socket restriction.
