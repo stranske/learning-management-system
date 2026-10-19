@@ -8,11 +8,15 @@ from sqlalchemy.orm import Session
 from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_evidence_record
 from lms.scheduling.fsrs_adapter import (
+    FSRS_PRESERVATION_INVARIANTS,
     FSRS_RULES,
     FSRS_SEAM_INVENTORY,
+    REQUIRED_PRESERVATION_IDS,
     SEAM_DISPOSITIONS,
     _score,
+    adapter_preservation_holds,
     evidence_to_fsrs_rating,
+    preservation_invariant,
     seam_inventory_by_kind,
     seam_rating_rule_ids,
 )
@@ -553,6 +557,87 @@ def test_seam_inventory_records_adapters_consumers_and_dispositions() -> None:
         assert entry.consumer.strip()
         assert entry.evidence.strip()
         assert entry.disposition in SEAM_DISPOSITIONS
+
+
+def test_preservation_invariants_declare_required_semantics() -> None:
+    """Existing policy must declare exclusion, Easy/Good and score-selection preservation."""
+    ids = tuple(entry.invariant_id for entry in FSRS_PRESERVATION_INVARIANTS)
+    assert ids == REQUIRED_PRESERVATION_IDS
+
+    for entry in FSRS_PRESERVATION_INVARIANTS:
+        assert entry.semantics.strip()
+        assert entry.policy_basis.strip()
+        assert entry.adapter_commitment.strip()
+        assert entry.consumer_commitment.strip()
+        assert entry.owner_issue.startswith("#")
+        assert entry.owner_pr.startswith("#")
+        assert entry.evidence.strip()
+        assert preservation_invariant(entry.invariant_id) is entry
+
+
+def test_adapter_preservation_commitments_hold_under_existing_policy() -> None:
+    """Live FSRS_RULES / evidence_to_fsrs_rating must satisfy declared adapter commitments."""
+    holds = adapter_preservation_holds()
+    assert set(holds) == set(REQUIRED_PRESERVATION_IDS)
+    assert all(holds.values()), holds
+
+    # Explicit semantic spot-checks so a silent helper change cannot greenwash.
+    transfer = evidence_to_fsrs_rating(
+        EvidenceRecord(
+            learner_id="l",
+            knowledge_node_id="n",
+            correctness=True,
+            confidence_rating=5,
+            transfer_distance="near",
+        )
+    )
+    assert transfer.scheduling_included is False
+    assert transfer.value is None
+
+    easy = evidence_to_fsrs_rating(
+        EvidenceRecord(
+            learner_id="l",
+            knowledge_node_id="n",
+            scoring_method="binary",
+            correctness=True,
+            confidence_rating=5,
+            normalized_score=1.0,
+            response_time_seconds=8,
+            support_level="none",
+            attempt_context={"attempt_number": 1},
+        ),
+        prompt_class_median_seconds=8,
+    )
+    good = evidence_to_fsrs_rating(
+        EvidenceRecord(
+            learner_id="l",
+            knowledge_node_id="n",
+            scoring_method="binary",
+            correctness=True,
+            confidence_rating=4,
+            normalized_score=1.0,
+            support_level="none",
+        )
+    )
+    assert easy.value == 4 and easy.rule_id == "fast-first-attempt"
+    assert good.value == 3 and good.rule_id == "unsupported-correct"
+    assert easy.value != good.value
+
+    # Binary mastery must not steal the Easy lane via partial-at-mastery.
+    binary_mastery_candidate = EvidenceRecord(
+        learner_id="l",
+        knowledge_node_id="n",
+        scoring_method="binary",
+        correctness=True,
+        confidence_rating=5,
+        normalized_score=1.0,
+        support_level="none",
+        attempt_context={"attempt_number": 1},
+        response_time_seconds=8,
+    )
+    assert not next(r for r in FSRS_RULES if r.rule_id == "partial-at-mastery").applies(
+        binary_mastery_candidate
+    )
 
 
 @pytest.mark.parametrize("correctness", [None, True])

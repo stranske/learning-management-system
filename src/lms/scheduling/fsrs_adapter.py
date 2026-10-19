@@ -517,3 +517,239 @@ def seam_rating_rule_ids() -> tuple[str, ...]:
         for entry in FSRS_SEAM_INVENTORY
         if entry.kind == "rating-rule" and entry.entry_id in _RULE_BY_ID
     )
+
+
+# ---------------------------------------------------------------------------
+# Preservation invariants (issue #762)
+#
+# Declares what the existing scheduling policy must keep distinct at this seam.
+# These are audit obligations under current policy — not new rating rules,
+# algorithm changes, or FSRS parameter tuning. Known repairs: #760 / PR #779
+# (exclusion gate) and #761 / PR #781 (Easy vs Good + binary score selection).
+# ---------------------------------------------------------------------------
+
+REQUIRED_PRESERVATION_IDS = (
+    "scheduling-included-false",
+    "easy-versus-good",
+    "upstream-score-selection",
+)
+
+
+@dataclass(frozen=True)
+class SeamPreservationInvariant:
+    """One declared preservation obligation under the existing scheduling policy."""
+
+    invariant_id: str
+    semantics: str
+    policy_basis: str
+    adapter_commitment: str
+    consumer_commitment: str
+    owner_issue: str
+    owner_pr: str
+    evidence: str
+
+
+FSRS_PRESERVATION_INVARIANTS: tuple[SeamPreservationInvariant, ...] = (
+    SeamPreservationInvariant(
+        invariant_id="scheduling-included-false",
+        semantics=(
+            "scheduling_included=false remains an exclusion gate: transfer "
+            "evidence stays retained but must not fall back into FSRS card, "
+            "queue, schedule or decision mutation"
+        ),
+        policy_basis=(
+            "docs/product/project-plan.md transfer exclusion; " "FSRS_RULES transfer-excluded row"
+        ),
+        adapter_commitment=(
+            "transfer-excluded emits label=excluded, value=None, "
+            "scheduling_included=False for near/far/novel distances"
+        ),
+        consumer_commitment=(
+            "schedule_from_attempt returns ExcludedSchedulingOutcome before "
+            "get_or_seed_card_state / advance_card_state / queue writes"
+        ),
+        owner_issue="#760",
+        owner_pr="#779",
+        evidence=(
+            "test_transfer_distance_is_excluded_from_scheduling; "
+            "test_service_honors_adapter_eligibility_before_any_card_write; "
+            "test_fsrs_consumer_audit near/far/novel"
+        ),
+    ),
+    SeamPreservationInvariant(
+        invariant_id="easy-versus-good",
+        semantics=(
+            "Easy (value=4) and Good (value=3) remain distinct grades under "
+            "the existing four-grade policy; timing-eligible Easy must not "
+            "collapse into Good at the adapter or through the success blend"
+        ),
+        policy_basis=(
+            "docs/product/project-plan.md Easy/Good rows; "
+            "FSRS_RULES fast-first-attempt vs unsupported-correct"
+        ),
+        adapter_commitment=(
+            "fast-first-attempt → easy/4; unsupported-correct → good/3; "
+            "eligible timing context is required for Easy"
+        ),
+        consumer_commitment=(
+            "_signal_to_rating_value retains Easy=4 on success via "
+            "min(fsrs_value, 4); Good stays 3"
+        ),
+        owner_issue="#761",
+        owner_pr="#781",
+        evidence=(
+            "test_fast_high_confidence_first_attempt_maps_to_easy; "
+            "test_ui_self_grades_preserve_distinct_ratings; "
+            "test_fsrs_consumer_audit[easy|good]"
+        ),
+    ),
+    SeamPreservationInvariant(
+        invariant_id="upstream-score-selection",
+        semantics=(
+            "Upstream score selection prefers normalized_score, then "
+            "raw/max; binary scoring_method must not be intercepted as "
+            "partial-at-mastery before Easy when Good-unsupported applies"
+        ),
+        policy_basis=(
+            "docs/product/project-plan.md partial-credit pre-threshold vs "
+            "binary Easy path; _score and _is_score_at_mastery binary gate"
+        ),
+        adapter_commitment=(
+            "_score prefers normalized_score over raw/max; "
+            "partial-at-mastery skips binary+good-unsupported so "
+            "fast-first-attempt can still match"
+        ),
+        consumer_commitment=(
+            "UI self-grade binary payloads keep scoring_method=binary into "
+            "schedule_for_evidence (no new rating policy)"
+        ),
+        owner_issue="#761",
+        owner_pr="#781",
+        evidence=(
+            "test_binary_mastery_without_confidence_keeps_good; "
+            "test_ui_binary_correct_requires_eligible_timing_context_for_easy; "
+            "lms762-controls.json binary negative control"
+        ),
+    ),
+)
+
+
+def preservation_invariant(invariant_id: str) -> SeamPreservationInvariant:
+    """Return one declared preservation invariant by id."""
+    for entry in FSRS_PRESERVATION_INVARIANTS:
+        if entry.invariant_id == invariant_id:
+            return entry
+    raise KeyError(f"unknown preservation invariant: {invariant_id}")
+
+
+def adapter_preservation_holds() -> dict[str, bool]:
+    """Evaluate pure-adapter commitments for each declared preservation invariant.
+
+    Consumer mutation gates live in ``service.schedule_from_attempt`` and are
+    covered by existing eligibility / audit controls; this helper only checks
+    commitments that ``fsrs_adapter`` itself can prove against live ``FSRS_RULES``
+    and ``evidence_to_fsrs_rating``.
+    """
+    transfer_rule = _RULE_BY_ID["transfer-excluded"]
+    easy_rule = _RULE_BY_ID["fast-first-attempt"]
+    good_rule = _RULE_BY_ID["unsupported-correct"]
+    mastery_rule = _RULE_BY_ID["partial-at-mastery"]
+
+    near = EvidenceRecord(
+        learner_id="preservation-check",
+        knowledge_node_id="node",
+        correctness=True,
+        confidence_rating=5,
+        transfer_distance="near",
+    )
+    far = EvidenceRecord(
+        learner_id="preservation-check",
+        knowledge_node_id="node",
+        correctness=True,
+        confidence_rating=5,
+        transfer_distance="far",
+    )
+    novel = EvidenceRecord(
+        learner_id="preservation-check",
+        knowledge_node_id="node",
+        correctness=True,
+        confidence_rating=5,
+        transfer_distance="novel",
+    )
+    binary_easy = EvidenceRecord(
+        learner_id="preservation-check",
+        knowledge_node_id="node",
+        scoring_method="binary",
+        correctness=True,
+        confidence_rating=5,
+        normalized_score=1.0,
+        response_time_seconds=10,
+        support_level="none",
+        attempt_context={"attempt_number": 1},
+    )
+    binary_good = EvidenceRecord(
+        learner_id="preservation-check",
+        knowledge_node_id="node",
+        scoring_method="binary",
+        correctness=True,
+        confidence_rating=4,
+        normalized_score=1.0,
+        support_level="none",
+    )
+    partial_mastery = EvidenceRecord(
+        learner_id="preservation-check",
+        knowledge_node_id="node",
+        scoring_method="partial-credit",
+        correctness=True,
+        confidence_rating=5,
+        normalized_score=0.9,
+        support_level="none",
+    )
+    score_prefers_normalized = EvidenceRecord(
+        learner_id="preservation-check",
+        knowledge_node_id="node",
+        normalized_score=0.4,
+        raw_score=9.0,
+        max_score=10.0,
+    )
+
+    excluded_ok = (
+        transfer_rule.scheduling_included is False
+        and transfer_rule.value is None
+        and all(
+            evidence_to_fsrs_rating(record).scheduling_included is False
+            and evidence_to_fsrs_rating(record).value is None
+            and evidence_to_fsrs_rating(record).rule_id == "transfer-excluded"
+            for record in (near, far, novel)
+        )
+    )
+
+    easy_rating = evidence_to_fsrs_rating(binary_easy, prompt_class_median_seconds=10)
+    good_rating = evidence_to_fsrs_rating(binary_good)
+    easy_vs_good_ok = (
+        easy_rule.value == 4
+        and easy_rule.rating == "easy"
+        and good_rule.value == 3
+        and good_rule.rating == "good"
+        and easy_rating.value == 4
+        and easy_rating.rule_id == "fast-first-attempt"
+        and good_rating.value == 3
+        and good_rating.rule_id == "unsupported-correct"
+        and easy_rating.value != good_rating.value
+    )
+
+    # Binary+good-unsupported must skip partial-at-mastery so Easy stays reachable.
+    binary_skips_mastery = not mastery_rule.applies(binary_easy)
+    partial_still_mastery = mastery_rule.applies(partial_mastery)
+    score_selection_ok = (
+        binary_skips_mastery
+        and partial_still_mastery
+        and _score(score_prefers_normalized) == 0.4
+        and easy_rating.rule_id == "fast-first-attempt"
+    )
+
+    return {
+        "scheduling-included-false": excluded_ok,
+        "easy-versus-good": easy_vs_good_ok,
+        "upstream-score-selection": score_selection_ok,
+    }
