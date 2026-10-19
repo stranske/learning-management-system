@@ -476,17 +476,23 @@ def _clone_timing_prompt(factory, prompt_id, *, demand="medium", scope="personal
 
 
 @pytest.mark.parametrize(
-    "history, elapsed, expected",
+    "history, elapsed, expected_median, expected",
     [
-        ([40, 40, 40], 40, 4),
-        ([40, 40, 40], 41, 3),
-        ([10, 10, 10], 40, 3),
-        ([], 1, 3),
-        ([40, 40], 1, 3),
+        ([40, 40, 40], 40, 40, 4),
+        ([40, 40, 40], 41, 40, 3),
+        ([10, 10, 10], 40, 10, 3),
+        ([], 1, None, 3),
+        ([40, 40], 1, None, 3),
+        # Unsorted, skewed populations distinguish the median from a mean,
+        # first observation, or last observation, including even-sized history.
+        ([100, 10, 40], 40, 40, 4),
+        ([100, 10, 40], 41, 40, 3),
+        ([100, 10, 41, 20], 30, 30.5, 4),
+        ([100, 10, 41, 20], 31, 30.5, 3),
     ],
 )
 def test_real_http_prompt_class_timing_reaches_engine(
-    loop_client, monkeypatch, history, elapsed, expected
+    loop_client, monkeypatch, history, elapsed, expected_median, expected
 ):
     from lms.scheduling import service
 
@@ -513,13 +519,65 @@ def test_real_http_prompt_class_timing_reaches_engine(
     item = _queue_items(factory, learner)[-1]
     timing = item.decision_log["inputs"]["prompt_class_timing"]
     assert timing["sample_count"] == len(history), "current response cannot count itself"
-    assert timing["median_seconds"] == (history[0] if len(history) >= 3 else None)
+    assert timing["median_seconds"] == expected_median
     assert item.decision_log["fsrs_rating"]["value"] == expected
     if history:
         # A repeat of the same prompt can never regain first-attempt Easy.
         response = client.post("/attempts", json=payload)
         assert response.status_code == 201
         assert observed[-1] == 3
+
+
+@pytest.mark.parametrize("history_count, expected", [(2, 3), (3, 4)])
+def test_duplicate_scoring_does_not_inflate_prompt_timing_history(
+    loop_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    history_count: int,
+    expected: int,
+) -> None:
+    """Extra scoring rows cannot satisfy the minimum distinct-attempt count."""
+    from lms.evidence.repository import create_evidence_record
+    from lms.scheduling import service
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(history_count):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="history")
+        payload.update(confidence_rating=5, elapsed_seconds=40)
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201, response.text
+        with factory() as session:
+            create_evidence_record(
+                session,
+                learner_id=learner,
+                knowledge_node_id=old_node,
+                attempt_id=response.json()["id"],
+                prompt_id=old_prompt,
+                correctness=True,
+                normalized_score=1.0,
+                scoring_method="binary",
+                confidence_rating=5,
+                response_time_seconds=40,
+            )
+            session.commit()
+
+    observed = []
+    real_advance = service.advance_card_state
+
+    def capture(session, **kwargs):
+        observed.append(kwargs["rating_value"])
+        return real_advance(session, **kwargs)
+
+    monkeypatch.setattr(service, "advance_card_state", capture)
+    payload = _attempt_payload(learner, node, prompt, response_text="current")
+    payload.update(confidence_rating=5, elapsed_seconds=40)
+    response = client.post("/attempts", json=payload)
+    assert response.status_code == 201, response.text
+    assert observed == [expected]
+    timing = _queue_items(factory, learner)[-1].decision_log["inputs"]["prompt_class_timing"]
+    assert timing["sample_count"] == history_count
+    assert timing["median_seconds"] == (40 if history_count >= 3 else None)
 
 
 @pytest.mark.parametrize(
