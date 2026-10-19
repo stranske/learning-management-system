@@ -120,8 +120,9 @@ def test_m5_redaction_excludes_inferred_capability_and_formative_llm_bodies(
 
 
 @pytest.mark.parametrize("heading_style", ["atx", "setext"])
+@pytest.mark.parametrize("reverse_records", [False, True])
 def test_markdown_note_body_redacted_across_whole_default_export(
-    db_session: Session, tmp_path: Path, heading_style: str
+    db_session: Session, tmp_path: Path, heading_style: str, reverse_records: bool
 ) -> None:
     from lms.graphs.models import KnowledgeNode
     from lms.importers.markdown import import_markdown_notes
@@ -177,13 +178,19 @@ def test_markdown_note_body_redacted_across_whole_default_export(
     }
     for mode in ("public-only", "none"):
         path = tmp_path / f"redacted-{mode}.jsonl"
+        lines = list(export_jsonl(db_session, include_source_content=mode))
+        if reverse_records:
+            lines.reverse()
         path.write_text(
-            "\n".join(export_jsonl(db_session, include_source_content=mode)) + "\n",
+            "\n".join(lines) + "\n",
             encoding="utf-8",
         )
         engine = create_engine("sqlite+pysqlite:///:memory:")
         try:
-            Base.metadata.create_all(engine)
+            with engine.begin() as connection:
+                connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+                assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+                Base.metadata.create_all(connection)
             with Session(engine) as destination:
                 import_jsonl(destination, path, dry_run=False)
                 destination.commit()
@@ -198,6 +205,12 @@ def test_markdown_note_body_redacted_across_whole_default_export(
                     edge.id: (edge.source_node_id, edge.target_node_id, edge.edge_type)
                     for edge in destination.query(KnowledgeEdge)
                 } == graph_links
+                # Source locators survive the round-trip, but they must not
+                # recover withheld bodies, even when the next export opts in.
+                restored_stream = "\n".join(
+                    export_jsonl(destination, include_source_content="all", confirm_all=True)
+                )
+                assert all(sentinel not in restored_stream for sentinel in sentinels)
         finally:
             engine.dispose()
 

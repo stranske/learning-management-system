@@ -765,8 +765,15 @@ def _apply_pii_import_defaults(record_type: str, record: dict[str, Any]) -> None
 def _apply_entries(session: Session, entries: Iterable[dict[str, Any]]) -> None:
     pending_relationships: list[tuple[str, str, str, list[str]]] = []
     pending_session_parents: list[tuple[LLMSession, str]] = []
-    for entry in entries:
+    type_order = {model.__name__: index for index, model in enumerate(EXPORT_ORDER)}
+    current_model: type[Any] | None = None
+    for entry in sorted(entries, key=lambda entry: type_order[entry["type"]]):
         model = MODEL_BY_TYPE[entry["type"]]
+        if model is not current_model:
+            # Column-only foreign keys do not establish ORM flush ordering.
+            # Persist each dependency type before adding its dependent rows.
+            session.flush()
+            current_model = model
         record = dict(entry["record"])
         _apply_pii_import_defaults(entry["type"], record)
         for key in RELATIONSHIP_KEYS.get(entry["type"], ()):
