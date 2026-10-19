@@ -21,7 +21,10 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "fastapi>=0.136.3",
+    # FastAPI 0.141+ currently resolves a TestClient stack that hangs on
+    # Python 3.14 before the Compose smoke can start. Keep direct installs on
+    # the same validated 0.140 line as requirements.lock.
+    "fastapi>=0.136.3,<0.141",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.14.1",
     "PyYAML>=6.0.3",

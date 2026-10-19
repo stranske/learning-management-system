@@ -101,3 +101,18 @@ def test_sqlalchemy_install_stays_on_validated_major_minor() -> None:
         assert (
             lower_bound <= pinned < upper_bound
         ), f"{lock_name} pins unsupported SQLAlchemy {version}"
+
+
+def test_fastapi_install_stays_on_compose_validated_minor() -> None:
+    """Keep the gate's direct install compatible with the Compose lock set."""
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+    requirement = next(
+        dependency for dependency in dependencies if dependency.startswith("fastapi")
+    )
+    assert requirement == "fastapi>=0.136.3,<0.141"
+
+    for lock_name in ("requirements.lock", "requirements-dev.lock"):
+        version = _load_lock_versions(Path(lock_name))["fastapi"]
+        pinned = tuple(int(part) for part in version.split("."))
+        assert (0, 136, 3) <= pinned < (0, 141), f"{lock_name} pins unsupported FastAPI {version}"
