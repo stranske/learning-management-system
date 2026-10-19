@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from lms.auth.models import User
 from lms.capability.models import CapabilityEstimate
 from lms.cases.models import EvidencePacket
-from lms.export_import import export_jsonl
+from lms.export_import import ExportImportError, export_jsonl
 from lms.llm.models import LLMSession
 from lms.sources.models import SourceReference
 
@@ -237,6 +237,33 @@ def test_public_imported_description_obeys_none_and_preserves_authored_text(db_s
     none = "\n".join(export_jsonl(db_session, include_source_content="none"))
     assert sentinel not in none
     assert "Authored description" in none
+
+
+def test_private_import_requires_confirmation_before_exporting_any_records(
+    db_session: Session, tmp_path: Path
+) -> None:
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinel = "SENTINEL_UNCONFIRMED_PRIVATE_BODY_757"
+    note = tmp_path / "confirmation.md"
+    note.write_text(f"# Confirmation probe\n{sentinel}\n", encoding="utf-8")
+    import_markdown_notes(db_session, note)
+    db_session.commit()
+
+    # Consume the generator inside the assertion: validation must precede even
+    # the first metadata record, so a failed export cannot leave a partial bundle.
+    emitted: list[str] = []
+    with pytest.raises(ExportImportError, match="requires --yes-i-mean-it"):
+        emitted.extend(export_jsonl(db_session, include_source_content="all"))
+    assert emitted == []
+
+    confirmed = "\n".join(export_jsonl(db_session, include_source_content="all", confirm_all=True))
+    assert sentinel in confirmed
+    # Consent applies to one export; later exports still use private defaults.
+    assert sentinel not in "\n".join(export_jsonl(db_session))
+    assert sentinel not in "\n".join(export_jsonl(db_session, include_source_content="none"))
+    assert db_session.query(KnowledgeNode).one().description == sentinel
 
 
 @pytest.mark.parametrize("source_reference_id", [None, "missing-source"])
