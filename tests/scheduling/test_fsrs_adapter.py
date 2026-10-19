@@ -238,6 +238,42 @@ def test_canonical_ui_partial_self_grade_maps_to_hard(db_session: Session) -> No
     assert rating.rule_id == "partial-under-mastery"
 
 
+@pytest.mark.parametrize("score", [0.7, 0.85], ids=["partial", "mastery-boundary"])
+@pytest.mark.parametrize(
+    "confidence, support_level, hint_used, reference_accessed",
+    [
+        (2, "none", False, False),
+        (5, "none", True, False),
+        (5, "none", False, True),
+        (5, "coach", False, False),
+    ],
+    ids=["low-confidence", "hint", "reference", "coach"],
+)
+def test_ui_partial_self_grade_caps_at_mastery(
+    db_session: Session,
+    score: float,
+    confidence: int,
+    support_level: str,
+    hint_used: bool,
+    reference_accessed: bool,
+) -> None:
+    """Unspecified correctness must retain caps even at the Good threshold."""
+    record = _self_grade_partial_record(
+        db_session, normalized_score=score, confidence_rating=confidence
+    )
+    record.support_level = support_level
+    record.hint_used = hint_used
+    record.reference_accessed = reference_accessed
+    record.response_time_seconds = 20
+
+    rating = evidence_to_fsrs_rating(record, prompt_class_median_seconds=20)
+
+    assert rating.label == "hard"
+    assert rating.value == 2
+    assert rating.rule_id == "supported-or-low-confidence-correct"
+    assert rating.scheduling_included is True
+
+
 def test_mastery_score_without_correctness_maps_to_good(db_session: Session) -> None:
     record = create_evidence_record(
         db_session,
