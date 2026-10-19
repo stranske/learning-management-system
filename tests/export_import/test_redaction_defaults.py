@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import pytest
 from sqlalchemy.orm import Session
 
 from lms.auth.models import User
@@ -216,3 +218,44 @@ def test_public_imported_description_obeys_none_and_preserves_authored_text(db_s
     none = "\n".join(export_jsonl(db_session, include_source_content="none"))
     assert sentinel not in none
     assert "Authored description" in none
+
+
+@pytest.mark.parametrize("source_reference_id", [None, "missing-source"])
+@pytest.mark.parametrize("content_mode", ["public-only", "none", "all"])
+def test_imported_excerpt_with_unresolved_source_requires_explicit_opt_in(
+    db_session: Session,
+    tmp_path: Path,
+    source_reference_id: str | None,
+    content_mode: str,
+) -> None:
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinel = "SENTINEL_UNRESOLVED_SOURCE_BODY_757"
+    note = tmp_path / "unresolved.md"
+    note.write_text(f"# Unresolved source\n{sentinel}\n", encoding="utf-8")
+    import_markdown_notes(db_session, note)
+    db_session.commit()
+    node = db_session.query(KnowledgeNode).one()
+    # Legacy data may lack its source link or point to an unavailable source.
+    # Neither case supplies evidence that the excerpt is public.
+    node.source_reference_id = source_reference_id
+    db_session.commit()
+    db_session.expunge_all()
+
+    stream = "\n".join(
+        export_jsonl(
+            db_session,
+            include_source_content=content_mode,
+            confirm_all=content_mode == "all",
+        )
+    )
+    exported_node = next(
+        entry["record"]
+        for entry in map(json.loads, stream.splitlines())
+        if entry["type"] == "KnowledgeNode"
+    )
+    assert (sentinel in stream) is (content_mode == "all")
+    assert exported_node["description"] == (sentinel if content_mode == "all" else None)
+    assert exported_node["source_reference_id"] == source_reference_id
+    assert db_session.query(KnowledgeNode).one().description == sentinel
