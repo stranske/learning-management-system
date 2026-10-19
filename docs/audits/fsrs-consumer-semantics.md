@@ -277,3 +277,29 @@ requires approval under the run's `never` policy. Local staging also failed:
 Git cannot create `.git/index.lock` on the read-only filesystem, so this run
 cannot create the requested commit. The test changes and evidence remain in
 the working tree for a write-enabled run.
+
+Incorrect-score precedence persistence follow-up (2026-10-19):
+`test_incorrect_precedes_scores_in_committed_consumers` adds four internal-path
+cases with explicit false correctness and normalized or raw/max scores of 0.7
+and 0.9. The existing persistence helper observes Again=1 at the real engine
+and verifies committed evidence, card, queue, schedule and decision rows in a
+fresh session. These checks extend the adapter-only incorrectness precedence
+assertion without changing policy or claiming HTTP verification.
+
+A process-local negative control promotes Again=1 to Good=3 in
+`_signal_to_rating_value`. All four new cases fail at the engine-input
+assertion (`[3] != [1]`), with 129 tests deselected. Production files are
+unchanged by this control.
+
+Restored verification:
+`python -m pytest tests/scheduling/test_fsrs_adapter.py tests/scheduling/test_card_state.py tests/scheduling/test_fsrs_engine.py -q --no-cov -m "not slow"`
+reports **157 passed in 11.57s** (exit 0).
+`PYTEST_ADDOPTS='-m "not slow"' python -m pytest tests/scheduling/test_fsrs_adapter.py -q`
+reports **133 passed in 15.10s**, then exits 1 at the unchanged global coverage
+floor (**34.25% versus 80%**). This is passing behavior verification, not a
+passing repository coverage gate.
+Black formats the changed Python file; the required repository-wide Black
+check passes for all 448 files with `BLACK_NUM_WORKERS=1`. Ruff passes.
+The commit attempt fails at staging because `.git/index.lock` cannot be
+created on the read-only filesystem. Both changed files remain uncommitted;
+no PR was created or changed by this run.

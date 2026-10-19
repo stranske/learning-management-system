@@ -995,6 +995,35 @@ def test_score_selection_reaches_committed_consumers(
     )
 
 
+@pytest.mark.parametrize(
+    "normalized_score, raw_score, expected_score",
+    [
+        pytest.param(0.7, 0.0, 0.7, id="normalized-partial"),
+        pytest.param(0.9, 0.0, 0.9, id="normalized-mastery"),
+        pytest.param(None, 7.0, 0.7, id="raw-partial"),
+        pytest.param(None, 9.0, 0.9, id="raw-mastery"),
+    ],
+)
+def test_incorrect_precedes_scores_in_committed_consumers(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    normalized_score: float | None,
+    raw_score: float,
+    expected_score: float,
+) -> None:
+    """Explicit incorrectness remains Again despite partial or mastery scores."""
+    _assert_score_selection_persisted(
+        db_session,
+        monkeypatch,
+        correctness=False,
+        normalized_score=normalized_score,
+        raw_score=raw_score,
+        expected_score=expected_score,
+        rating=1,
+        rule="incorrect",
+    )
+
+
 @pytest.mark.parametrize("score", [0.7, 0.85], ids=["partial", "mastery-boundary"])
 @pytest.mark.parametrize(
     "confidence, support_level, hint_used, reference_accessed",
