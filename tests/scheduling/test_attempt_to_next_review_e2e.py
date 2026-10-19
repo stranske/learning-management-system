@@ -543,14 +543,24 @@ def test_real_http_prompt_class_timing_reaches_engine(
 
 
 @pytest.mark.parametrize(
-    "grade, confidence, expected",
-    [("incorrect", 5, 1), ("partial", 5, 2), ("correct", 3, 3), ("correct", 5, 4)],
+    "grade, confidence, reference_accessed, expected",
+    [
+        ("incorrect", 5, False, 1),
+        ("partial", 5, False, 2),
+        ("correct", 3, False, 3),
+        ("correct", 5, False, 4),
+        ("correct", 2, False, 2),
+        ("correct", 5, True, 2),
+        ("partial", 5, True, 2),
+    ],
+    ids=["again", "partial", "good", "easy", "low-confidence", "reference", "partial-reference"],
 )
 def test_ui_self_grade_delivers_all_four_ratings_to_engine(
     loop_client: tuple[TestClient, sessionmaker[Session]],
     monkeypatch: pytest.MonkeyPatch,
     grade: str,
     confidence: int,
+    reference_accessed: bool,
     expected: int,
 ) -> None:
     """UI evidence creation must preserve the grade and timing through scheduling."""
@@ -576,6 +586,7 @@ def test_ui_self_grade_delivers_all_four_ratings_to_engine(
             "prompt_id": prompt,
             "response_text": "Self-assessed answer.",
             "confidence_rating": str(confidence),
+            "reference_accessed": str(reference_accessed).lower(),
             "elapsed_seconds": "40",
         },
     )
@@ -597,6 +608,9 @@ def test_ui_self_grade_delivers_all_four_ratings_to_engine(
     assert decision["fsrs_rating"]["value"] == expected
     assert decision["inputs"]["prompt_class_timing"]["sample_count"] == 3
     assert decision["inputs"]["prompt_class_timing"]["median_seconds"] == 40
+    assert decision["inputs"]["prompt_class_timing"]["first_attempt"] is True
+    if reference_accessed or confidence <= 2:
+        assert decision["fsrs_rating"]["rule_id"] == "supported-or-low-confidence-correct"
 
 
 def test_prior_unscored_attempt_prevents_first_attempt_easy(
