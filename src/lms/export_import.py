@@ -598,16 +598,16 @@ def _model_to_record(
         and row.provenance == "imported"
         and include_source_content != ALL_VALUE
     ):
-        source = (
-            session.get(SourceReference, row.source_reference_id)
-            if row.source_reference_id
-            else None
-        )
-        redact_description = (
-            include_source_content == "none"
-            or source is None
-            or source.source_visibility != "public"
-        )
+        if include_source_content == "none":
+            # Every imported excerpt is withheld; skip the SourceReference lookup.
+            redact_description = True
+        else:
+            source = (
+                session.get(SourceReference, row.source_reference_id)
+                if row.source_reference_id
+                else None
+            )
+            redact_description = source is None or source.source_visibility != "public"
     source_content_fields = set()
     if record_type == "SourceReference" and include_source_content != ALL_VALUE:
         source_content_fields = SOURCE_CONTENT_FIELDS

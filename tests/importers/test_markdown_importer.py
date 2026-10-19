@@ -355,7 +355,9 @@ def test_multi_file_import_links_subsections_within_their_own_file(
 def test_imported_excerpt_export_follows_bound_source_visibility(db_session, tmp_path, visibility):
     from lms.export_import import export_jsonl
 
-    note = _write_note(tmp_path)
+    sentinel = f"SENTINEL_MARKDOWN_VISIBILITY_{visibility.upper().replace('-', '_')}_757"
+    note = tmp_path / "visibility.md"
+    note.write_text(f"# Visibility Probe\n{sentinel}\n", encoding="utf-8")
     import_markdown_notes(db_session, note, source_visibility=visibility)
     db_session.commit()
     nodes = db_session.query(KnowledgeNode).all()
@@ -363,5 +365,11 @@ def test_imported_excerpt_export_follows_bound_source_visibility(db_session, tmp
     assert all(node.provenance == "imported" for node in nodes)
     assert all(node.source_reference_id in sources for node in nodes)
     assert all(sources[node.source_reference_id].source_visibility == visibility for node in nodes)
-    output = "\n".join(export_jsonl(db_session))
-    assert ("Trying to recall strengthens long-term memory." in output) is (visibility == "public")
+    assert all(sentinel in (node.description or "") for node in nodes)
+    default_export = "\n".join(export_jsonl(db_session))
+    assert (sentinel in default_export) is (visibility == "public")
+    none_export = "\n".join(export_jsonl(db_session, include_source_content="none"))
+    assert sentinel not in none_export
+    assert sentinel in "\n".join(
+        export_jsonl(db_session, include_source_content="all", confirm_all=True)
+    )
