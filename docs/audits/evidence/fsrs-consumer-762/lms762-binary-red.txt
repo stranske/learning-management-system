@@ -1,0 +1,292 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: <worktree>
+configfile: pyproject.toml
+plugins: cov-7.1.0, xdist-3.8.0, anyio-4.14.2, datadir-1.8.0, regressions-2.11.0
+collected 12 items
+
+tests/scheduling/test_fsrs_consumer_audit.py ..........FF                [100%]
+
+=================================== FAILURES ===================================
+___________ test_rating_inventory_reaches_persisted_consumers[good] ____________
+
+loop_client = (<starlette.testclient.TestClient object at 0x107fedc10>, sessionmaker(class_='Session', autocommit=False, bind=Engine(sqlite+pysqlite:///:memory:), autoflush=False, expire_on_commit=False))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107fedd90>
+change = {}, rule = 'unsupported-correct', rating = 3
+
+    @pytest.mark.parametrize(
+        ("change", "rule", "rating"),
+        [
+            pytest.param({"transfer_distance": "near"}, "transfer-excluded", None, id="near"),
+            pytest.param({"transfer_distance": "far"}, "transfer-excluded", None, id="far"),
+            pytest.param({"transfer_distance": "novel"}, "transfer-excluded", None, id="novel"),
+            pytest.param({"correctness": False}, "incorrect", 1, id="incorrect"),
+            pytest.param({"hint_used": True}, "supported-or-low-confidence-correct", 2, id="hint"),
+            pytest.param(
+                {"reference_accessed": True}, "supported-or-low-confidence-correct", 2, id="reference"
+            ),
+            pytest.param({"normalized_score": 0.49}, "partial-under-half", 1, id="under-half"),
+            pytest.param({"normalized_score": 0.50}, "partial-under-mastery", 2, id="half"),
+            pytest.param({"normalized_score": 0.84}, "partial-under-mastery", 2, id="under-mastery"),
+            pytest.param(
+                {"normalized_score": 0.85, "scoring_method": "partial-credit"},
+                "partial-at-mastery",
+                3,
+                id="mastery",
+            ),
+            pytest.param({}, "unsupported-correct", 3, id="good"),
+            pytest.param({"confidence_rating": 5}, "fast-first-attempt", 4, id="easy"),
+        ],
+    )
+    def test_rating_inventory_reaches_persisted_consumers(
+        loop_client: tuple[TestClient, sessionmaker[Session]],
+        monkeypatch: pytest.MonkeyPatch,
+        change: dict[str, Any],
+        rule: str,
+        rating: int | None,
+    ) -> None:
+        client, factory = loop_client
+        learner, node, prompt = _seed_learner_node_prompt(factory)
+        # Establish real timing history on other prompts before observing the target.
+        # It makes Easy reachable without replacing the timing selector or scheduler.
+        for _ in range(3):
+            prior_prompt, prior_node = _clone_timing_prompt(factory, prompt)
+            prior = _attempt_payload(learner, prior_node, prior_prompt, response_text="timing")
+            prior.update(confidence_rating=5, elapsed_seconds=40)
+            response = client.post("/attempts", json=prior)
+            assert response.status_code == 201, response.text
+    
+        with factory() as session:
+            before_card = session.scalars(
+                select(ReviewCardState).where(ReviewCardState.subject_id == node)
+            ).one()
+            before = deepcopy(
+                {
+                    column.key: getattr(before_card, column.key)
+                    for column in ReviewCardState.__table__.columns
+                }
+            )
+    
+        observed: list[int] = []
+        real_review = fsrs_engine.review
+    
+        def recording_review(**kwargs: Any) -> Any:
+            observed.append(kwargs["rating_value"])
+            return real_review(**kwargs)
+    
+        monkeypatch.setattr(fsrs_engine, "review", recording_review)
+        payload = _attempt_payload(learner, node, prompt, response_text="audited evidence")
+        payload["elapsed_seconds"] = 1
+        evidence_payload = payload["evidence"]
+        assert isinstance(evidence_payload, dict)
+        for key, value in change.items():
+            if key in {"confidence_rating", "hint_used", "reference_accessed"}:
+                payload[key] = value
+            else:
+                evidence_payload[key] = value
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201, response.text
+        attempt_id = response.json()["id"]
+    
+        # Read after the HTTP transaction committed. Queue/schedule/decision rows
+        # must belong to this attempt; timing history shares the same subject.
+        with factory() as session:
+            attempt = session.get(Attempt, attempt_id)
+            assert attempt is not None
+            evidence = session.scalars(
+                select(EvidenceRecord).where(EvidenceRecord.attempt_id == attempt_id)
+            ).one()
+            cards = list(
+                session.scalars(select(ReviewCardState).where(ReviewCardState.subject_id == node))
+            )
+            queue = list(
+                session.scalars(
+                    select(ReviewQueueItem).where(ReviewQueueItem.source_attempt_id == attempt_id)
+                )
+            )
+            schedules = list(
+                session.scalars(
+                    select(ReviewSchedule)
+                    .join(ReviewQueueItem, ReviewSchedule.review_queue_item_id == ReviewQueueItem.id)
+                    .where(ReviewQueueItem.source_attempt_id == attempt_id)
+                )
+            )
+            decisions = list(
+                session.scalars(
+                    select(SchedulerDecision)
+                    .join(ReviewQueueItem, SchedulerDecision.review_queue_item_id == ReviewQueueItem.id)
+                    .where(ReviewQueueItem.source_attempt_id == attempt_id)
+                )
+            )
+            if rating is None:
+                assert observed == []
+                assert not queue
+                assert not schedules
+                assert not decisions
+                assert len(cards) == 1
+                assert {
+                    column.key: getattr(cards[0], column.key)
+                    for column in ReviewCardState.__table__.columns
+                } == before
+                assert attempt.response_metadata is not None
+                receipt = attempt.response_metadata["scheduling_outcome"]
+                assert receipt["fsrs_rating"]["rule_id"] == rule
+                assert receipt["fsrs_rating"]["scheduling_included"] is False
+                assert receipt["card_mutated"] is False
+                assert receipt["output"]["due_at"] is None
+                return
+            assert observed == [rating]
+            assert len(cards) == len(queue) == len(schedules) == len(decisions) == 1
+            item, card, schedule, decision = queue[0], cards[0], schedules[0], decisions[0]
+            assert item.source_evidence_record_id == evidence.id
+>           assert item.decision_log["fsrs_rating"]["rule_id"] == rule
+E           AssertionError: assert 'partial-at-mastery' == 'unsupported-correct'
+E             
+E             - unsupported-correct
+E             + partial-at-mastery
+
+tests/scheduling/test_fsrs_consumer_audit.py:156: AssertionError
+___________ test_rating_inventory_reaches_persisted_consumers[easy] ____________
+
+loop_client = (<starlette.testclient.TestClient object at 0x11024f8c0>, sessionmaker(class_='Session', autocommit=False, bind=Engine(sqlite+pysqlite:///:memory:), autoflush=False, expire_on_commit=False))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11024fe00>
+change = {'confidence_rating': 5}, rule = 'fast-first-attempt', rating = 4
+
+    @pytest.mark.parametrize(
+        ("change", "rule", "rating"),
+        [
+            pytest.param({"transfer_distance": "near"}, "transfer-excluded", None, id="near"),
+            pytest.param({"transfer_distance": "far"}, "transfer-excluded", None, id="far"),
+            pytest.param({"transfer_distance": "novel"}, "transfer-excluded", None, id="novel"),
+            pytest.param({"correctness": False}, "incorrect", 1, id="incorrect"),
+            pytest.param({"hint_used": True}, "supported-or-low-confidence-correct", 2, id="hint"),
+            pytest.param(
+                {"reference_accessed": True}, "supported-or-low-confidence-correct", 2, id="reference"
+            ),
+            pytest.param({"normalized_score": 0.49}, "partial-under-half", 1, id="under-half"),
+            pytest.param({"normalized_score": 0.50}, "partial-under-mastery", 2, id="half"),
+            pytest.param({"normalized_score": 0.84}, "partial-under-mastery", 2, id="under-mastery"),
+            pytest.param(
+                {"normalized_score": 0.85, "scoring_method": "partial-credit"},
+                "partial-at-mastery",
+                3,
+                id="mastery",
+            ),
+            pytest.param({}, "unsupported-correct", 3, id="good"),
+            pytest.param({"confidence_rating": 5}, "fast-first-attempt", 4, id="easy"),
+        ],
+    )
+    def test_rating_inventory_reaches_persisted_consumers(
+        loop_client: tuple[TestClient, sessionmaker[Session]],
+        monkeypatch: pytest.MonkeyPatch,
+        change: dict[str, Any],
+        rule: str,
+        rating: int | None,
+    ) -> None:
+        client, factory = loop_client
+        learner, node, prompt = _seed_learner_node_prompt(factory)
+        # Establish real timing history on other prompts before observing the target.
+        # It makes Easy reachable without replacing the timing selector or scheduler.
+        for _ in range(3):
+            prior_prompt, prior_node = _clone_timing_prompt(factory, prompt)
+            prior = _attempt_payload(learner, prior_node, prior_prompt, response_text="timing")
+            prior.update(confidence_rating=5, elapsed_seconds=40)
+            response = client.post("/attempts", json=prior)
+            assert response.status_code == 201, response.text
+    
+        with factory() as session:
+            before_card = session.scalars(
+                select(ReviewCardState).where(ReviewCardState.subject_id == node)
+            ).one()
+            before = deepcopy(
+                {
+                    column.key: getattr(before_card, column.key)
+                    for column in ReviewCardState.__table__.columns
+                }
+            )
+    
+        observed: list[int] = []
+        real_review = fsrs_engine.review
+    
+        def recording_review(**kwargs: Any) -> Any:
+            observed.append(kwargs["rating_value"])
+            return real_review(**kwargs)
+    
+        monkeypatch.setattr(fsrs_engine, "review", recording_review)
+        payload = _attempt_payload(learner, node, prompt, response_text="audited evidence")
+        payload["elapsed_seconds"] = 1
+        evidence_payload = payload["evidence"]
+        assert isinstance(evidence_payload, dict)
+        for key, value in change.items():
+            if key in {"confidence_rating", "hint_used", "reference_accessed"}:
+                payload[key] = value
+            else:
+                evidence_payload[key] = value
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201, response.text
+        attempt_id = response.json()["id"]
+    
+        # Read after the HTTP transaction committed. Queue/schedule/decision rows
+        # must belong to this attempt; timing history shares the same subject.
+        with factory() as session:
+            attempt = session.get(Attempt, attempt_id)
+            assert attempt is not None
+            evidence = session.scalars(
+                select(EvidenceRecord).where(EvidenceRecord.attempt_id == attempt_id)
+            ).one()
+            cards = list(
+                session.scalars(select(ReviewCardState).where(ReviewCardState.subject_id == node))
+            )
+            queue = list(
+                session.scalars(
+                    select(ReviewQueueItem).where(ReviewQueueItem.source_attempt_id == attempt_id)
+                )
+            )
+            schedules = list(
+                session.scalars(
+                    select(ReviewSchedule)
+                    .join(ReviewQueueItem, ReviewSchedule.review_queue_item_id == ReviewQueueItem.id)
+                    .where(ReviewQueueItem.source_attempt_id == attempt_id)
+                )
+            )
+            decisions = list(
+                session.scalars(
+                    select(SchedulerDecision)
+                    .join(ReviewQueueItem, SchedulerDecision.review_queue_item_id == ReviewQueueItem.id)
+                    .where(ReviewQueueItem.source_attempt_id == attempt_id)
+                )
+            )
+            if rating is None:
+                assert observed == []
+                assert not queue
+                assert not schedules
+                assert not decisions
+                assert len(cards) == 1
+                assert {
+                    column.key: getattr(cards[0], column.key)
+                    for column in ReviewCardState.__table__.columns
+                } == before
+                assert attempt.response_metadata is not None
+                receipt = attempt.response_metadata["scheduling_outcome"]
+                assert receipt["fsrs_rating"]["rule_id"] == rule
+                assert receipt["fsrs_rating"]["scheduling_included"] is False
+                assert receipt["card_mutated"] is False
+                assert receipt["output"]["due_at"] is None
+                return
+>           assert observed == [rating]
+E           assert [3] == [4]
+E             
+E             At index 0 diff: 3 != 4
+E             Use -v to get more diff
+
+tests/scheduling/test_fsrs_consumer_audit.py:152: AssertionError
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  <worktree>/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/scheduling/test_fsrs_consumer_audit.py::test_rating_inventory_reaches_persisted_consumers[good]
+FAILED tests/scheduling/test_fsrs_consumer_audit.py::test_rating_inventory_reaches_persisted_consumers[easy]
+=================== 2 failed, 10 passed, 1 warning in 1.71s ====================
