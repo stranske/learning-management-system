@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_evidence_record
 from lms.scheduling.fsrs_adapter import (
+    FSRS_ADDITIONAL_FINDINGS,
+    FSRS_KNOWN_REPAIRS,
     FSRS_NEGATIVE_CONTROLS,
     FSRS_PERSISTED_EFFECT_TRACES,
     FSRS_PRESERVATION_INVARIANTS,
@@ -18,8 +20,12 @@ from lms.scheduling.fsrs_adapter import (
     SEAM_DISPOSITIONS,
     _score,
     adapter_preservation_holds,
+    additional_finding,
+    additional_finding_adapter_contract_holds,
     evidence_to_fsrs_rating,
+    known_repair,
     negative_control,
+    nonfinite_insufficient_signal_probe_record,
     persisted_effect_trace,
     preservation_invariant,
     rating_allows_persisted_mutation,
@@ -816,6 +822,86 @@ def test_easy_versus_good_persist_distinct_engine_ratings(
         easy_item.decision_log["fsrs_rating"]["value"]
         != good_item.decision_log["fsrs_rating"]["value"]
     )
+
+
+def test_known_repairs_link_owned_work_to_controls() -> None:
+    """Known per-instance losses must point at existing owned issues/PRs and controls."""
+    repair_ids = {entry.repair_id for entry in FSRS_KNOWN_REPAIRS}
+    assert repair_ids == {
+        "transfer-exclusion-gate",
+        "easy-versus-good-preservation",
+        "binary-score-selection",
+    }
+
+    linked_invariants = {entry.invariant_id for entry in FSRS_KNOWN_REPAIRS}
+    assert linked_invariants == set(REQUIRED_PRESERVATION_IDS)
+
+    for entry in FSRS_KNOWN_REPAIRS:
+        assert entry.owner_issue.startswith("#")
+        assert entry.owner_pr.startswith("#")
+        assert entry.loss.strip()
+        assert entry.control_id in REQUIRED_NEGATIVE_CONTROL_IDS
+        assert negative_control(entry.control_id).invariant_id == entry.invariant_id
+        assert preservation_invariant(entry.invariant_id).owner_issue == entry.owner_issue
+        assert preservation_invariant(entry.invariant_id).owner_pr == entry.owner_pr
+        assert known_repair(entry.repair_id) is entry
+
+
+def test_additional_findings_are_returned_without_auto_filing_or_repair() -> None:
+    """Additional confirmed losses stay review-only: no auto-filed issue, no bundled fix."""
+    assert len(FSRS_ADDITIONAL_FINDINGS) == 1
+    finding = additional_finding("insufficient-signal-success-fallback")
+    assert finding.auto_filed_issue is False
+    assert finding.bundled_repair is False
+    assert finding.evidence_limits.strip()
+    assert finding.prevention_check.strip()
+    assert "unknown" in finding.evidence_limits.lower()
+    assert additional_finding_adapter_contract_holds() is True
+
+
+def test_additional_finding_nonfinite_fallback_is_observable(db_session: Session) -> None:
+    """Reproduce the returned finding on the real scheduler path; do not repair it here."""
+    from sqlalchemy import select
+
+    from lms.scheduling.models import ReviewCardState
+    from lms.scheduling.service import schedule_from_attempt
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    finding = additional_finding("insufficient-signal-success-fallback")
+    assert finding.auto_filed_issue is False
+    assert finding.bundled_repair is False
+
+    probe = nonfinite_insufficient_signal_probe_record()
+    adapter_rating = evidence_to_fsrs_rating(probe)
+    assert adapter_rating.value == 1
+    assert adapter_rating.rule_id == "insufficient-signal"
+    assert adapter_rating.scheduling_included is True
+
+    attempt, evidence = _make_attempt(
+        db_session,
+        correctness=True,
+        confidence_rating=5,
+        normalized_score=None,
+    )
+    evidence.raw_score = float("inf")
+    evidence.max_score = 1.0
+    evidence.normalized_score = None
+    db_session.flush()
+
+    rating = evidence_to_fsrs_rating(evidence)
+    assert rating.value == 1
+    assert rating.rule_id == "insufficient-signal"
+
+    item = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    db_session.flush()
+    card = db_session.scalars(select(ReviewCardState)).one()
+
+    # Confirmed consumer loss: adapter Again is logged, but success mutates the card.
+    assert item.decision_log["fsrs_rating"]["value"] == 1
+    assert item.decision_log["fsrs_rating"]["rule_id"] == "insufficient-signal"
+    assert item.decision_log["signal"] == "success"
+    assert card.review_count == 1
+    assert card.due_at is not None
 
 
 @pytest.mark.parametrize("correctness", [None, True])

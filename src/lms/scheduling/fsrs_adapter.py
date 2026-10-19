@@ -963,3 +963,162 @@ def persisted_effect_trace(trace_id: str) -> PersistedEffectTrace:
         if entry.trace_id == trace_id:
             return entry
     raise KeyError(f"unknown persisted-effect trace: {trace_id}")
+
+
+# ---------------------------------------------------------------------------
+# Known repairs + additional findings for human review (issue #762)
+#
+# Links already-owned per-instance repairs. Returns one additional confirmed
+# internal-path loss without algorithm tuning, new rating policy, bundled
+# production repair, or automatic issue filing.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SeamKnownRepair:
+    """One already-owned repair for a confirmed seam loss."""
+
+    repair_id: str
+    loss: str
+    owner_issue: str
+    owner_pr: str
+    invariant_id: str
+    control_id: str
+    evidence: str
+
+
+@dataclass(frozen=True)
+class SeamAdditionalFinding:
+    """Confirmed loss returned for human review; not auto-filed or repaired here."""
+
+    finding_id: str
+    loss: str
+    adapter_observation: str
+    consumer_observation: str
+    evidence_limits: str
+    prevention_check: str
+    evidence: str
+    auto_filed_issue: bool
+    bundled_repair: bool
+
+
+FSRS_KNOWN_REPAIRS: tuple[SeamKnownRepair, ...] = (
+    SeamKnownRepair(
+        repair_id="transfer-exclusion-gate",
+        loss=(
+            "scheduling_included=false transfer evidence fell back into FSRS "
+            "card / queue / schedule mutation"
+        ),
+        owner_issue="#760",
+        owner_pr="#779",
+        invariant_id="scheduling-included-false",
+        control_id="excluded-fallback-mutation",
+        evidence=(
+            "PR #779 Exclude transfer evidence before FSRS card updates; "
+            "test_transfer_exclusion_trace_freezes_persisted_card_state"
+        ),
+    ),
+    SeamKnownRepair(
+        repair_id="easy-versus-good-preservation",
+        loss="Distinct Easy (4) collapsed into Good (3) through the success blend",
+        owner_issue="#761",
+        owner_pr="#781",
+        invariant_id="easy-versus-good",
+        control_id="easy-good-collapse",
+        evidence=(
+            "PR #781 preserve FSRS grades with learner-scoped timing; "
+            "test_easy_versus_good_persist_distinct_engine_ratings"
+        ),
+    ),
+    SeamKnownRepair(
+        repair_id="binary-score-selection",
+        loss=(
+            "Upstream binary mastery was intercepted as partial-at-mastery "
+            "before Easy could match"
+        ),
+        owner_issue="#761",
+        owner_pr="#781",
+        invariant_id="upstream-score-selection",
+        control_id="binary-score-selection",
+        evidence=(
+            "PR #781 binary gate on partial-at-mastery; "
+            "adapter_preservation_holds upstream-score-selection"
+        ),
+    ),
+)
+
+
+FSRS_ADDITIONAL_FINDINGS: tuple[SeamAdditionalFinding, ...] = (
+    SeamAdditionalFinding(
+        finding_id="insufficient-signal-success-fallback",
+        loss=(
+            "Non-finite raw score evidence maps to adapter Again=1 / "
+            "insufficient-signal, but schedule_from_attempt drops that verdict "
+            "via _fsrs_to_signal and advances the card through the internal "
+            "success classifier"
+        ),
+        adapter_observation=(
+            "evidence_to_fsrs_rating → value=1, rule_id=insufficient-signal, "
+            "scheduling_included=true"
+        ),
+        consumer_observation=(
+            "decision_log retains fsrs_rating Again=1 while signal=success and "
+            "ReviewCardState.review_count advances with a future due_at"
+        ),
+        evidence_limits=(
+            "Direct/internal schedule_from_attempt path only; public API "
+            "reachability of non-finite raw scores remains unknown"
+        ),
+        prevention_check=(
+            "test_additional_finding_nonfinite_fallback_is_observable reproduces "
+            "adapter Again=1 plus consumer success mutation without repairing "
+            "service.py or filing a follow-up issue"
+        ),
+        evidence=(
+            "lms762-nonfinite-probe.py; lms762-nonfinite.txt; "
+            "FSRS_SEAM_INVENTORY insufficient-signal disposition=confirmed"
+        ),
+        auto_filed_issue=False,
+        bundled_repair=False,
+    ),
+)
+
+
+def known_repair(repair_id: str) -> SeamKnownRepair:
+    """Return one known owned repair by id."""
+    for entry in FSRS_KNOWN_REPAIRS:
+        if entry.repair_id == repair_id:
+            return entry
+    raise KeyError(f"unknown seam repair: {repair_id}")
+
+
+def additional_finding(finding_id: str) -> SeamAdditionalFinding:
+    """Return one additional confirmed finding by id."""
+    for entry in FSRS_ADDITIONAL_FINDINGS:
+        if entry.finding_id == finding_id:
+            return entry
+    raise KeyError(f"unknown additional finding: {finding_id}")
+
+
+def nonfinite_insufficient_signal_probe_record() -> EvidenceRecord:
+    """Build the offline non-finite probe EvidenceRecord (in-memory only)."""
+    return EvidenceRecord(
+        learner_id="lms762-nonfinite",
+        knowledge_node_id="node-nonfinite",
+        correctness=True,
+        confidence_rating=5,
+        raw_score=float("inf"),
+        max_score=1.0,
+        support_level="none",
+    )
+
+
+def additional_finding_adapter_contract_holds() -> bool:
+    """True when the returned finding's adapter observation still matches live rules."""
+    rating = evidence_to_fsrs_rating(nonfinite_insufficient_signal_probe_record())
+    return (
+        rating.value == 1
+        and rating.label == "again"
+        and rating.rule_id == "insufficient-signal"
+        and rating.scheduling_included is True
+    )
