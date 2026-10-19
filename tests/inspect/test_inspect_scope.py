@@ -224,18 +224,21 @@ def test_mixed_scope_fixture_personal_overview_is_scope_pure() -> None:
 
 
 @pytest.mark.parametrize("scope", ["personal", "institutional"])
-def test_same_learner_scope_filters_every_evidence_panel_before_limit(scope):
+@pytest.mark.parametrize("crowded_scope", ["personal", "institutional"])
+def test_same_learner_scope_filters_every_evidence_panel_before_limit(
+    scope: str, crowded_scope: str
+) -> None:
     with _client() as (client, session):
         fixture = _seed_mixed_scope_fixture(session)
-        # Add 30 newer institutional rows so other-scope volume exceeds the
-        # recent-evidence limit (25) without crowding out the older personal row.
+        # Flood either scope beyond the recent-evidence limit (25). Requests
+        # for the other scope must still return its older record.
         for index in range(30):
             create_evidence_record(
                 session,
                 learner_id=fixture["learner_id"],
-                knowledge_node_id=fixture["institutional_node_id"],
+                knowledge_node_id=fixture[f"{crowded_scope}_node_id"],
                 confidence_rating=5,
-                correctness=False,
+                correctness=crowded_scope == "personal",
                 timestamp=datetime(2026, 10, 18, tzinfo=UTC) + timedelta(minutes=index + 1),
             )
         session.commit()
@@ -246,11 +249,50 @@ def test_same_learner_scope_filters_every_evidence_panel_before_limit(scope):
         assert response.status_code == 200
         result = response.json()
         expected_node = f"mixed-{scope}"
+        expected_count = 31 if scope == crowded_scope else 1
         assert result["ownership_scope"] == scope
         assert {r["knowledge_node_id"] for r in result["recent_evidence"]} == {expected_node}
-        assert len(result["recent_evidence"]) == (1 if scope == "personal" else 25)
+        assert len(result["recent_evidence"]) == min(expected_count, 25)
         assert {r["knowledge_node_id"] for r in result["mastery"]} == {expected_node}
-        assert result["calibration"]["sample_size"] == (1 if scope == "personal" else 31)
+        assert result["mastery"][0]["evidence_count"] == expected_count
+        assert result["calibration"]["sample_size"] == expected_count
         assert result["calibration"]["buckets"][0]["observed_accuracy"] == (
             1.0 if scope == "personal" else 0.0
         )
+
+
+@pytest.mark.parametrize("scope", ["personal", "institutional"])
+def test_overview_with_only_other_scope_evidence_has_empty_evidence_panels(scope: str) -> None:
+    with _client() as (client, session):
+        other_scope = "institutional" if scope == "personal" else "personal"
+        session.add(
+            KnowledgeNode(
+                id="other-scope-node",
+                title="Other scope",
+                knowledge_type="factual",
+                ownership_scope=other_scope,
+            )
+        )
+        session.flush()
+        create_evidence_record(
+            session,
+            learner_id=MIXED_LEARNER_ID,
+            knowledge_node_id="other-scope-node",
+            confidence_rating=5,
+            correctness=True,
+        )
+        session.commit()
+
+        response = client.get(
+            f"/inspect/learners/{MIXED_LEARNER_ID}/overview",
+            params={"ownership_scope": scope},
+        )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["ownership_scope"] == scope
+    assert result["recent_evidence"] == []
+    assert result["mastery"] == []
+    assert result["calibration"]["sample_size"] == 0
+    assert result["calibration"]["buckets"] == []
+    assert result["calibration"]["overconfident"] is False
