@@ -53,6 +53,13 @@ GitHub Actions should read secrets from repository or environment secrets. They 
 - Default exports must not include local-only source bodies, verbatim formative or ephemeral LLM transcripts, or PII-flagged fields.
 - Any command that includes local-only source content or all LLM traces must require explicit user intent.
 
+Imported knowledge-node descriptions are source excerpts, identified by the
+existing `provenance=imported` and `source_reference_id` fields. Default
+`public-only` exports redact descriptions linked to local-only or unknown sources;
+`none` redacts all imported descriptions, while confirmed `all` preserves them.
+Manually authored descriptions remain unchanged. Source IDs, content hashes,
+graph edges and local stored text are preserved, including for older imports.
+
 This keeps personal research notes usable in the prototype without treating every note body as repo-safe or export-safe material.
 
 ## LLM Trace Handling

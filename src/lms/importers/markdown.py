@@ -136,6 +136,8 @@ def import_markdown_notes(
             scope=scope,
             actor_id=actor_id,
             status="draft",
+            # This provenance plus the source link marks the description as an
+            # excerpt, so export applies that reference's visibility policy.
             provenance="imported",
             imported_from=str(heading.file_path),
             source_reference_id=source.id,

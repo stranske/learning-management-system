@@ -473,6 +473,7 @@ def export_jsonl(
                 continue
             payload = _model_to_record(
                 row,
+                session=session,
                 include_pii=include_pii,
                 include_source_content=include_source_content,
             )
@@ -578,7 +579,9 @@ def _export_statement(model: type[Any]) -> Any:
     return statement
 
 
-def _model_to_record(row: Any, *, include_pii: str, include_source_content: str) -> dict[str, Any]:
+def _model_to_record(
+    row: Any, *, session: Session, include_pii: str, include_source_content: str
+) -> dict[str, Any]:
     mapper = inspect(row).mapper
     record_type = row.__class__.__name__
     record: dict[str, Any] = {}
@@ -587,6 +590,24 @@ def _model_to_record(row: Any, *, include_pii: str, include_source_content: str)
     redacted_fields = set()
     if include_source_content != ALL_VALUE:
         redacted_fields.update(DEFAULT_REDACTED_FIELDS.get(record_type, set()))
+    # Imported descriptions are source excerpts. Their existing provenance/link
+    # also covers older Markdown imports; unknown visibility fails closed.
+    redact_description = False
+    if (
+        isinstance(row, KnowledgeNode)
+        and row.provenance == "imported"
+        and include_source_content != ALL_VALUE
+    ):
+        source = (
+            session.get(SourceReference, row.source_reference_id)
+            if row.source_reference_id
+            else None
+        )
+        redact_description = (
+            include_source_content == "none"
+            or source is None
+            or source.source_visibility != "public"
+        )
     source_content_fields = set()
     if record_type == "SourceReference" and include_source_content != ALL_VALUE:
         source_content_fields = SOURCE_CONTENT_FIELDS
@@ -601,6 +622,8 @@ def _model_to_record(row: Any, *, include_pii: str, include_source_content: str)
             record[column.key] = REDACTED_FIELD_VALUES[(record_type, column.key)]
             continue
         record[column.key] = _dump_value(getattr(row, column.key))
+    if redact_description:
+        record["description"] = None
     if isinstance(row, LearningGoal):
         record["target_node_ids"] = [node.id for node in row.target_nodes]
     if isinstance(row, Prompt):

@@ -115,3 +115,87 @@ def test_m5_redaction_excludes_inferred_capability_and_formative_llm_bodies(
     assert "verbatim formative coaching trace" not in "\n".join(
         json.dumps(record) for record in records
     )
+
+
+def test_markdown_note_body_redacted_across_whole_default_export(db_session, tmp_path):
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    note = tmp_path / "private.md"
+    sentinel = "SENTINEL_PRIVATE_BODY_757"
+    note.write_text(f"# Public heading\n{sentinel}\n\n## Child heading\n{sentinel}\n")
+    import_markdown_notes(db_session, note)
+    db_session.commit()
+    nodes = db_session.query(KnowledgeNode).all()
+    assert all(sentinel in node.description for node in nodes)
+    for options in ({}, {"include_source_content": "none"}):
+        lines = list(export_jsonl(db_session, **options))
+        assert sentinel not in "\n".join(lines)
+        exported = [json.loads(line) for line in lines]
+        exported_nodes = [r["record"] for r in exported if r["type"] == "KnowledgeNode"]
+        assert {r["id"] for r in exported_nodes} == {n.id for n in nodes}
+        assert all(r["description"] is None for r in exported_nodes)
+        assert all(r["source_reference_id"] for r in exported_nodes)
+        assert any(r["type"] == "KnowledgeEdge" for r in exported)
+        assert all(r["record"]["content_hash"] for r in exported if r["type"] == "SourceReference")
+    assert sentinel in "\n".join(
+        export_jsonl(db_session, include_source_content="all", confirm_all=True)
+    )
+    assert all(sentinel in node.description for node in nodes), "export must not mutate local notes"
+    from sqlalchemy import create_engine
+
+    from lms.db.base import Base
+    from lms.export_import import import_jsonl
+    from lms.graphs.models import KnowledgeEdge
+
+    path = tmp_path / "redacted.jsonl"
+    path.write_text("\n".join(export_jsonl(db_session)) + "\n")
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as destination:
+            import_jsonl(destination, path, dry_run=False)
+            restored = destination.query(KnowledgeNode).all()
+            assert {n.id for n in restored} == {n.id for n in nodes}
+            assert all(n.description is None and n.source_reference_id for n in restored)
+            assert destination.query(KnowledgeEdge).count() == 1
+            assert destination.query(SourceReference).count() == 2
+    finally:
+        engine.dispose()
+
+
+def test_public_imported_description_obeys_none_and_preserves_authored_text(db_session, tmp_path):
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    note = tmp_path / "public.md"
+    sentinel = "SENTINEL_PUBLIC_BODY_757"
+    note.write_text(f"# Heading\n{sentinel}\n")
+    import_markdown_notes(db_session, note, source_visibility="public")
+    db_session.add(
+        KnowledgeNode(
+            id="authored",
+            title="Authored",
+            description="Authored description",
+            knowledge_type="factual",
+            ownership_scope="personal",
+            provenance="manual",
+        )
+    )
+    db_session.add(
+        KnowledgeNode(
+            id="legacy",
+            title="Legacy import",
+            description="SENTINEL_UNBOUND_757",
+            knowledge_type="factual",
+            ownership_scope="personal",
+            provenance="imported",
+        )
+    )
+    db_session.commit()
+    public = "\n".join(export_jsonl(db_session))
+    assert sentinel in public
+    assert "SENTINEL_UNBOUND_757" not in public
+    none = "\n".join(export_jsonl(db_session, include_source_content="none"))
+    assert sentinel not in none
+    assert "Authored description" in none
