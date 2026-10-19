@@ -719,6 +719,9 @@ def test_duplicate_scoring_does_not_inflate_prompt_timing_history(
         "transfer",
         "zero-time",
         "unscored",
+        "incorrect",
+        "partial-under-half",
+        "partial-under-mastery",
         "future",
     ],
 )
@@ -751,6 +754,14 @@ def test_prompt_timing_history_does_not_cross_boundaries(loop_client, excluded):
             payload["confidence_rating"] = 2
         if excluded == "transfer":
             payload["evidence"]["transfer_distance"] = "near"
+        if excluded == "incorrect":
+            payload["evidence"]["correctness"] = False
+        if excluded in {"partial-under-half", "partial-under-mastery"}:
+            payload["evidence"].update(
+                scoring_method="partial-credit",
+                raw_score=0.49 if excluded == "partial-under-half" else 0.7,
+                normalized_score=0.49 if excluded == "partial-under-half" else 0.7,
+            )
         response = client.post("/attempts", json=payload)
         assert response.status_code == 201, response.text
         with factory() as session:
