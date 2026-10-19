@@ -707,6 +707,9 @@ def test_duplicate_scoring_does_not_inflate_prompt_timing_history(
     "excluded",
     [
         "learner",
+        "attempt-learner",
+        "prompt-link",
+        "node-link",
         "scope",
         "class",
         "knowledge-type",
@@ -770,6 +773,16 @@ def test_prompt_timing_history_does_not_cross_boundaries(loop_client, excluded):
             )
             if excluded == "learner":
                 evidence.learner_id = "other-learner"
+            if excluded == "attempt-learner":
+                attempt = session.get(Attempt, response.json()["id"])
+                assert attempt is not None
+                attempt.learner_id = "other-learner"
+            if excluded == "prompt-link":
+                # Keep the evidence in the same class and ownership scope, but
+                # point it at a different prompt than the recorded attempt.
+                evidence.prompt_id = prompt
+            if excluded == "node-link":
+                evidence.knowledge_node_id = "other-node"
             if excluded == "unscored":
                 evidence.correctness = None
                 evidence.normalized_score = None
@@ -785,7 +798,9 @@ def test_prompt_timing_history_does_not_cross_boundaries(loop_client, excluded):
     payload.update(confidence_rating=5, elapsed_seconds=1)
     assert client.post("/attempts", json=payload).status_code == 201
     item = _queue_items(factory, learner)[-1]
-    assert item.decision_log["inputs"]["prompt_class_timing"]["sample_count"] == 0
+    timing = item.decision_log["inputs"]["prompt_class_timing"]
+    assert timing["sample_count"] == 0
+    assert timing["median_seconds"] is None
     assert item.decision_log["fsrs_rating"]["value"] == 3
 
 
