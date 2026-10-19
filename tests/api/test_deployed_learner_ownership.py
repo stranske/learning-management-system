@@ -447,12 +447,24 @@ def test_authenticated_user_cannot_read_another_learners_inspect_overview() -> N
     try:
         owner_id = client.owner_learner_id  # type: ignore[attr-defined]
         foreign_id = client.other_learner_id  # type: ignore[attr-defined]
-        record = EvidenceRecord(
-            learner_id=owner_id,
-            knowledge_node_id="owner-inspect-node",
-            normalized_score=0.7,
-        )
-        session.add(record)
+        nodes = {
+            scope: KnowledgeNode(
+                id=f"owner-inspect-node-{scope}",
+                title=f"Owner inspect {scope}",
+                knowledge_type="factual",
+                ownership_scope=scope,
+            )
+            for scope in ("personal", "institutional")
+        }
+        records = {
+            scope: EvidenceRecord(
+                learner_id=owner_id,
+                knowledge_node_id=nodes[scope].id,
+                normalized_score=0.7,
+            )
+            for scope in nodes
+        }
+        session.add_all([*nodes.values(), *records.values()])
         session.commit()
 
         for scope in ("personal", "institutional"):
@@ -468,8 +480,8 @@ def test_authenticated_user_cannot_read_another_learners_inspect_overview() -> N
             assert own.json()["learner_id"] == owner_id
             assert own.json()["ownership_scope"] == scope
             [evidence] = own.json()["recent_evidence"]
-            assert evidence["id"] == record.id
-            assert evidence["knowledge_node_id"] == "owner-inspect-node"
+            assert evidence["id"] == records[scope].id
+            assert evidence["knowledge_node_id"] == nodes[scope].id
             assert evidence["normalized_score"] == 0.7
     finally:
         with suppress(StopIteration):
