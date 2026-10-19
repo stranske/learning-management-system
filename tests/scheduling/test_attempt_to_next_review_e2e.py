@@ -543,6 +543,71 @@ def test_real_http_prompt_class_timing_reaches_engine(
 
 
 @pytest.mark.parametrize(
+    "score, expected, rule_id",
+    [
+        (0.49, 1, "partial-under-half"),
+        (0.50, 2, "partial-under-mastery"),
+        (0.84, 2, "partial-under-mastery"),
+        (0.85, 3, "partial-at-mastery"),
+    ],
+)
+def test_http_partial_credit_boundaries_reach_engine_with_easy_timing(
+    loop_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    score: float,
+    expected: int,
+    rule_id: str,
+) -> None:
+    """Score-only partial grades keep their thresholds through the service blend."""
+    from lms.evidence.models import EvidenceRecord
+    from lms.scheduling import service
+    from lms.scheduling.card_state import advance_card_state
+    from lms.ui.attempts import _SELF_GRADES
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(3):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="history")
+        payload.update(confidence_rating=5, elapsed_seconds=40)
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201, response.text
+
+    advance = Mock(wraps=advance_card_state)
+    monkeypatch.setattr(service, "advance_card_state", advance)
+    payload = _attempt_payload(learner, node, prompt, response_text="partial response")
+    payload.update(confidence_rating=5, elapsed_seconds=40)
+    payload["evidence"] = {
+        "knowledge_node_id": node,
+        **_SELF_GRADES["partial"],
+        "scorer_type": "rubric-self",
+        "normalized_score": score,
+        "raw_score": score,
+        "max_score": 1.0,
+    }
+    response = client.post("/attempts", json=payload)
+    assert response.status_code == 201, response.text
+    advance.assert_called_once()
+    assert advance.call_args.kwargs["rating_value"] == expected
+    with factory() as session:
+        evidence = session.scalars(
+            select(EvidenceRecord).where(EvidenceRecord.attempt_id == response.json()["id"])
+        ).one()
+        assert evidence.correctness is None
+        assert evidence.normalized_score == score
+        assert evidence.scoring_method == "partial-credit"
+    decision = _queue_items(factory, learner)[-1].decision_log
+    assert decision["fsrs_rating"]["value"] == expected
+    assert decision["fsrs_rating"]["rule_id"] == rule_id
+    assert decision["inputs"]["prompt_class_timing"] == {
+        "median_seconds": 40,
+        "sample_count": 3,
+        "minimum_samples": 3,
+        "first_attempt": True,
+    }
+
+
+@pytest.mark.parametrize(
     "grade, confidence, reference_accessed, expected",
     [
         ("incorrect", 5, False, 1),
