@@ -36,7 +36,6 @@ TRANSFER_EXCLUDED_DISTANCES = frozenset({"near", "far", "novel"})
 LOW_CONFIDENCE_MAX = 2
 MEDIUM_CONFIDENCE_MIN = 3
 HIGH_CONFIDENCE_MIN = 5
-FAST_FIRST_ATTEMPT_SECONDS = 30
 SUPPORTED_LEVELS = frozenset(
     {
         "hint",
@@ -78,7 +77,9 @@ def _has_support(record: EvidenceRecord) -> bool:
 
 
 def _is_supported_correct_or_low_confidence(record: EvidenceRecord) -> bool:
-    if record.correctness is not True:
+    if record.correctness is not True and not (
+        record.correctness is None and (_score(record) or 0) >= 0.5
+    ):
         return False
     return _has_support(record) or (
         record.confidence_rating is not None and record.confidence_rating <= LOW_CONFIDENCE_MAX
@@ -109,7 +110,6 @@ def _is_fast_first_attempt(record: EvidenceRecord) -> bool:
         and not _has_support(record)
         and (record.confidence_rating or 0) >= HIGH_CONFIDENCE_MIN
         and record.response_time_seconds is not None
-        and record.response_time_seconds <= FAST_FIRST_ATTEMPT_SECONDS
         and is_first_attempt
     )
 
@@ -125,13 +125,13 @@ def _is_good_unsupported_correct(record: EvidenceRecord) -> bool:
 
 def _is_score_under_half(record: EvidenceRecord) -> bool:
     score = _score(record)
-    return record.correctness is True and score is not None and score < 0.5
+    return record.correctness is not False and score is not None and score < 0.5
 
 
 def _is_score_under_mastery(record: EvidenceRecord) -> bool:
     score = _score(record)
     return (
-        record.correctness is True
+        record.correctness is not False
         and not _has_support(record)
         and score is not None
         and 0.5 <= score < 0.85
@@ -146,6 +146,7 @@ def _is_score_at_mastery(record: EvidenceRecord) -> bool:
         and not _is_low_confidence_correct(record)
         and score is not None
         and score >= 0.85
+        and not (record.scoring_method == "binary" and _is_good_unsupported_correct(record))
     )
 
 
@@ -227,9 +228,23 @@ FSRS_RULES: tuple[FSRSRule, ...] = (
 )
 
 
-def evidence_to_fsrs_rating(record: EvidenceRecord) -> FSRSRating:
+def evidence_to_fsrs_rating(
+    record: EvidenceRecord,
+    *,
+    prompt_class_median_seconds: float | None = None,
+    first_attempt: bool | None = None,
+) -> FSRSRating:
     """Return the first matching deterministic FSRS-style rating for evidence."""
     for rule in FSRS_RULES:
+        if rule.rule_id == "fast-first-attempt" and (
+            first_attempt is False
+            or prompt_class_median_seconds is None
+            or not math.isfinite(prompt_class_median_seconds)
+            or prompt_class_median_seconds <= 0
+            or record.response_time_seconds is None
+            or record.response_time_seconds > prompt_class_median_seconds
+        ):
+            continue
         if rule.applies(record):
             return FSRSRating(
                 label=rule.rating,

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from statistics import median
 from typing import Any
 
 from sqlalchemy import case, func, select
@@ -21,9 +22,14 @@ from sqlalchemy.orm import Session
 from lms.auth.models import utc_now
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.graphs.models import KnowledgeNode
+from lms.prompts.models import Prompt
 from lms.scheduling import fsrs_engine
 from lms.scheduling.card_state import advance_card_state, get_or_seed_card_state
-from lms.scheduling.fsrs_adapter import FSRSRating, evidence_to_fsrs_rating
+from lms.scheduling.fsrs_adapter import (
+    TRANSFER_EXCLUDED_DISTANCES,
+    FSRSRating,
+    evidence_to_fsrs_rating,
+)
 from lms.scheduling.models import RemediationTrigger, ReviewQueueItem
 from lms.scheduling.repository import (
     create_remediation_trigger,
@@ -495,9 +501,12 @@ _RATING_VALUE_BY_SIGNAL: dict[str, int] = {
 }
 
 
-def _signal_to_rating_value(signal: str) -> int:
+def _signal_to_rating_value(signal: str, *, fsrs_value: int | None = None) -> int:
     """Map the blended internal signal onto an FSRS 1-4 rating value."""
-    return _RATING_VALUE_BY_SIGNAL.get(signal, 2)
+    value = _RATING_VALUE_BY_SIGNAL.get(signal, 2)
+    if fsrs_value is None:
+        return value
+    return min(fsrs_value, 4 if signal == "success" else value)
 
 
 def _conservative_signal(a: str, b: str) -> str:
@@ -706,6 +715,92 @@ def _record_schedule_and_decision(
     )
 
 
+PROMPT_CLASS_TIMING_MIN_SAMPLES = 3
+
+
+def _prompt_class_timing_context(
+    session: Session, attempt: Attempt, evidence: EvidenceRecord
+) -> tuple[float | None, int, bool]:
+    """Use prior unassisted successes in this learner's ownership-scoped class.
+
+    A class is knowledge type, cognitive action, demand and answer form. Missing
+    prompts or insufficient history have no Easy timing threshold.
+    """
+    prior_attempt = (
+        Attempt.learner_id == attempt.learner_id,
+        Attempt.id != attempt.id,
+        Attempt.created_at < attempt.created_at,
+    )
+    first = not bool(
+        session.scalar(
+            select(Attempt.id)
+            .where(*prior_attempt, Attempt.prompt_id == attempt.prompt_id)
+            .limit(1)
+        )
+    )
+    prompt = session.get(Prompt, attempt.prompt_id)
+    node = session.get(KnowledgeNode, evidence.knowledge_node_id)
+    if prompt is None or node is None or prompt.target_node_id != node.id:
+        return None, 0, first
+    # Resolve the current grade before filtering. Otherwise an older successful
+    # row survives a later failing/supported grade on the same attempt.
+    latest_evidence = (
+        select(
+            EvidenceRecord.id,
+            func.row_number()
+            .over(
+                partition_by=EvidenceRecord.attempt_id,
+                order_by=(EvidenceRecord.timestamp.desc(), EvidenceRecord.id.desc()),
+            )
+            .label("ordinal"),
+        )
+        .join(Attempt, EvidenceRecord.attempt_id == Attempt.id)
+        .where(*prior_attempt)
+        .subquery()
+    )
+    samples = session.scalars(
+        select(EvidenceRecord)
+        .join(Attempt, EvidenceRecord.attempt_id == Attempt.id)
+        .join(Prompt, EvidenceRecord.prompt_id == Prompt.id)
+        .join(KnowledgeNode, Prompt.target_node_id == KnowledgeNode.id)
+        .join(latest_evidence, latest_evidence.c.id == EvidenceRecord.id)
+        .where(
+            latest_evidence.c.ordinal == 1,
+            *prior_attempt,
+            EvidenceRecord.learner_id == attempt.learner_id,
+            EvidenceRecord.knowledge_node_id == Prompt.target_node_id,
+            Attempt.prompt_id == Prompt.id,
+            KnowledgeNode.ownership_scope == node.ownership_scope,
+            Prompt.knowledge_type == prompt.knowledge_type,
+            Prompt.intended_cognitive_action == prompt.intended_cognitive_action,
+            Prompt.demand_level == prompt.demand_level,
+            Prompt.expected_answer_form == prompt.expected_answer_form,
+            EvidenceRecord.response_time_seconds > 0,
+            EvidenceRecord.correctness.is_(True),
+            EvidenceRecord.confidence_rating >= 3,
+            EvidenceRecord.hint_used.is_(False),
+            EvidenceRecord.reference_accessed.is_(False),
+            EvidenceRecord.support_level.in_(["none", ""]),
+        )
+    )
+    # Keep at most one timing observation per attempt. Imported/rubric variants
+    # must not multiply one response's weight in the prompt-class population.
+    times: dict[str, int] = {}
+    for sample in samples:
+        if (sample.transfer_distance or "").strip().lower() in TRANSFER_EXCLUDED_DISTANCES:
+            continue
+        if evidence_to_fsrs_rating(sample).value != 3:
+            continue
+        if sample.attempt_id is not None and sample.response_time_seconds is not None:
+            times[sample.attempt_id] = sample.response_time_seconds
+    count = len(times)
+    return (
+        float(median(times.values())) if count >= PROMPT_CLASS_TIMING_MIN_SAMPLES else None,
+        count,
+        first,
+    )
+
+
 def schedule_from_attempt(
     session: Session,
     *,
@@ -735,7 +830,12 @@ def schedule_from_attempt(
     confidence_rating = evidence_record.confidence_rating
     support_level = evidence_record.support_level or "none"
 
-    fsrs_rating = evidence_to_fsrs_rating(evidence_record)
+    timing_median, timing_samples, first_attempt = _prompt_class_timing_context(
+        session, attempt, evidence_record
+    )
+    fsrs_rating = evidence_to_fsrs_rating(
+        evidence_record, prompt_class_median_seconds=timing_median, first_attempt=first_attempt
+    )
     if not fsrs_rating.scheduling_included:
         exclusion_log = {
             "rule": fsrs_rating.rule_id,
@@ -794,7 +894,9 @@ def schedule_from_attempt(
     outcome = advance_card_state(
         session,
         state=card,
-        rating_value=_signal_to_rating_value(signal),
+        rating_value=_signal_to_rating_value(
+            signal, fsrs_value=fsrs_rating.value if fsrs_signal is not None else None
+        ),
         now=decision_now,
     )
 
@@ -833,6 +935,12 @@ def schedule_from_attempt(
             "confidence_rating": confidence_rating,
             "support_level": support_level,
             "prior_successful_reviews": prior_successes,
+            "prompt_class_timing": {
+                "median_seconds": timing_median,
+                "sample_count": timing_samples,
+                "minimum_samples": PROMPT_CLASS_TIMING_MIN_SAMPLES,
+                "first_attempt": first_attempt,
+            },
             "evidence_record_id": evidence_record.id,
             "attempt_id": attempt.id,
         },

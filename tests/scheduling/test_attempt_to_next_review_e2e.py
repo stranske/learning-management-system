@@ -11,7 +11,8 @@ queue-status writes, pinning the wiring between the tested units.
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import UTC
+from datetime import UTC, timedelta
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -426,3 +427,577 @@ def test_transfer_attempt_keeps_fsrs_state_unchanged(
             ).transfer_distance
             == distance
         )
+
+
+def _clone_timing_prompt(
+    factory: sessionmaker[Session],
+    prompt_id: str,
+    *,
+    demand: str = "medium",
+    scope: str = "personal",
+    knowledge_type: str | None = None,
+    cognitive_action: str | None = None,
+    answer_form: str | None = None,
+) -> tuple[str, str]:
+    from lms.graphs.models import KnowledgeNode
+    from lms.prompts.models import Prompt
+
+    with factory() as session:
+        original = session.get(Prompt, prompt_id)
+        assert original is not None
+        node = session.get(KnowledgeNode, original.target_node_id)
+        assert node is not None
+        goal_id = original.learning_goal_id
+        if scope != node.ownership_scope:
+            node = create_knowledge_node(
+                session,
+                title="Other scope",
+                knowledge_type=node.knowledge_type,
+                scope=scope,
+                status="published",
+                actor_id=ACTOR,
+                source_reference_id=node.source_reference_id,
+            )
+            from lms.learners.models import LearningGoal
+
+            original_goal = session.get(LearningGoal, original.learning_goal_id)
+            assert original_goal is not None
+            goal_id = create_learning_goal(
+                session,
+                learner_id=original_goal.learner_id,
+                title="Other scoped timing population",
+                knowledge_type=node.knowledge_type,
+                target_node_ids=[node.id],
+                ownership_scope=scope,
+            ).id
+        prompt = create_prompt(
+            session,
+            target_node_id=node.id,
+            learning_goal_id=goal_id,
+            knowledge_type=knowledge_type or original.knowledge_type,
+            intended_cognitive_action=cognitive_action or original.intended_cognitive_action,
+            demand_level=demand,
+            expected_answer_form=answer_form or original.expected_answer_form,
+            body="Another retrieval in the timing class.",
+            source_reference_ids=[r.id for r in original.source_references],
+            authoring_method="human-authored",
+            authoring_actor=ACTOR,
+        )
+        publish_prompt(session, prompt, reviewing_actor=ACTOR)
+        session.commit()
+        return prompt.id, node.id
+
+
+@pytest.mark.parametrize(
+    "history, elapsed, expected_median, expected",
+    [
+        ([40, 40, 40], 40, 40, 4),
+        ([40, 40, 40], 41, 40, 3),
+        ([10, 10, 10], 40, 10, 3),
+        ([], 1, None, 3),
+        ([40], 1, None, 3),
+        ([40, 40], 1, None, 3),
+        # Unsorted, skewed populations distinguish the median from a mean,
+        # first observation, or last observation, including even-sized history.
+        ([100, 10, 40], 40, 40, 4),
+        ([100, 10, 40], 41, 40, 3),
+        ([100, 10, 41, 20], 30, 30.5, 4),
+        ([100, 10, 41, 20], 31, 30.5, 3),
+    ],
+)
+def test_real_http_prompt_class_timing_reaches_engine(
+    loop_client, monkeypatch, history, elapsed, expected_median, expected
+):
+    from lms.scheduling import service
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for seconds in history:
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="history")
+        payload.update(confidence_rating=5, elapsed_seconds=seconds)
+        assert client.post("/attempts", json=payload).status_code == 201
+    observed = []
+    real_advance = service.advance_card_state
+
+    def capture(session, **kwargs):
+        observed.append(kwargs["rating_value"])
+        return real_advance(session, **kwargs)
+
+    monkeypatch.setattr(service, "advance_card_state", capture)
+    payload = _attempt_payload(learner, node, prompt, response_text="current")
+    payload.update(confidence_rating=5, elapsed_seconds=elapsed)
+    response = client.post("/attempts", json=payload)
+    assert response.status_code == 201, response.text
+    assert observed == [expected]
+    item = _queue_items(factory, learner)[-1]
+    timing = item.decision_log["inputs"]["prompt_class_timing"]
+    assert timing["sample_count"] == len(history), "current response cannot count itself"
+    assert timing["median_seconds"] == expected_median
+    assert item.decision_log["fsrs_rating"]["value"] == expected
+    if history:
+        # A repeat of the same prompt can never regain first-attempt Easy.
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201
+        assert observed[-1] == 3
+
+
+@pytest.mark.parametrize(
+    "score, expected, rule_id",
+    [
+        (0.49, 1, "partial-under-half"),
+        (0.50, 2, "partial-under-mastery"),
+        (0.84, 2, "partial-under-mastery"),
+        (0.85, 3, "partial-at-mastery"),
+    ],
+)
+def test_http_partial_credit_boundaries_reach_engine_with_easy_timing(
+    loop_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    score: float,
+    expected: int,
+    rule_id: str,
+) -> None:
+    """Score-only partial grades keep their thresholds through the service blend."""
+    from lms.evidence.models import EvidenceRecord
+    from lms.scheduling import service
+    from lms.scheduling.card_state import advance_card_state
+    from lms.ui.attempts import _SELF_GRADES
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(3):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="history")
+        payload.update(confidence_rating=5, elapsed_seconds=40)
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201, response.text
+
+    advance = Mock(wraps=advance_card_state)
+    monkeypatch.setattr(service, "advance_card_state", advance)
+    payload = _attempt_payload(learner, node, prompt, response_text="partial response")
+    payload.update(confidence_rating=5, elapsed_seconds=40)
+    payload["evidence"] = {
+        "knowledge_node_id": node,
+        **_SELF_GRADES["partial"],
+        "scorer_type": "rubric-self",
+        "normalized_score": score,
+        "raw_score": score,
+        "max_score": 1.0,
+    }
+    response = client.post("/attempts", json=payload)
+    assert response.status_code == 201, response.text
+    advance.assert_called_once()
+    assert advance.call_args.kwargs["rating_value"] == expected
+    with factory() as session:
+        evidence = session.scalars(
+            select(EvidenceRecord).where(EvidenceRecord.attempt_id == response.json()["id"])
+        ).one()
+        assert evidence.correctness is None
+        assert evidence.normalized_score == score
+        assert evidence.scoring_method == "partial-credit"
+    decision = _queue_items(factory, learner)[-1].decision_log
+    assert decision["fsrs_rating"]["value"] == expected
+    assert decision["fsrs_rating"]["rule_id"] == rule_id
+    assert decision["inputs"]["prompt_class_timing"] == {
+        "median_seconds": 40,
+        "sample_count": 3,
+        "minimum_samples": 3,
+        "first_attempt": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "grade, confidence, reference_accessed, expected",
+    [
+        ("incorrect", 5, False, 1),
+        ("partial", 5, False, 2),
+        ("correct", 3, False, 3),
+        ("correct", 5, False, 4),
+        ("correct", 2, False, 2),
+        ("correct", 5, True, 2),
+        ("partial", 5, True, 2),
+    ],
+    ids=["again", "partial", "good", "easy", "low-confidence", "reference", "partial-reference"],
+)
+def test_ui_self_grade_delivers_all_four_ratings_to_engine(
+    loop_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    grade: str,
+    confidence: int,
+    reference_accessed: bool,
+    expected: int,
+) -> None:
+    """UI evidence creation must preserve the grade and timing through scheduling."""
+    from lms.evidence.models import Attempt
+    from lms.scheduling import service
+    from lms.scheduling.card_state import advance_card_state
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(3):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="history")
+        payload.update(confidence_rating=5, elapsed_seconds=40)
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201, response.text
+
+    advance = Mock(wraps=advance_card_state)
+    monkeypatch.setattr(service, "advance_card_state", advance)
+    response = client.post(
+        "/app/learner/attempts",
+        data={
+            "learner_id": learner,
+            "prompt_id": prompt,
+            "response_text": "Self-assessed answer.",
+            "confidence_rating": str(confidence),
+            "reference_accessed": str(reference_accessed).lower(),
+            "elapsed_seconds": "40",
+        },
+    )
+    assert response.status_code == 200, response.text
+    advance.assert_not_called()
+    with factory() as session:
+        attempt_id = session.scalars(
+            select(Attempt.id).where(Attempt.learner_id == learner, Attempt.prompt_id == prompt)
+        ).one()
+
+    response = client.post(
+        "/app/learner/attempts/self-grade",
+        data={"learner_id": learner, "attempt_id": attempt_id, "grade": grade},
+    )
+    assert response.status_code == 200, response.text
+    advance.assert_called_once()
+    assert advance.call_args.kwargs["rating_value"] == expected
+    decision = _queue_items(factory, learner)[-1].decision_log
+    assert decision["fsrs_rating"]["value"] == expected
+    assert decision["inputs"]["prompt_class_timing"]["sample_count"] == 3
+    assert decision["inputs"]["prompt_class_timing"]["median_seconds"] == 40
+    assert decision["inputs"]["prompt_class_timing"]["first_attempt"] is True
+    if reference_accessed or confidence <= 2:
+        assert decision["fsrs_rating"]["rule_id"] == "supported-or-low-confidence-correct"
+
+
+def test_prior_unscored_attempt_prevents_first_attempt_easy(
+    loop_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First-attempt eligibility includes attempts that never received a grade."""
+    from lms.evidence.models import Attempt, EvidenceRecord
+    from lms.scheduling import service
+    from lms.scheduling.card_state import advance_card_state
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(3):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="history")
+        payload.update(confidence_rating=5, elapsed_seconds=40)
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201, response.text
+
+    advance = Mock(wraps=advance_card_state)
+    monkeypatch.setattr(service, "advance_card_state", advance)
+    response = client.post(
+        "/app/learner/attempts",
+        data={
+            "learner_id": learner,
+            "prompt_id": prompt,
+            "response_text": "An answer left awaiting self-grading.",
+            "confidence_rating": "5",
+            "elapsed_seconds": "1",
+        },
+    )
+    assert response.status_code == 200, response.text
+    advance.assert_not_called()
+    with factory() as session:
+        prior = session.scalars(
+            select(Attempt).where(Attempt.learner_id == learner, Attempt.prompt_id == prompt)
+        ).one()
+        assert (
+            session.scalar(select(EvidenceRecord).where(EvidenceRecord.attempt_id == prior.id))
+            is None
+        )
+
+    payload = _attempt_payload(learner, node, prompt, response_text="A later correct answer.")
+    payload.update(confidence_rating=5, elapsed_seconds=1)
+    response = client.post("/attempts", json=payload)
+    assert response.status_code == 201, response.text
+    advance.assert_called_once()
+    assert advance.call_args.kwargs["rating_value"] == 3
+    decision = _queue_items(factory, learner)[-1].decision_log
+    assert decision["fsrs_rating"]["value"] == 3
+    assert decision["inputs"]["prompt_class_timing"]["sample_count"] == 3
+    assert decision["inputs"]["prompt_class_timing"]["median_seconds"] == 40
+
+
+@pytest.mark.parametrize("history_count, expected", [(2, 3), (3, 4)])
+def test_duplicate_scoring_does_not_inflate_prompt_timing_history(
+    loop_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+    history_count: int,
+    expected: int,
+) -> None:
+    """Extra scoring rows cannot satisfy the minimum distinct-attempt count."""
+    from lms.evidence.repository import create_evidence_record
+    from lms.scheduling import service
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(history_count):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="history")
+        payload.update(confidence_rating=5, elapsed_seconds=40)
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201, response.text
+        with factory() as session:
+            create_evidence_record(
+                session,
+                learner_id=learner,
+                knowledge_node_id=old_node,
+                attempt_id=response.json()["id"],
+                prompt_id=old_prompt,
+                correctness=True,
+                normalized_score=1.0,
+                scoring_method="binary",
+                confidence_rating=5,
+                response_time_seconds=40,
+            )
+            session.commit()
+
+    observed = []
+    real_advance = service.advance_card_state
+
+    def capture(session, **kwargs):
+        observed.append(kwargs["rating_value"])
+        return real_advance(session, **kwargs)
+
+    monkeypatch.setattr(service, "advance_card_state", capture)
+    payload = _attempt_payload(learner, node, prompt, response_text="current")
+    payload.update(confidence_rating=5, elapsed_seconds=40)
+    response = client.post("/attempts", json=payload)
+    assert response.status_code == 201, response.text
+    assert observed == [expected]
+    timing = _queue_items(factory, learner)[-1].decision_log["inputs"]["prompt_class_timing"]
+    assert timing["sample_count"] == history_count
+    assert timing["median_seconds"] == (40 if history_count >= 3 else None)
+
+
+@pytest.mark.parametrize(
+    "excluded",
+    [
+        "learner",
+        "attempt-learner",
+        "prompt-link",
+        "node-link",
+        "scope",
+        "class",
+        "knowledge-type",
+        "cognitive-action",
+        "answer-form",
+        "hint",
+        "reference",
+        "support",
+        "low-confidence",
+        "transfer",
+        "zero-time",
+        "unscored",
+        "incorrect",
+        "partial-under-half",
+        "partial-under-mastery",
+        "future",
+    ],
+)
+def test_prompt_timing_history_does_not_cross_boundaries(loop_client, excluded):
+    from lms.evidence.models import Attempt, EvidenceRecord
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(3):
+        old_prompt, old_node = _clone_timing_prompt(
+            factory,
+            prompt,
+            demand="high" if excluded == "class" else "medium",
+            scope="institutional" if excluded == "scope" else "personal",
+            knowledge_type="procedural" if excluded == "knowledge-type" else None,
+            cognitive_action="explain" if excluded == "cognitive-action" else None,
+            answer_form="long-text" if excluded == "answer-form" else None,
+        )
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="excluded history")
+        payload.update(confidence_rating=5, elapsed_seconds=100)
+        if excluded == "hint":
+            payload["hint_used"] = True
+        if excluded == "reference":
+            payload["reference_accessed"] = True
+        if excluded == "support":
+            payload["support_level"] = "coach"
+        if excluded == "zero-time":
+            payload["elapsed_seconds"] = 0
+        if excluded == "low-confidence":
+            payload["confidence_rating"] = 2
+        if excluded == "transfer":
+            payload["evidence"]["transfer_distance"] = "near"
+        if excluded == "incorrect":
+            payload["evidence"]["correctness"] = False
+        if excluded in {"partial-under-half", "partial-under-mastery"}:
+            payload["evidence"].update(
+                scoring_method="partial-credit",
+                raw_score=0.49 if excluded == "partial-under-half" else 0.7,
+                normalized_score=0.49 if excluded == "partial-under-half" else 0.7,
+            )
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201, response.text
+        with factory() as session:
+            evidence = session.scalar(
+                select(EvidenceRecord).where(EvidenceRecord.attempt_id == response.json()["id"])
+            )
+            if excluded == "learner":
+                evidence.learner_id = "other-learner"
+            if excluded == "attempt-learner":
+                attempt = session.get(Attempt, response.json()["id"])
+                assert attempt is not None
+                attempt.learner_id = "other-learner"
+            if excluded == "prompt-link":
+                # Keep the evidence in the same class and ownership scope, but
+                # point it at a different prompt than the recorded attempt.
+                evidence.prompt_id = prompt
+            if excluded == "node-link":
+                evidence.knowledge_node_id = "other-node"
+            if excluded == "unscored":
+                evidence.correctness = None
+                evidence.normalized_score = None
+                evidence.raw_score = None
+            if excluded == "future":
+                attempt = session.get(Attempt, response.json()["id"])
+                assert attempt is not None
+                # Imported attempts may be dated after the response being scheduled.
+                # They cannot establish that response's timing threshold.
+                attempt.created_at += timedelta(days=1)
+            session.commit()
+    payload = _attempt_payload(learner, node, prompt, response_text="current")
+    payload.update(confidence_rating=5, elapsed_seconds=1)
+    assert client.post("/attempts", json=payload).status_code == 201
+    item = _queue_items(factory, learner)[-1]
+    timing = item.decision_log["inputs"]["prompt_class_timing"]
+    assert timing["sample_count"] == 0
+    assert timing["median_seconds"] is None
+    assert item.decision_log["fsrs_rating"]["value"] == 3
+
+
+@pytest.mark.parametrize("change", [{"hint_used": True}, {"confidence_rating": 2}])
+def test_easy_timing_never_overrides_support_or_low_confidence(loop_client, monkeypatch, change):
+    from lms.scheduling import service
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(3):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        p = _attempt_payload(learner, old_node, old_prompt, response_text="history")
+        p.update(confidence_rating=5, elapsed_seconds=100)
+        assert client.post("/attempts", json=p).status_code == 201
+    values = []
+    real = service.advance_card_state
+
+    def capture(session, **kwargs):
+        values.append(kwargs["rating_value"])
+        return real(session, **kwargs)
+
+    monkeypatch.setattr(service, "advance_card_state", capture)
+    p = _attempt_payload(learner, node, prompt, response_text="supported")
+    p.update(confidence_rating=5, elapsed_seconds=1)
+    p.update(change)
+    assert client.post("/attempts", json=p).status_code == 201
+    assert values == [2]
+
+
+def test_latest_rubric_failure_excludes_creation_time_timing(loop_client):
+    from lms.evidence.models import EvidenceRecord
+    from lms.feedback.repository import create_rubric
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(3):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="initial success")
+        payload.update(confidence_rating=5, elapsed_seconds=100)
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201
+    with factory() as session:
+        rubric = create_rubric(
+            session,
+            title="Later real rubric grade",
+            ownership_scope="personal",
+            authoring_actor=ACTOR,
+            prompt_id=old_prompt,
+            criteria=[
+                {"criterion_order": 1, "description": "Correct explanation", "max_points": 1}
+            ],
+        )
+        rubric_id, criterion = rubric.id, rubric.criteria[0].id
+        session.commit()
+    scored = client.post(
+        "/rubric-scores",
+        json={
+            "rubric_id": rubric_id,
+            "attempt_id": response.json()["id"],
+            "scorer_type": "human",
+            "criterion_scores": [{"criterion_id": criterion, "points": 0}],
+        },
+    )
+    assert scored.status_code == 201, scored.text
+    with factory() as session:
+        rows = list(
+            session.scalars(
+                select(EvidenceRecord)
+                .where(EvidenceRecord.attempt_id == response.json()["id"])
+                .order_by(EvidenceRecord.timestamp)
+            )
+        )
+        assert len(rows) == 2
+        assert rows[0].correctness is True and rows[-1].correctness is False
+    payload = _attempt_payload(learner, node, prompt, response_text="current")
+    payload.update(confidence_rating=5, elapsed_seconds=1)
+    assert client.post("/attempts", json=payload).status_code == 201
+    item = _queue_items(factory, learner)[-1]
+    assert item.decision_log["inputs"]["prompt_class_timing"]["sample_count"] == 2
+    assert item.decision_log["fsrs_rating"]["value"] == 3
+
+
+def test_latest_timing_evidence_tie_uses_id_before_eligibility(loop_client):
+    from lms.evidence.models import EvidenceRecord
+    from lms.evidence.repository import create_evidence_record
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(3):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="initial")
+        payload.update(confidence_rating=5, elapsed_seconds=100)
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201
+    with factory() as session:
+        original = session.scalar(
+            select(EvidenceRecord).where(EvidenceRecord.attempt_id == response.json()["id"])
+        )
+        latest = create_evidence_record(
+            session,
+            learner_id=learner,
+            knowledge_node_id=old_node,
+            prompt_id=old_prompt,
+            attempt_id=original.attempt_id,
+            timestamp=original.timestamp,
+            correctness=True,
+            normalized_score=1.0,
+            confidence_rating=5,
+            response_time_seconds=100,
+            hint_used=True,
+        )
+        latest.id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        assert latest.id > original.id
+        session.commit()
+    payload = _attempt_payload(learner, node, prompt, response_text="current")
+    payload.update(confidence_rating=5, elapsed_seconds=1)
+    assert client.post("/attempts", json=payload).status_code == 201
+    item = _queue_items(factory, learner)[-1]
+    assert item.decision_log["inputs"]["prompt_class_timing"]["sample_count"] == 2
+    assert item.decision_log["fsrs_rating"]["value"] == 3
