@@ -754,7 +754,8 @@ def _prompt_class_timing_context(
             )
             .label("ordinal"),
         )
-        .where(EvidenceRecord.attempt_id.is_not(None))
+        .join(Attempt, EvidenceRecord.attempt_id == Attempt.id)
+        .where(*prior_attempt)
         .subquery()
     )
     samples = session.scalars(
