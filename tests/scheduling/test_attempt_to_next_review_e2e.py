@@ -598,6 +598,59 @@ def test_ui_self_grade_delivers_all_four_ratings_to_engine(
     assert decision["inputs"]["prompt_class_timing"]["median_seconds"] == 40
 
 
+def test_prior_unscored_attempt_prevents_first_attempt_easy(
+    loop_client: tuple[TestClient, sessionmaker[Session]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First-attempt eligibility includes attempts that never received a grade."""
+    from lms.evidence.models import Attempt, EvidenceRecord
+    from lms.scheduling import service
+    from lms.scheduling.card_state import advance_card_state
+
+    client, factory = loop_client
+    learner, node, prompt = _seed_learner_node_prompt(factory)
+    for _ in range(3):
+        old_prompt, old_node = _clone_timing_prompt(factory, prompt)
+        payload = _attempt_payload(learner, old_node, old_prompt, response_text="history")
+        payload.update(confidence_rating=5, elapsed_seconds=40)
+        response = client.post("/attempts", json=payload)
+        assert response.status_code == 201, response.text
+
+    advance = Mock(wraps=advance_card_state)
+    monkeypatch.setattr(service, "advance_card_state", advance)
+    response = client.post(
+        "/app/learner/attempts",
+        data={
+            "learner_id": learner,
+            "prompt_id": prompt,
+            "response_text": "An answer left awaiting self-grading.",
+            "confidence_rating": "5",
+            "elapsed_seconds": "1",
+        },
+    )
+    assert response.status_code == 200, response.text
+    advance.assert_not_called()
+    with factory() as session:
+        prior = session.scalars(
+            select(Attempt).where(Attempt.learner_id == learner, Attempt.prompt_id == prompt)
+        ).one()
+        assert (
+            session.scalar(select(EvidenceRecord).where(EvidenceRecord.attempt_id == prior.id))
+            is None
+        )
+
+    payload = _attempt_payload(learner, node, prompt, response_text="A later correct answer.")
+    payload.update(confidence_rating=5, elapsed_seconds=1)
+    response = client.post("/attempts", json=payload)
+    assert response.status_code == 201, response.text
+    advance.assert_called_once()
+    assert advance.call_args.kwargs["rating_value"] == 3
+    decision = _queue_items(factory, learner)[-1].decision_log
+    assert decision["fsrs_rating"]["value"] == 3
+    assert decision["inputs"]["prompt_class_timing"]["sample_count"] == 3
+    assert decision["inputs"]["prompt_class_timing"]["median_seconds"] == 40
+
+
 @pytest.mark.parametrize("history_count, expected", [(2, 3), (3, 4)])
 def test_duplicate_scoring_does_not_inflate_prompt_timing_history(
     loop_client: tuple[TestClient, sessionmaker[Session]],
