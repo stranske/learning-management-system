@@ -11,7 +11,7 @@ from lms.evidence.models import EvidenceRecord
 
 @dataclass(frozen=True)
 class FSRSRating:
-    """A scheduler-ready rating decision for one evidence record."""
+    """A scheduler-ready rating; scheduling_included gates every FSRS mutation."""
 
     label: str
     value: int | None

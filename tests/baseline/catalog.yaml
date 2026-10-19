@@ -111,9 +111,8 @@ scenarios:
     response_time_seconds: 10
     prior_successes: 0
 
-  # Transfer evidence -> FSRS excluded from interval calc (value 0,
-  # scheduling_included 0). The internal classifier still schedules it; this
-  # exercises the excluded branch.
+  # Transfer evidence has no FSRS card mutation or due date. The adapter flag
+  # gates the real service; the baseline observes persisted card state too.
   - id: transfer_excluded
     correctness: true
     normalized_score: 0.95
@@ -239,6 +238,19 @@ directionals:
     direction: decrease
     enforce: true
 
+  - id: transfer_does_not_mutate_card
+    scenario: transfer_excluded
+    control: base
+    metric: fsrs_card_mutated
+    direction: decrease
+    enforce: true
+  - id: transfer_has_no_fsrs_due
+    scenario: transfer_excluded
+    control: base
+    metric: fsrs_due_assigned
+    direction: decrease
+    enforce: true
+
 # ---------------------------------------------------------------------------
 # Coverage manifest: every scalar the surface produces should be exercised by a
 # directional check (or explained as a gap). Keys are flat metric names.
@@ -251,3 +263,5 @@ priority_metrics:
   - priority
   - is_reset
   - fsrs_scheduling_included
+  - fsrs_card_mutated
+  - fsrs_due_assigned

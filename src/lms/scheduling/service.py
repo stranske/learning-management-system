@@ -3,9 +3,10 @@
 The v1 policy is deliberately deterministic and explainable. For the
 success path the FSRS evidence adapter is consulted: its rating label and
 rule_id are recorded in the decision log for the Inspect surface. When FSRS
-returns ``insufficient-signal`` or an excluded rating the internal
+returns ``insufficient-signal`` the internal
 ``_classify_signal`` function is used as a fallback so edge cases (e.g.
 no explicit correctness flag but a partial score) are handled conservatively.
+Excluded evidence returns a non-FSRS receipt without seeding or advancing a card.
 """
 
 from __future__ import annotations
@@ -32,6 +33,17 @@ from lms.scheduling.repository import (
     get_or_create_review_policy,
     list_remediation_triggers,
 )
+
+
+@dataclass(frozen=True)
+class ExcludedSchedulingOutcome:
+    """Retained evidence that produced no FSRS card, queue item or due date."""
+
+    decision_log: dict[str, Any]
+    due_at: None = None
+    reason_code: str = "transfer-excluded"
+    priority: float = 0.0
+
 
 DEFAULT_DAILY_CAP = 25
 DEFAULT_RESUME_DAILY_CAP = 10
@@ -464,8 +476,8 @@ _SIGNAL_ORDER: dict[str, int] = {"fail": 0, "low-confidence-success": 1, "succes
 def _fsrs_to_signal(rating: FSRSRating) -> str | None:
     """Map a clear FSRS rating to an internal signal string.
 
-    Returns None when FSRS cannot give a clear signal (insufficient-signal or
-    excluded), indicating the caller should fall back to ``_classify_signal``.
+    Insufficient signal may use the conservative fallback. Excluded evidence is
+    intercepted before this mapping and cannot become an interval update.
     """
     if not rating.scheduling_included or rating.rule_id == "insufficient-signal":
         return None
@@ -701,10 +713,10 @@ def schedule_from_attempt(
     evidence_record: EvidenceRecord | None,
     now: datetime | None = None,
     retention_tier: str | None = None,
-) -> ReviewQueueItem:
+) -> ReviewQueueItem | ExcludedSchedulingOutcome:
     """Create a review queue item from an attempt and (optionally) its evidence.
 
-    Returns a single new queue item. The decision log captures the inputs and
+    Returns a new queue item or an explicit excluded outcome. The log captures inputs and
     the rule that fired so the Inspect surface can render the explanation.
     """
     if evidence_record is not None and evidence_record.attempt_id != attempt.id:
@@ -724,6 +736,33 @@ def schedule_from_attempt(
     support_level = evidence_record.support_level or "none"
 
     fsrs_rating = evidence_to_fsrs_rating(evidence_record)
+    if not fsrs_rating.scheduling_included:
+        exclusion_log = {
+            "rule": fsrs_rating.rule_id,
+            "signal": "excluded",
+            "card_mutated": False,
+            "interval_source": "none",
+            "fsrs_state": None,
+            "fsrs_rating": {
+                "label": fsrs_rating.label,
+                "value": fsrs_rating.value,
+                "rule_id": fsrs_rating.rule_id,
+                "scheduling_included": False,
+            },
+            "inputs": {
+                "prior_successful_reviews": prior_successes,
+                "evidence_record_id": evidence_record.id,
+                "attempt_id": attempt.id,
+            },
+            "output": {"reason_code": "transfer-excluded", "due_at": None, "priority": 0.0},
+        }
+        # Keep the non-FSRS receipt with the existing attempt; do not fabricate a
+        # dated queue/schedule record for evidence that has no FSRS interval.
+        attempt.response_metadata = {
+            **(attempt.response_metadata or {}),
+            "scheduling_outcome": exclusion_log,
+        }
+        return ExcludedSchedulingOutcome(decision_log=exclusion_log)
     internal_signal = _classify_signal(
         correctness=correctness,
         normalized_score=normalized_score,

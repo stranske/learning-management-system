@@ -335,3 +335,49 @@ def test_remediation_queue_item_can_be_cleared_after_failure(
         )
         assert schedule is not None
         assert schedule.schedule_state == "completed"
+
+
+@pytest.mark.parametrize("distance", ["near", "far", "novel"])
+@pytest.mark.parametrize("existing_card", [False, True])
+def test_transfer_attempt_keeps_fsrs_state_unchanged(loop_client, distance, existing_card):
+    import copy
+
+    from lms.evidence.models import Attempt, EvidenceRecord
+    from lms.scheduling.models import ReviewCardState
+
+    client, session_factory = loop_client
+    learner_id, node_id, prompt_id = _seed_learner_node_prompt(session_factory)
+    if existing_card:
+        result = client.post(
+            "/attempts",
+            json=_attempt_payload(learner_id, node_id, prompt_id, response_text="recall"),
+        )
+        assert result.status_code == 201
+    with session_factory() as session:
+        before = [
+            copy.deepcopy({c.key: getattr(row, c.key) for c in ReviewCardState.__table__.columns})
+            for row in session.scalars(select(ReviewCardState))
+        ]
+        queue_before = len(_queue_items(session_factory, learner_id))
+    payload = _attempt_payload(learner_id, node_id, prompt_id, response_text="transfer")
+    payload["evidence"]["transfer_distance"] = distance
+    result = client.post("/attempts", json=payload)
+    assert result.status_code == 201
+    with session_factory() as session:
+        after = [
+            copy.deepcopy({c.key: getattr(row, c.key) for c in ReviewCardState.__table__.columns})
+            for row in session.scalars(select(ReviewCardState))
+        ]
+        assert after == before
+        assert len(_queue_items(session_factory, learner_id)) == queue_before
+        attempt = session.get(Attempt, result.json()["id"])
+        receipt = attempt.response_metadata["scheduling_outcome"]
+        assert receipt["card_mutated"] is False
+        assert receipt["interval_source"] == "none"
+        assert receipt["output"]["due_at"] is None
+        assert (
+            session.scalar(
+                select(EvidenceRecord).where(EvidenceRecord.attempt_id == attempt.id)
+            ).transfer_distance
+            == distance
+        )

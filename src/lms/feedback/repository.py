@@ -289,7 +289,7 @@ def _ensure_revision_scheduling(
         review_item, remediation_items = schedule_for_evidence(
             session, attempt=attempt, evidence_record=evidence_record
         )
-        queue_items = [review_item, *remediation_items]
+        queue_items = ([review_item] if review_item is not None else []) + remediation_items
     return queue_items
 
 
