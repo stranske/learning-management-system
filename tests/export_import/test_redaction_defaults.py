@@ -259,3 +259,53 @@ def test_imported_excerpt_with_unresolved_source_requires_explicit_opt_in(
     assert exported_node["description"] == (sentinel if content_mode == "all" else None)
     assert exported_node["source_reference_id"] == source_reference_id
     assert db_session.query(KnowledgeNode).one().description == sentinel
+
+
+@pytest.mark.parametrize(
+    "initial_visibility,current_visibility", [("public", "local-only"), ("local-only", "public")]
+)
+@pytest.mark.parametrize("content_mode", ["public-only", "none", "all"])
+def test_imported_excerpt_export_uses_current_source_visibility(
+    db_session: Session,
+    tmp_path: Path,
+    initial_visibility: str,
+    current_visibility: str,
+    content_mode: str,
+) -> None:
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinel = "SENTINEL_RECLASSIFIED_SOURCE_BODY_757"
+    note = tmp_path / "reclassified.md"
+    note.write_text(f"# Reclassified source\n{sentinel}\n", encoding="utf-8")
+    import_markdown_notes(db_session, note, source_visibility=initial_visibility)
+    db_session.commit()
+    node = db_session.query(KnowledgeNode).one()
+    source = db_session.get(SourceReference, node.source_reference_id)
+    assert source is not None
+    source_id, content_hash = source.id, source.content_hash
+
+    # An export before reclassification must not cache the original permission.
+    initial_stream = "\n".join(export_jsonl(db_session))
+    assert (sentinel in initial_stream) is (initial_visibility == "public")
+    source.source_visibility = current_visibility
+    db_session.commit()
+    db_session.expunge_all()
+
+    stream = "\n".join(
+        export_jsonl(
+            db_session,
+            include_source_content=content_mode,
+            confirm_all=content_mode == "all",
+        )
+    )
+    records = {entry["type"]: entry["record"] for entry in map(json.loads, stream.splitlines())}
+    visible = content_mode == "all" or (
+        content_mode == "public-only" and current_visibility == "public"
+    )
+    assert (sentinel in stream) is visible
+    assert records["KnowledgeNode"]["description"] == (sentinel if visible else None)
+    assert records["KnowledgeNode"]["source_reference_id"] == source_id
+    assert records["SourceReference"]["source_visibility"] == current_visibility
+    assert records["SourceReference"]["content_hash"] == content_hash
+    assert db_session.query(KnowledgeNode).one().description == sentinel
