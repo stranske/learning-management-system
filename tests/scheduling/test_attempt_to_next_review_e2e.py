@@ -435,6 +435,9 @@ def _clone_timing_prompt(
     *,
     demand: str = "medium",
     scope: str = "personal",
+    knowledge_type: str | None = None,
+    cognitive_action: str | None = None,
+    answer_form: str | None = None,
 ) -> tuple[str, str]:
     from lms.graphs.models import KnowledgeNode
     from lms.prompts.models import Prompt
@@ -471,10 +474,10 @@ def _clone_timing_prompt(
             session,
             target_node_id=node.id,
             learning_goal_id=goal_id,
-            knowledge_type=original.knowledge_type,
-            intended_cognitive_action=original.intended_cognitive_action,
+            knowledge_type=knowledge_type or original.knowledge_type,
+            intended_cognitive_action=cognitive_action or original.intended_cognitive_action,
             demand_level=demand,
-            expected_answer_form=original.expected_answer_form,
+            expected_answer_form=answer_form or original.expected_answer_form,
             body="Another retrieval in the timing class.",
             source_reference_ids=[r.id for r in original.source_references],
             authoring_method="human-authored",
@@ -649,7 +652,22 @@ def test_duplicate_scoring_does_not_inflate_prompt_timing_history(
 
 @pytest.mark.parametrize(
     "excluded",
-    ["learner", "scope", "class", "hint", "low-confidence", "transfer", "unscored", "future"],
+    [
+        "learner",
+        "scope",
+        "class",
+        "knowledge-type",
+        "cognitive-action",
+        "answer-form",
+        "hint",
+        "reference",
+        "support",
+        "low-confidence",
+        "transfer",
+        "zero-time",
+        "unscored",
+        "future",
+    ],
 )
 def test_prompt_timing_history_does_not_cross_boundaries(loop_client, excluded):
     from lms.evidence.models import Attempt, EvidenceRecord
@@ -662,11 +680,20 @@ def test_prompt_timing_history_does_not_cross_boundaries(loop_client, excluded):
             prompt,
             demand="high" if excluded == "class" else "medium",
             scope="institutional" if excluded == "scope" else "personal",
+            knowledge_type="procedural" if excluded == "knowledge-type" else None,
+            cognitive_action="explain" if excluded == "cognitive-action" else None,
+            answer_form="long-text" if excluded == "answer-form" else None,
         )
         payload = _attempt_payload(learner, old_node, old_prompt, response_text="excluded history")
         payload.update(confidence_rating=5, elapsed_seconds=100)
         if excluded == "hint":
             payload["hint_used"] = True
+        if excluded == "reference":
+            payload["reference_accessed"] = True
+        if excluded == "support":
+            payload["support_level"] = "coach"
+        if excluded == "zero-time":
+            payload["elapsed_seconds"] = 0
         if excluded == "low-confidence":
             payload["confidence_rating"] = 2
         if excluded == "transfer":
