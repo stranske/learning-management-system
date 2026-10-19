@@ -260,3 +260,260 @@ def evidence_to_fsrs_rating(
         rule_id="insufficient-signal",
         reason="Evidence lacks enough positive correctness signal; schedule conservatively.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Bounded seam inventory (issue #762)
+#
+# Machine-checkable map of every rating rule, signal adapter and direct
+# scheduler/card/queue consumer inside the evidence→FSRS translation seam.
+# Dispositions are audit classifications only; they do not change policy.
+# ---------------------------------------------------------------------------
+
+SEAM_DISPOSITIONS = frozenset({"confirmed", "intentional", "unknown"})
+
+
+@dataclass(frozen=True)
+class SeamInventoryEntry:
+    """One inventoried producer→consumer hop inside the evidence→FSRS seam."""
+
+    entry_id: str
+    kind: str  # rating-rule | rating-adapter | signal-adapter | consumer
+    contract: str
+    producer: str
+    consumer: str
+    evidence: str
+    disposition: str
+
+
+def _rule_entry(
+    rule: FSRSRule,
+    *,
+    producer: str,
+    consumer: str,
+    evidence: str,
+    disposition: str,
+) -> SeamInventoryEntry:
+    inclusion = "included" if rule.scheduling_included else "excluded"
+    value = "none" if rule.value is None else str(rule.value)
+    return SeamInventoryEntry(
+        entry_id=rule.rule_id,
+        kind="rating-rule",
+        contract=f"{rule.rating}/{value}/{inclusion}: {rule.reason}",
+        producer=producer,
+        consumer=consumer,
+        evidence=evidence,
+        disposition=disposition,
+    )
+
+
+_RULE_BY_ID = {rule.rule_id: rule for rule in FSRS_RULES}
+
+
+FSRS_SEAM_INVENTORY: tuple[SeamInventoryEntry, ...] = (
+    SeamInventoryEntry(
+        entry_id="evidence_to_fsrs_rating",
+        kind="rating-adapter",
+        contract=(
+            "First matching FSRS_RULES row → FSRSRating; unmatched evidence "
+            "falls back to insufficient-signal Again=1 / included"
+        ),
+        producer="EvidenceRecord (+ optional prompt-class median / first_attempt)",
+        consumer="schedule_from_attempt / _prompt_class_timing_context samples",
+        evidence="tests/scheduling/test_fsrs_adapter.py; FSRS_RULES order test",
+        disposition="confirmed",
+    ),
+    _rule_entry(
+        _RULE_BY_ID["transfer-excluded"],
+        producer="evidence_to_fsrs_rating",
+        consumer="schedule_from_attempt exclusion gate → attempt.response_metadata",
+        evidence=(
+            "test_fsrs_consumer_audit near/far/novel; transfer cold/existing-card "
+            "controls; PR #779 / issue #760"
+        ),
+        disposition="confirmed",
+    ),
+    _rule_entry(
+        _RULE_BY_ID["incorrect"],
+        producer="evidence_to_fsrs_rating",
+        consumer="_fsrs_to_signal → advance_card_state / queue / schedule / decision",
+        evidence="test_fsrs_consumer_audit[incorrect]; test_incorrect_maps_to_again",
+        disposition="confirmed",
+    ),
+    _rule_entry(
+        _RULE_BY_ID["insufficient-signal"],
+        producer="evidence_to_fsrs_rating non-finite guard",
+        consumer="_fsrs_to_signal drops rule_id → _classify_signal fallback",
+        evidence=(
+            "adapter non-finite tests; lms762-nonfinite-probe.py shows adapter "
+            "Again=1 can still advance via success fallback"
+        ),
+        disposition="confirmed",
+    ),
+    _rule_entry(
+        _RULE_BY_ID["supported-or-low-confidence-correct"],
+        producer="evidence_to_fsrs_rating",
+        consumer="_fsrs_to_signal → Hard=2 engine rating and persisted card",
+        evidence="test_fsrs_consumer_audit hint/reference; low-confidence adapter tests",
+        disposition="confirmed",
+    ),
+    _rule_entry(
+        _RULE_BY_ID["partial-under-half"],
+        producer="evidence_to_fsrs_rating",
+        consumer="_fsrs_to_signal → Again=1 engine rating and persisted card",
+        evidence="test_fsrs_consumer_audit[under-half]",
+        disposition="confirmed",
+    ),
+    _rule_entry(
+        _RULE_BY_ID["partial-under-mastery"],
+        producer="evidence_to_fsrs_rating",
+        consumer="_fsrs_to_signal → Hard=2 engine rating and persisted card",
+        evidence="test_fsrs_consumer_audit[half|under-mastery]",
+        disposition="confirmed",
+    ),
+    _rule_entry(
+        _RULE_BY_ID["partial-at-mastery"],
+        producer="evidence_to_fsrs_rating",
+        consumer="_fsrs_to_signal → Good=3 engine rating and persisted card",
+        evidence="test_fsrs_consumer_audit[mastery]",
+        disposition="confirmed",
+    ),
+    _rule_entry(
+        _RULE_BY_ID["fast-first-attempt"],
+        producer="evidence_to_fsrs_rating + timing median gate",
+        consumer=(
+            "_signal_to_rating_value preserves Easy=4 on success blend → " "advance_card_state"
+        ),
+        evidence="test_fsrs_consumer_audit[easy]; PR #781 / issue #761",
+        disposition="confirmed",
+    ),
+    _rule_entry(
+        _RULE_BY_ID["unsupported-correct"],
+        producer="evidence_to_fsrs_rating",
+        consumer="_fsrs_to_signal → Good=3 engine rating and persisted card",
+        evidence="test_fsrs_consumer_audit[good]; Easy vs Good timing controls",
+        disposition="confirmed",
+    ),
+    SeamInventoryEntry(
+        entry_id="insufficient-signal-fallback",
+        kind="rating-rule",
+        contract=(
+            "No FSRS_RULES match → Again=1 / included / insufficient-signal "
+            "(same rule_id as non-finite guard)"
+        ),
+        producer="evidence_to_fsrs_rating terminal return",
+        consumer="_fsrs_to_signal returns None → internal classifier path",
+        evidence="test_low_confidence_without_true_correctness_does_not_map_to_hard",
+        disposition="intentional",
+    ),
+    SeamInventoryEntry(
+        entry_id="_fsrs_to_signal",
+        kind="signal-adapter",
+        contract=(
+            "Excluded or insufficient-signal → None; value 1→fail, 2→low-confidence-"
+            "success, else success (Easy and Good both become success here)"
+        ),
+        producer="FSRSRating from evidence_to_fsrs_rating",
+        consumer="_conservative_signal / _signal_to_rating_value in schedule_from_attempt",
+        evidence="service.py:_fsrs_to_signal; consumer audit engine spy",
+        disposition="intentional",
+    ),
+    SeamInventoryEntry(
+        entry_id="_classify_signal",
+        kind="signal-adapter",
+        contract=(
+            "Internal fail / low-confidence-success / success from correctness, "
+            "score, confidence and support"
+        ),
+        producer="EvidenceRecord fields on schedule_from_attempt",
+        consumer="_conservative_signal blend or solo fallback when fsrs_signal is None",
+        evidence="service.py:_classify_signal; existing scheduler boundary tests",
+        disposition="intentional",
+    ),
+    SeamInventoryEntry(
+        entry_id="_conservative_signal",
+        kind="signal-adapter",
+        contract="Prefer the lower-confidence of fsrs_signal and internal_signal",
+        producer="_fsrs_to_signal and _classify_signal",
+        consumer="_signal_to_rating_value",
+        evidence="service.py:_conservative_signal; supported/low-confidence caps",
+        disposition="intentional",
+    ),
+    SeamInventoryEntry(
+        entry_id="_signal_to_rating_value",
+        kind="signal-adapter",
+        contract=(
+            "Map blended signal to 1–3; when fsrs_signal present, retain Easy=4 "
+            "on success via min(fsrs_value, 4)"
+        ),
+        producer="blended signal + optional FSRSRating.value",
+        consumer="advance_card_state / fsrs_engine.review",
+        evidence="PR #781 Easy preservation; test_fsrs_consumer_audit[easy|good]",
+        disposition="confirmed",
+    ),
+    SeamInventoryEntry(
+        entry_id="schedule_for_evidence",
+        kind="consumer",
+        contract="Scored evidence enters schedule_from_attempt in the same transaction",
+        producer="evidence.service.record_attempt / UI self-grade / rubric / revision",
+        consumer="schedule_from_attempt",
+        evidence="attempt-loop e2e; ui self-grade; rubric and revision request tests",
+        disposition="confirmed",
+    ),
+    SeamInventoryEntry(
+        entry_id="schedule_from_attempt",
+        kind="consumer",
+        contract=(
+            "scheduling_included=false returns ExcludedSchedulingOutcome before any "
+            "card/queue/schedule/decision write; included path blends signals and advances"
+        ),
+        producer="evidence_to_fsrs_rating + signal adapters",
+        consumer="ReviewCardState / ReviewQueueItem / ReviewSchedule / SchedulerDecision",
+        evidence="test_service_honors_adapter_eligibility; consumer audit matrix",
+        disposition="confirmed",
+    ),
+    SeamInventoryEntry(
+        entry_id="advance_card_state",
+        kind="consumer",
+        contract="Persist FSRS engine result onto ReviewCardState (count, due_at, card_state)",
+        producer="_signal_to_rating_value via schedule_from_attempt",
+        consumer="ReviewCardState row",
+        evidence="test_fsrs_consumer_audit committed-card checks; test_card_state.py",
+        disposition="confirmed",
+    ),
+    SeamInventoryEntry(
+        entry_id="queue_schedule_decision",
+        kind="consumer",
+        contract=(
+            "Queue item links evidence/attempt; schedule due_at matches; decision "
+            "rows join the same queue item"
+        ),
+        producer="schedule_from_attempt included path",
+        consumer="ReviewQueueItem / ReviewSchedule / SchedulerDecision",
+        evidence="test_fsrs_consumer_audit identity joins",
+        disposition="confirmed",
+    ),
+    SeamInventoryEntry(
+        entry_id="feedback.repository._ensure_revision_scheduling",
+        kind="consumer",
+        contract="Schedule revision evidence via schedule_for_evidence when no queue item exists",
+        producer="feedback.repository revision path",
+        consumer="schedule_for_evidence",
+        evidence=("revision request tests; multi-grade first-by-ID selection is static-only"),
+        disposition="unknown",
+    ),
+)
+
+
+def seam_inventory_by_kind(kind: str) -> tuple[SeamInventoryEntry, ...]:
+    """Return inventory rows of one kind (rating-rule, signal-adapter, …)."""
+    return tuple(entry for entry in FSRS_SEAM_INVENTORY if entry.kind == kind)
+
+
+def seam_rating_rule_ids() -> tuple[str, ...]:
+    """Rule ids inventoried from FSRS_RULES (excludes the terminal fallback row)."""
+    return tuple(
+        entry.entry_id
+        for entry in FSRS_SEAM_INVENTORY
+        if entry.kind == "rating-rule" and entry.entry_id in _RULE_BY_ID
+    )

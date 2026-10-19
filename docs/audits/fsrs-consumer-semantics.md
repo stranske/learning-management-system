@@ -8,6 +8,11 @@ scheduling code, policy, FSRS parameters and interval algorithms are unchanged.
 
 The finite seam is `FSRS_RULES` / `evidence_to_fsrs_rating`, timing-population
 selection, rating/signal conversion and their direct scheduling/state consumers.
+The machine-checkable source of truth is `FSRS_SEAM_INVENTORY` in
+`src/lms/scheduling/fsrs_adapter.py` (kinds: rating-adapter, rating-rule,
+signal-adapter, consumer), asserted complete against `FSRS_RULES` by
+`test_seam_inventory_covers_every_rating_rule` and
+`test_seam_inventory_records_adapters_consumers_and_dispositions`.
 Call-site search: `rg -n 'evidence_to_fsrs_rating|_fsrs_to_signal|_signal_to_rating_value|schedule_for_evidence|schedule_from_attempt' src/lms`.
 
 | Producer → consumer | Contract / observed state | Evidence / disposition |

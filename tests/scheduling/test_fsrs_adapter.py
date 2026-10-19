@@ -7,7 +7,15 @@ from sqlalchemy.orm import Session
 
 from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_evidence_record
-from lms.scheduling.fsrs_adapter import FSRS_RULES, _score, evidence_to_fsrs_rating
+from lms.scheduling.fsrs_adapter import (
+    FSRS_RULES,
+    FSRS_SEAM_INVENTORY,
+    SEAM_DISPOSITIONS,
+    _score,
+    evidence_to_fsrs_rating,
+    seam_inventory_by_kind,
+    seam_rating_rule_ids,
+)
 
 
 def test_incorrect_maps_to_again(db_session: Session) -> None:
@@ -507,6 +515,44 @@ def test_adapter_rule_table_is_data_driven() -> None:
         "fast-first-attempt",
         "unsupported-correct",
     ]
+
+
+def test_seam_inventory_covers_every_rating_rule() -> None:
+    """Every FSRS_RULES row must appear once in the bounded seam inventory."""
+    assert seam_rating_rule_ids() == tuple(rule.rule_id for rule in FSRS_RULES)
+
+
+def test_seam_inventory_records_adapters_consumers_and_dispositions() -> None:
+    """Inventory entries must carry contract / producer / consumer / evidence / disposition."""
+    kinds = {entry.kind for entry in FSRS_SEAM_INVENTORY}
+    assert kinds == {"rating-adapter", "rating-rule", "signal-adapter", "consumer"}
+
+    signal_ids = {entry.entry_id for entry in seam_inventory_by_kind("signal-adapter")}
+    assert signal_ids == {
+        "_fsrs_to_signal",
+        "_classify_signal",
+        "_conservative_signal",
+        "_signal_to_rating_value",
+    }
+
+    consumer_ids = {entry.entry_id for entry in seam_inventory_by_kind("consumer")}
+    assert {
+        "schedule_for_evidence",
+        "schedule_from_attempt",
+        "advance_card_state",
+        "queue_schedule_decision",
+    }.issubset(consumer_ids)
+
+    seen: set[str] = set()
+    for entry in FSRS_SEAM_INVENTORY:
+        assert entry.entry_id, "entry_id required"
+        assert entry.entry_id not in seen, f"duplicate inventory id: {entry.entry_id}"
+        seen.add(entry.entry_id)
+        assert entry.contract.strip()
+        assert entry.producer.strip()
+        assert entry.consumer.strip()
+        assert entry.evidence.strip()
+        assert entry.disposition in SEAM_DISPOSITIONS
 
 
 @pytest.mark.parametrize("correctness", [None, True])
