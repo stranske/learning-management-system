@@ -124,7 +124,11 @@ def learner_overview_route(
     evidence = list(
         session.scalars(
             select(EvidenceRecord)
-            .where(EvidenceRecord.learner_id == learner_id)
+            .join(KnowledgeNode, KnowledgeNode.id == EvidenceRecord.knowledge_node_id)
+            .where(
+                EvidenceRecord.learner_id == learner_id,
+                KnowledgeNode.ownership_scope == ownership_scope,
+            )
             .order_by(EvidenceRecord.observed_at.desc(), EvidenceRecord.id)
             .limit(25)
         )
@@ -172,7 +176,7 @@ def learner_overview_route(
     return {
         "learner_id": learner_id,
         "ownership_scope": ownership_scope,
-        "mastery": mastery_estimates_for_learner(session, learner_id),
+        "mastery": mastery_estimates_for_learner(session, learner_id, scope=ownership_scope),
         "recent_evidence": [
             {
                 "id": record.id,
@@ -202,7 +206,9 @@ def learner_overview_route(
             }
             for source in source_rows
         ],
-        "calibration": calibration_for_learner(session, learner_id).as_dict(),
+        "calibration": calibration_for_learner(
+            session, learner_id, scope=ownership_scope
+        ).as_dict(),
         "scheduler": _scheduler_panel(
             session,
             learner_id=learner_id,

@@ -17,6 +17,7 @@ import lms.sources.models  # noqa: F401
 from lms.db.base import Base
 from lms.db.session import get_session
 from lms.evidence.repository import create_evidence_record
+from lms.graphs.models import KnowledgeNode
 from lms.main import create_app
 from lms.sources.repository import create_source_reference
 
@@ -54,6 +55,15 @@ def _client() -> Generator[tuple[TestClient, Session], None, None]:
 
 def test_overview_includes_mastery_evidence_prompt_and_source_status() -> None:
     with _client() as (client, session):
+        session.add(
+            KnowledgeNode(
+                id="node-1",
+                title="Known node",
+                knowledge_type="factual",
+                ownership_scope="personal",
+            )
+        )
+        session.flush()
         create_evidence_record(
             session,
             learner_id="learner-1",

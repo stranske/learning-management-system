@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from lms.evidence.models import Attempt, EvidenceRecord
+from lms.graphs.models import KnowledgeNode
 from lms.ui.api import _latest_attempt_summary
 
 
@@ -65,6 +66,15 @@ def test_inspect_evidence_page_is_stable_under_tied_timestamps(
     with session_factory() as session:
         session.add_all(
             [
+                KnowledgeNode(
+                    id=f"node-{record_id}",
+                    title=f"Node {record_id}",
+                    knowledge_type="factual",
+                    ownership_scope="personal",
+                )
+                for record_id in inserted_ids
+            ]
+            + [
                 EvidenceRecord(
                     id=record_id,
                     learner_id="learner-stable",
