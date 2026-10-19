@@ -119,16 +119,25 @@ def test_m5_redaction_excludes_inferred_capability_and_formative_llm_bodies(
     )
 
 
-def test_markdown_note_body_redacted_across_whole_default_export(db_session, tmp_path):
+@pytest.mark.parametrize("heading_style", ["atx", "setext"])
+def test_markdown_note_body_redacted_across_whole_default_export(
+    db_session: Session, tmp_path: Path, heading_style: str
+) -> None:
     from lms.graphs.models import KnowledgeNode
     from lms.importers.markdown import import_markdown_notes
 
     note = tmp_path / "private.md"
     sentinel = "SENTINEL_PRIVATE_BODY_757"
-    note.write_text(f"# Public heading\n{sentinel}\n\n## Child heading\n{sentinel}\n")
+    headings = (
+        ("# Public heading", "## Child heading")
+        if heading_style == "atx"
+        else ("Public heading\n==============", "Child heading\n-------------")
+    )
+    note.write_text(f"{headings[0]}\n{sentinel}\n\n{headings[1]}\n{sentinel}\n", encoding="utf-8")
     import_markdown_notes(db_session, note)
     db_session.commit()
     nodes = db_session.query(KnowledgeNode).all()
+    assert len(nodes) == 2
     assert all(sentinel in node.description for node in nodes)
     for options in ({}, {"include_source_content": "none"}):
         lines = list(export_jsonl(db_session, **options))

@@ -354,16 +354,23 @@ def test_multi_file_import_links_subsections_within_their_own_file(
 
 
 @pytest.mark.parametrize("visibility", ["public", "local-only"])
-def test_imported_excerpt_export_follows_bound_source_visibility(db_session, tmp_path, visibility):
+@pytest.mark.parametrize("heading_style", ["atx", "setext"])
+def test_imported_excerpt_export_follows_bound_source_visibility(
+    db_session: Session, tmp_path: Path, visibility: str, heading_style: str
+) -> None:
     from lms.export_import import export_jsonl
 
     sentinel = f"SENTINEL_MARKDOWN_VISIBILITY_{visibility.upper().replace('-', '_')}_757"
     note = tmp_path / "visibility.md"
-    note.write_text(f"# Visibility Probe\n{sentinel}\n", encoding="utf-8")
+    heading = (
+        "# Visibility Probe" if heading_style == "atx" else "Visibility Probe\n================"
+    )
+    note.write_text(f"{heading}\n{sentinel}\n", encoding="utf-8")
     import_markdown_notes(db_session, note, source_visibility=visibility)
     db_session.commit()
     nodes = db_session.query(KnowledgeNode).all()
     sources = {source.id: source for source in db_session.query(SourceReference)}
+    assert len(nodes) == 1
     assert all(node.provenance == "imported" for node in nodes)
     assert all(node.source_reference_id in sources for node in nodes)
     assert all(sources[node.source_reference_id].source_visibility == visibility for node in nodes)
