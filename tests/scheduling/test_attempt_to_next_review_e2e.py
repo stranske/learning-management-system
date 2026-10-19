@@ -495,6 +495,7 @@ def _clone_timing_prompt(
         ([40, 40, 40], 41, 40, 3),
         ([10, 10, 10], 40, 10, 3),
         ([], 1, None, 3),
+        ([40], 1, None, 3),
         ([40, 40], 1, None, 3),
         # Unsorted, skewed populations distinguish the median from a mean,
         # first observation, or last observation, including even-sized history.

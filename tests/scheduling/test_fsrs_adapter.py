@@ -413,6 +413,53 @@ def test_fast_high_confidence_non_first_attempt_does_not_map_to_easy(db_session:
     assert rating.rule_id == "unsupported-correct"
 
 
+@pytest.mark.parametrize(
+    "median, seconds, first_attempt",
+    [
+        (None, 1, True),
+        (0, 1, True),
+        (-1, 1, True),
+        (float("nan"), 1, True),
+        (float("inf"), 1, True),
+        (float("-inf"), 1, True),
+        (20, None, True),
+        (20, 1, False),
+    ],
+    ids=[
+        "missing-median",
+        "zero-median",
+        "negative-median",
+        "nan-median",
+        "infinite-median",
+        "negative-infinite-median",
+        "missing-response-time",
+        "service-detected-repeat",
+    ],
+)
+def test_ui_binary_correct_requires_eligible_timing_context_for_easy(
+    median: float | None, seconds: int | None, first_attempt: bool
+) -> None:
+    from lms.ui.attempts import _SELF_GRADES
+
+    record = EvidenceRecord(
+        learner_id="learner-1",
+        knowledge_node_id="node-1",
+        confidence_rating=5,
+        response_time_seconds=seconds,
+        attempt_context={"attempt_number": 1},
+        **_SELF_GRADES["correct"],
+    )
+
+    rating = evidence_to_fsrs_rating(
+        record, prompt_class_median_seconds=median, first_attempt=first_attempt
+    )
+
+    assert rating.label == "good"
+    assert rating.value == 3
+    assert rating.rule_id == "unsupported-correct"
+    assert rating.scheduling_included is True
+
+
 def test_partial_credit_uses_raw_score_divided_by_max_score(db_session: Session) -> None:
     record = create_evidence_record(
         db_session,
