@@ -745,6 +745,7 @@ def adapter_preservation_holds() -> dict[str, bool]:
         binary_skips_mastery
         and partial_still_mastery
         and _score(score_prefers_normalized) == 0.4
+        and evidence_to_fsrs_rating(score_prefers_normalized).rule_id == "partial-under-half"
         and easy_rating.rule_id == "fast-first-attempt"
     )
 
@@ -1070,8 +1071,8 @@ FSRS_ADDITIONAL_FINDINGS: tuple[SeamAdditionalFinding, ...] = (
             "reachability of non-finite raw scores remains unknown"
         ),
         prevention_check=(
-            "test_additional_finding_nonfinite_fallback_is_observable reproduces "
-            "adapter Again=1 plus consumer success mutation without repairing "
+            "test_documents_current_nonfinite_fallback_behavior documents the current "
+            "known adapter Again=1 plus consumer success loss, not a prevention gate; without repairing "
             "service.py or filing a follow-up issue"
         ),
         evidence=(

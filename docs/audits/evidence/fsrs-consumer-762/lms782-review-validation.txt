@@ -1,0 +1,22 @@
+Current review validation, base commit 6e75cb497d24c09608df0895042290853f2aa340 plus this PR review patch.
+Interpreter: existing repository dependency environment, CPython 3.12.2 (Anaconda).
+Working directory: repository root unless specified.
+
+Command: python -m pytest tests/scheduling/test_fsrs_consumer_audit.py tests/scheduling/test_fsrs_adapter.py tests/scheduling/test_attempt_to_next_review_e2e.py tests/scheduling/test_card_state.py tests/feedback/test_rubric_scoring.py tests/feedback/test_revision_requests.py -q --no-cov
+Result: 402 passed, 2 warnings. This does not establish whole-repository coverage.
+
+Command: python -m pytest tests/scheduling/test_fsrs_consumer_audit.py tests/scheduling/test_fsrs_adapter.py -q --no-cov
+Result after exact source restoration: 121 passed, 1 warning.
+
+Command from tests/: python -m pytest scheduling/test_fsrs_adapter.py -q --no-cov -k negative_controls_match_recorded_offline_receipts
+Result: 1 passed, 108 deselected.
+
+Negative control: temporarily write priority=0.123456 to an existing same-learner/node ReviewQueueItem in service.schedule_from_attempt exclusion branch.
+Command: python -m pytest tests/scheduling/test_fsrs_consumer_audit.py -q --no-cov -k near
+Result: 1 failed, 11 deselected at the new before/after scheduling-row equality assertion; production source restored byte-identically.
+Rejected first control: wrong Attempt field raised AttributeError; not accepted as behavioral proof.
+
+tests/scheduling/test_fsrs_consumer_audit.py SHA256 6a8abc62882f97f964faa1a2a67d891c4ae848ed8491adea1b14b04cd553a5ae
+tests/scheduling/test_fsrs_adapter.py SHA256 7fa867a08567edf7a88ca4a3879cbf2996ebd100950fcc825c320698d03566e2
+src/lms/scheduling/fsrs_adapter.py SHA256 08eacafa161282501a6c9c237a928cbb426f01baceb1fe154329aca5329875d4
+src/lms/scheduling/service.py SHA256 83c93fbbfe6433cdcc2dfb4e0dbb7552dab53881dbc95bf37793eba8c3388bf8

@@ -28,6 +28,22 @@ from tests.scheduling.test_attempt_to_next_review_e2e import (
 )
 
 
+def _scheduling_rows(session: Session, learner: str, node: str) -> dict[str, Any]:
+    """Snapshot every persisted row for this learner/node, including old attempts."""
+    result: dict[str, Any] = {}
+    for model in (ReviewQueueItem, ReviewSchedule, SchedulerDecision):
+        rows = session.scalars(
+            select(model).where(model.learner_id == learner, model.knowledge_node_id == node)
+        )
+        result[model.__tablename__] = {
+            row.id: deepcopy(
+                {column.key: getattr(row, column.key) for column in model.__table__.columns}
+            )
+            for row in rows
+        }
+    return result
+
+
 @pytest.mark.parametrize(
     ("change", "rule", "rating"),
     [
@@ -71,6 +87,7 @@ def test_rating_inventory_reaches_persisted_consumers(
         assert response.status_code == 201, response.text
 
     with factory() as session:
+        before_rows = _scheduling_rows(session, learner, node)
         before_card = session.scalars(
             select(ReviewCardState).where(ReviewCardState.subject_id == node)
         ).one()
@@ -133,6 +150,7 @@ def test_rating_inventory_reaches_persisted_consumers(
             )
         )
         if rating is None:
+            assert _scheduling_rows(session, learner, node) == before_rows
             assert observed == []
             assert not queue
             assert not schedules

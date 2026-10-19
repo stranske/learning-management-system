@@ -695,7 +695,10 @@ def test_negative_controls_match_recorded_offline_receipts() -> None:
     import json
     from pathlib import Path
 
-    receipt_path = Path("docs/audits/evidence/fsrs-consumer-762/lms762-controls.json")
+    receipt_path = (
+        Path(__file__).resolve().parents[2]
+        / "docs/audits/evidence/fsrs-consumer-762/lms762-controls.json"
+    )
     receipts = json.loads(receipt_path.read_text(encoding="utf-8"))
     by_legacy = {row["control"]: row for row in receipts}
     legacy_ids = {
@@ -930,8 +933,12 @@ def test_additional_findings_are_returned_without_auto_filing_or_repair() -> Non
     assert additional_finding_adapter_contract_holds() is True
 
 
-def test_additional_finding_nonfinite_fallback_is_observable(db_session: Session) -> None:
-    """Reproduce the returned finding on the real scheduler path; do not repair it here."""
+def test_documents_current_nonfinite_fallback_behavior(db_session: Session) -> None:
+    """Document the current known loss; this is not a prevention/regression gate.
+
+    An eventual service repair must update this observation alongside the finding.
+    This audit deliberately does not claim that current behavior is correct.
+    """
     from sqlalchemy import select
 
     from lms.scheduling.models import ReviewCardState

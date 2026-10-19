@@ -1,3 +1,9 @@
+Historical hosted transcript first committed in 0de6db994fcdfee4ad9a3a236f5f1e47bc83dbd6.
+The original exact invocation was not preserved; do not infer it from this output.
+It is a later run than the 92-test author run at f96d3848fe3565a90fb2772c701d72861d71c948.
+Two tests were added in 0de6db994fcdfee4ad9a3a236f5f1e47bc83dbd6; these counts are historical.
+Current command/source provenance is recorded in lms782-review-validation.txt.
+
 ============================= test session starts ==============================
 platform linux -- Python 3.14.8, pytest-9.1.1, pluggy-1.7.0
 rootdir: /home/runner/work/learning-management-system/learning-management-system
