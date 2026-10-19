@@ -8,15 +8,21 @@ from sqlalchemy.orm import Session
 from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_evidence_record
 from lms.scheduling.fsrs_adapter import (
+    FSRS_NEGATIVE_CONTROLS,
+    FSRS_PERSISTED_EFFECT_TRACES,
     FSRS_PRESERVATION_INVARIANTS,
     FSRS_RULES,
     FSRS_SEAM_INVENTORY,
+    REQUIRED_NEGATIVE_CONTROL_IDS,
     REQUIRED_PRESERVATION_IDS,
     SEAM_DISPOSITIONS,
     _score,
     adapter_preservation_holds,
     evidence_to_fsrs_rating,
+    negative_control,
+    persisted_effect_trace,
     preservation_invariant,
+    rating_allows_persisted_mutation,
     seam_inventory_by_kind,
     seam_rating_rule_ids,
 )
@@ -637,6 +643,178 @@ def test_adapter_preservation_commitments_hold_under_existing_policy() -> None:
     )
     assert not next(r for r in FSRS_RULES if r.rule_id == "partial-at-mastery").applies(
         binary_mastery_candidate
+    )
+
+
+def test_persisted_effect_traces_and_negative_controls_are_complete() -> None:
+    """Traces name mutation gates; controls cover every declared preservation invariant."""
+    control_ids = tuple(entry.control_id for entry in FSRS_NEGATIVE_CONTROLS)
+    assert control_ids == REQUIRED_NEGATIVE_CONTROL_IDS
+
+    for entry in FSRS_NEGATIVE_CONTROLS:
+        assert entry.invariant_id in REQUIRED_PRESERVATION_IDS
+        assert entry.target_module.endswith(".py")
+        assert entry.healthy_fragment.strip()
+        assert entry.broken_fragment.strip()
+        assert entry.healthy_fragment != entry.broken_fragment
+        assert entry.collapse_or_fallback.strip()
+        assert entry.detection_evidence.strip()
+        assert negative_control(entry.control_id) is entry
+
+    linked_invariants = {entry.invariant_id for entry in FSRS_NEGATIVE_CONTROLS}
+    assert linked_invariants == set(REQUIRED_PRESERVATION_IDS)
+
+    seen: set[str] = set()
+    for entry in FSRS_PERSISTED_EFFECT_TRACES:
+        assert entry.trace_id not in seen
+        seen.add(entry.trace_id)
+        assert entry.adapter_result.strip()
+        assert entry.persisted_effects.strip()
+        assert entry.collapse_or_fallback_if_broken.strip()
+        assert entry.evidence.strip()
+        if entry.control_id is not None:
+            assert entry.control_id in REQUIRED_NEGATIVE_CONTROL_IDS
+        assert persisted_effect_trace(entry.trace_id) is entry
+
+    assert persisted_effect_trace("transfer-excluded-freeze").mutation_allowed is False
+    assert all(
+        trace.mutation_allowed
+        for trace in FSRS_PERSISTED_EFFECT_TRACES
+        if trace.trace_id != "transfer-excluded-freeze"
+    )
+
+
+def test_negative_controls_match_recorded_offline_receipts() -> None:
+    """Machine-checkable controls must stay aligned with the offline red receipts."""
+    import json
+    from pathlib import Path
+
+    receipt_path = Path("docs/audits/evidence/fsrs-consumer-762/lms762-controls.json")
+    receipts = json.loads(receipt_path.read_text(encoding="utf-8"))
+    by_legacy = {row["control"]: row for row in receipts}
+    legacy_ids = {
+        "excluded-fallback-mutation": "excluded",
+        "easy-good-collapse": "easy",
+        "binary-score-selection": "binary",
+    }
+    for control in FSRS_NEGATIVE_CONTROLS:
+        row = by_legacy[legacy_ids[control.control_id]]
+        assert row["path"] == control.target_module
+        assert row["original"] == control.healthy_fragment
+        assert row["replacement"] == control.broken_fragment
+
+
+def test_transfer_exclusion_trace_freezes_persisted_card_state(db_session: Session) -> None:
+    """scheduling_included=false must not fall back into card/queue/schedule mutation."""
+    import copy
+
+    from lms.scheduling.models import ReviewCardState, ReviewQueueItem, ReviewSchedule
+    from lms.scheduling.service import ExcludedSchedulingOutcome, schedule_from_attempt
+    from lms.scheduling.card_state import get_or_seed_card_state
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    card = get_or_seed_card_state(
+        db_session, learner_id="learner-1", subject_id="node-1", prior_successes=0
+    )
+    before = copy.deepcopy(
+        {column.key: getattr(card, column.key) for column in ReviewCardState.__table__.columns}
+    )
+    attempt, evidence = _make_attempt(db_session, correctness=True, confidence_rating=5)
+    evidence.transfer_distance = "near"
+    db_session.flush()
+
+    rating = evidence_to_fsrs_rating(evidence)
+    assert rating.rule_id == "transfer-excluded"
+    assert rating_allows_persisted_mutation(rating) is False
+
+    outcome = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert isinstance(outcome, ExcludedSchedulingOutcome)
+    assert outcome.decision_log["card_mutated"] is False
+    assert outcome.decision_log["fsrs_rating"]["scheduling_included"] is False
+    assert outcome.due_at is None
+    assert {
+        column.key: getattr(card, column.key) for column in ReviewCardState.__table__.columns
+    } == before
+    assert db_session.query(ReviewQueueItem).count() == 0
+    assert db_session.query(ReviewSchedule).count() == 0
+    assert attempt.response_metadata is not None
+    assert attempt.response_metadata["scheduling_outcome"]["card_mutated"] is False
+
+
+def test_easy_versus_good_persist_distinct_engine_ratings(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Easy and Good must remain distinct through the real engine and persisted decision log."""
+    from lms.scheduling import fsrs_engine, service
+    from lms.scheduling.models import ReviewQueueItem
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    observed: list[int] = []
+    real_review = fsrs_engine.review
+
+    def recording_review(**kwargs: object) -> object:
+        rating_value = kwargs["rating_value"]
+        assert isinstance(rating_value, int)
+        observed.append(rating_value)
+        return real_review(**kwargs)
+
+    monkeypatch.setattr(fsrs_engine, "review", recording_review)
+    monkeypatch.setattr(
+        service,
+        "_prompt_class_timing_context",
+        lambda *_args, **_kwargs: (20.0, 3, True),
+    )
+
+    easy_attempt, easy_evidence = _make_attempt(
+        db_session,
+        learner_id="learner-easy",
+        prompt_id="prompt-easy",
+        knowledge_node_id="node-easy",
+        correctness=True,
+        confidence_rating=5,
+        response_time_seconds=10,
+    )
+    easy_evidence.scoring_method = "binary"
+    easy_evidence.normalized_score = 1.0
+    easy_evidence.support_level = "none"
+    db_session.flush()
+
+    easy_item = service.schedule_from_attempt(
+        db_session, attempt=easy_attempt, evidence_record=easy_evidence
+    )
+    assert isinstance(easy_item, ReviewQueueItem)
+    assert observed == [4]
+    assert easy_item.decision_log["fsrs_rating"]["value"] == 4
+    assert easy_item.decision_log["fsrs_rating"]["rule_id"] == "fast-first-attempt"
+    assert rating_allows_persisted_mutation(
+        evidence_to_fsrs_rating(easy_evidence, prompt_class_median_seconds=20.0, first_attempt=True)
+    )
+
+    observed.clear()
+    good_attempt, good_evidence = _make_attempt(
+        db_session,
+        learner_id="learner-good",
+        prompt_id="prompt-good",
+        knowledge_node_id="node-good",
+        correctness=True,
+        confidence_rating=4,
+        response_time_seconds=10,
+    )
+    good_evidence.scoring_method = "binary"
+    good_evidence.normalized_score = 1.0
+    good_evidence.support_level = "none"
+    db_session.flush()
+
+    good_item = service.schedule_from_attempt(
+        db_session, attempt=good_attempt, evidence_record=good_evidence
+    )
+    assert isinstance(good_item, ReviewQueueItem)
+    assert observed == [3]
+    assert good_item.decision_log["fsrs_rating"]["value"] == 3
+    assert good_item.decision_log["fsrs_rating"]["rule_id"] == "unsupported-correct"
+    assert (
+        easy_item.decision_log["fsrs_rating"]["value"]
+        != good_item.decision_log["fsrs_rating"]["value"]
     )
 
 

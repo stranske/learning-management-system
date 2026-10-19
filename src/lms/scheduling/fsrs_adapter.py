@@ -753,3 +753,213 @@ def adapter_preservation_holds() -> dict[str, bool]:
         "easy-versus-good": easy_vs_good_ok,
         "upstream-score-selection": score_selection_ok,
     }
+
+
+# ---------------------------------------------------------------------------
+# Persisted-effect traces + already-correct controls (issue #762)
+#
+# Traces adapter outcomes into ReviewCardState / queue / schedule / decision
+# effects and names the deliberate negative controls that detect fallback
+# mutation or Easy/Good/binary semantic collapse. Controls match the offline
+# receipts under docs/audits/evidence/fsrs-consumer-762/; they do not change
+# scheduling policy.
+# ---------------------------------------------------------------------------
+
+REQUIRED_NEGATIVE_CONTROL_IDS = (
+    "excluded-fallback-mutation",
+    "easy-good-collapse",
+    "binary-score-selection",
+)
+
+
+@dataclass(frozen=True)
+class SeamNegativeControl:
+    """One already-correct negative control that detects a seam collapse."""
+
+    control_id: str
+    invariant_id: str
+    target_module: str
+    healthy_fragment: str
+    broken_fragment: str
+    collapse_or_fallback: str
+    detection_evidence: str
+
+
+@dataclass(frozen=True)
+class PersistedEffectTrace:
+    """How one adapter outcome must land in durable scheduler state."""
+
+    trace_id: str
+    adapter_result: str
+    persisted_effects: str
+    mutation_allowed: bool
+    collapse_or_fallback_if_broken: str
+    control_id: str | None
+    evidence: str
+
+
+FSRS_NEGATIVE_CONTROLS: tuple[SeamNegativeControl, ...] = (
+    SeamNegativeControl(
+        control_id="excluded-fallback-mutation",
+        invariant_id="scheduling-included-false",
+        target_module="src/lms/scheduling/service.py",
+        healthy_fragment="if not fsrs_rating.scheduling_included:",
+        broken_fragment="if False and not fsrs_rating.scheduling_included:",
+        collapse_or_fallback=(
+            "Excluded adapter output falls through into get_or_seed_card_state / "
+            "advance_card_state; transfer card columns mutate and queue/schedule/"
+            "decision rows appear"
+        ),
+        detection_evidence=(
+            "lms762-controls.json excluded; lms762-excluded-red.txt; "
+            "test_fsrs_consumer_audit near/far/novel"
+        ),
+    ),
+    SeamNegativeControl(
+        control_id="easy-good-collapse",
+        invariant_id="easy-versus-good",
+        target_module="src/lms/scheduling/service.py",
+        healthy_fragment=('return min(fsrs_value, 4 if signal == "success" else value)'),
+        broken_fragment="return value",
+        collapse_or_fallback=(
+            "Timing-eligible Easy (adapter value 4) collapses to Good (3) at "
+            "_signal_to_rating_value; fsrs_engine.review and persisted card "
+            "advance under the Good grade"
+        ),
+        detection_evidence=(
+            "lms762-controls.json easy; lms762-easy-red.txt; " "test_fsrs_consumer_audit[easy|good]"
+        ),
+    ),
+    SeamNegativeControl(
+        control_id="binary-score-selection",
+        invariant_id="upstream-score-selection",
+        target_module="src/lms/scheduling/fsrs_adapter.py",
+        healthy_fragment='record.scoring_method == "binary"',
+        broken_fragment="False",
+        collapse_or_fallback=(
+            "Binary mastery is intercepted by partial-at-mastery before "
+            "fast-first-attempt; Easy becomes unreachable and persists as Good"
+        ),
+        detection_evidence=(
+            "lms762-controls.json binary; lms762-binary-red.txt; "
+            "adapter_preservation_holds upstream-score-selection"
+        ),
+    ),
+)
+
+
+FSRS_PERSISTED_EFFECT_TRACES: tuple[PersistedEffectTrace, ...] = (
+    PersistedEffectTrace(
+        trace_id="transfer-excluded-freeze",
+        adapter_result=(
+            "transfer-excluded → label=excluded, value=None, scheduling_included=false"
+        ),
+        persisted_effects=(
+            "ExcludedSchedulingOutcome; attempt.response_metadata.scheduling_outcome "
+            "with card_mutated=false; zero new ReviewQueueItem / ReviewSchedule / "
+            "SchedulerDecision; existing ReviewCardState columns unchanged"
+        ),
+        mutation_allowed=False,
+        collapse_or_fallback_if_broken=(
+            "Fallback mutation into card/queue/schedule/decision despite exclusion"
+        ),
+        control_id="excluded-fallback-mutation",
+        evidence=(
+            "test_transfer_exclusion_trace_freezes_persisted_card_state; "
+            "test_fsrs_consumer_audit near/far/novel; "
+            "test_service_honors_adapter_eligibility_before_any_card_write"
+        ),
+    ),
+    PersistedEffectTrace(
+        trace_id="easy-persisted-rating-four",
+        adapter_result="fast-first-attempt → easy/4 / scheduling_included=true",
+        persisted_effects=(
+            "fsrs_engine.review receives rating_value=4; ReviewCardState review_count "
+            "increments; queue/schedule/decision rows join the attempt; decision_log "
+            "fsrs_rating.value stays 4"
+        ),
+        mutation_allowed=True,
+        collapse_or_fallback_if_broken="Easy collapses to engine rating 3 (Good)",
+        control_id="easy-good-collapse",
+        evidence=(
+            "test_easy_versus_good_persist_distinct_engine_ratings; "
+            "test_fsrs_consumer_audit[easy]"
+        ),
+    ),
+    PersistedEffectTrace(
+        trace_id="good-persisted-rating-three",
+        adapter_result="unsupported-correct → good/3 / scheduling_included=true",
+        persisted_effects=(
+            "fsrs_engine.review receives rating_value=3; ReviewCardState advances; "
+            "queue/schedule/decision rows join the attempt; decision_log "
+            "fsrs_rating.value stays 3"
+        ),
+        mutation_allowed=True,
+        collapse_or_fallback_if_broken=(
+            "Good is no longer distinguishable from collapsed Easy in persisted effects"
+        ),
+        control_id="easy-good-collapse",
+        evidence=(
+            "test_easy_versus_good_persist_distinct_engine_ratings; "
+            "test_fsrs_consumer_audit[good]"
+        ),
+    ),
+    PersistedEffectTrace(
+        trace_id="binary-easy-reachable",
+        adapter_result=(
+            "binary + good-unsupported skips partial-at-mastery so "
+            "fast-first-attempt can still emit Easy under eligible timing"
+        ),
+        persisted_effects=(
+            "Same Easy persisted path as easy-persisted-rating-four when timing "
+            "context qualifies; otherwise Good=3 persists"
+        ),
+        mutation_allowed=True,
+        collapse_or_fallback_if_broken=(
+            "Upstream score selection steals Easy into partial-at-mastery Good"
+        ),
+        control_id="binary-score-selection",
+        evidence=(
+            "test_adapter_preservation_commitments_hold_under_existing_policy; "
+            "lms762-controls.json binary"
+        ),
+    ),
+    PersistedEffectTrace(
+        trace_id="included-rating-mutates-card",
+        adapter_result=(
+            "Any scheduling_included=true rating (Again/Hard/Good/Easy) blends "
+            "through signal adapters into advance_card_state"
+        ),
+        persisted_effects=(
+            "ReviewCardState mutates; one ReviewQueueItem / ReviewSchedule / "
+            "SchedulerDecision per attempt with matching evidence identity"
+        ),
+        mutation_allowed=True,
+        collapse_or_fallback_if_broken=(
+            "Included ratings fail to persist queue/schedule/decision or card advance"
+        ),
+        control_id=None,
+        evidence="test_fsrs_consumer_audit included matrix rows",
+    ),
+)
+
+
+def rating_allows_persisted_mutation(rating: FSRSRating) -> bool:
+    """Return whether this adapter rating may mutate card/queue/schedule state."""
+    return rating.scheduling_included
+
+
+def negative_control(control_id: str) -> SeamNegativeControl:
+    """Return one already-correct negative control by id."""
+    for entry in FSRS_NEGATIVE_CONTROLS:
+        if entry.control_id == control_id:
+            return entry
+    raise KeyError(f"unknown negative control: {control_id}")
+
+
+def persisted_effect_trace(trace_id: str) -> PersistedEffectTrace:
+    """Return one persisted-effect trace by id."""
+    for entry in FSRS_PERSISTED_EFFECT_TRACES:
+        if entry.trace_id == trace_id:
+            return entry
+    raise KeyError(f"unknown persisted-effect trace: {trace_id}")
