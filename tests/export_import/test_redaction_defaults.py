@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -194,7 +195,10 @@ def test_markdown_note_body_redacted_across_whole_default_export(
     }
     for mode in ("public-only", "none"):
         path = tmp_path / f"redacted-{mode}.jsonl"
-        lines = list(export_jsonl(db_session, include_source_content=mode))
+        with patch.object(db_session, "get", wraps=db_session.get) as session_get:
+            lines = list(export_jsonl(db_session, include_source_content=mode))
+        if mode == "none":
+            assert all(call.args[0] is not SourceReference for call in session_get.call_args_list)
         if reverse_records:
             lines.reverse()
         path.write_text(
