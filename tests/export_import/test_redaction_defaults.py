@@ -202,6 +202,41 @@ def test_markdown_note_body_redacted_across_whole_default_export(
             engine.dispose()
 
 
+@pytest.mark.parametrize("content_mode", ["public-only", "none"])
+def test_redacted_export_preserves_persisted_excerpt_for_later_opt_in(
+    db_session: Session, tmp_path: Path, content_mode: str
+) -> None:
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinel = "SENTINEL_PERSISTED_PRIVATE_BODY_757"
+    note = tmp_path / "persisted.md"
+    content = f"# Persisted excerpt\n{sentinel}\n"
+    note.write_text(content, encoding="utf-8")
+    import_markdown_notes(db_session, note)
+    db_session.commit()
+    db_session.expunge_all()
+
+    redacted_stream = "\n".join(export_jsonl(db_session, include_source_content=content_mode))
+    assert sentinel not in redacted_stream
+    # A caller may commit other work after exporting. Redaction must not dirty
+    # the source-derived description and erase the retained local excerpt.
+    db_session.commit()
+    db_session.expunge_all()
+    assert db_session.query(KnowledgeNode).one().description == sentinel
+    assert note.read_text(encoding="utf-8") == content
+
+    opted_in_stream = "\n".join(
+        export_jsonl(db_session, include_source_content="all", confirm_all=True)
+    )
+    opted_in_node = next(
+        entry["record"]
+        for entry in map(json.loads, opted_in_stream.splitlines())
+        if entry["type"] == "KnowledgeNode"
+    )
+    assert opted_in_node["description"] == sentinel
+
+
 def test_public_imported_description_obeys_none_and_preserves_authored_text(db_session, tmp_path):
     from lms.graphs.models import KnowledgeNode
     from lms.importers.markdown import import_markdown_notes
