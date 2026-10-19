@@ -20,6 +20,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from lms.evidence.models import EvidenceRecord
+from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeNode
 
 #: Confidence ratings at or above this level count as "high confidence".
 DEFAULT_HIGH_CONFIDENCE_MIN = 4
@@ -86,6 +87,7 @@ def calibration_for_learner(
     session: Session,
     learner_id: str,
     *,
+    scope: str | None = None,
     knowledge_node_id: str | None = None,
     high_confidence_min: int = DEFAULT_HIGH_CONFIDENCE_MIN,
     low_accuracy_max: float = DEFAULT_LOW_ACCURACY_MAX,
@@ -110,6 +112,12 @@ def calibration_for_learner(
             EvidenceRecord.normalized_score.is_not(None),
         ),
     )
+    if scope is not None:
+        if scope not in OWNERSHIP_SCOPES:
+            raise ValueError(f"unknown ownership scope {scope!r}")
+        query = query.join(
+            KnowledgeNode, KnowledgeNode.id == EvidenceRecord.knowledge_node_id
+        ).where(KnowledgeNode.ownership_scope == scope)
     if knowledge_node_id is not None:
         query = query.where(EvidenceRecord.knowledge_node_id == knowledge_node_id)
     records = list(session.scalars(query))

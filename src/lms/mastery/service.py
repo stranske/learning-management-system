@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.evidence.models import EvidenceRecord
+from lms.graphs.models import OWNERSHIP_SCOPES, KnowledgeNode
 from lms.mastery.policy import MasteryEstimatorPolicy
 
 
@@ -17,12 +18,17 @@ def mastery_estimates_for_learner(
     session: Session,
     learner_id: str,
     *,
+    scope: str | None = None,
     policy: MasteryEstimatorPolicy | None = None,
 ) -> list[dict[str, Any]]:
-    """Compute current mastery per knowledge node without persisting a cache."""
+    """Compute mastery; scoped callers filter source nodes before aggregation.
+
+    Omitting scope retains the existing internal all-scope computation.
+    """
     estimates, _ = mastery_estimates_with_evidence_for_learner(
         session,
         learner_id,
+        scope=scope,
         policy=policy,
     )
     return estimates
@@ -32,15 +38,21 @@ def mastery_estimates_with_evidence_for_learner(
     session: Session,
     learner_id: str,
     *,
+    scope: str | None = None,
     policy: MasteryEstimatorPolicy | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, list[EvidenceRecord]]]:
     """Compute mastery and return the grouped evidence used for the estimates."""
     policy = policy or MasteryEstimatorPolicy()
+    statement = select(EvidenceRecord).where(EvidenceRecord.learner_id == learner_id)
+    if scope is not None:
+        if scope not in OWNERSHIP_SCOPES:
+            raise ValueError(f"unknown ownership scope {scope!r}")
+        statement = statement.join(
+            KnowledgeNode, KnowledgeNode.id == EvidenceRecord.knowledge_node_id
+        ).where(KnowledgeNode.ownership_scope == scope)
     records = list(
         session.scalars(
-            select(EvidenceRecord)
-            .where(EvidenceRecord.learner_id == learner_id)
-            .order_by(
+            statement.order_by(
                 EvidenceRecord.knowledge_node_id,
                 EvidenceRecord.observed_at,
                 EvidenceRecord.created_at,

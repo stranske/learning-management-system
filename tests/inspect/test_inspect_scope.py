@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from contextlib import contextmanager
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -60,6 +61,25 @@ def _client() -> Generator[tuple[TestClient, Session], None, None]:
 
 def test_inspect_does_not_mix_ownership_scopes() -> None:
     with _client() as (client, session):
+        from lms.graphs.models import KnowledgeNode
+
+        session.add_all(
+            [
+                KnowledgeNode(
+                    id="node-personal",
+                    title="Personal",
+                    knowledge_type="factual",
+                    ownership_scope="personal",
+                ),
+                KnowledgeNode(
+                    id="node-institutional",
+                    title="Institutional",
+                    knowledge_type="factual",
+                    ownership_scope="institutional",
+                ),
+            ]
+        )
+        session.flush()
         create_evidence_record(
             session,
             learner_id="learner-personal",
@@ -124,3 +144,58 @@ def test_inspect_rejects_unknown_ownership_scope() -> None:
         )
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("scope", ["personal", "institutional"])
+def test_same_learner_scope_filters_every_evidence_panel_before_limit(scope):
+    from datetime import UTC, datetime, timedelta
+
+    from lms.graphs.models import KnowledgeNode
+
+    with _client() as (client, session):
+        session.add_all(
+            [
+                KnowledgeNode(
+                    id="mixed-personal",
+                    title="Personal",
+                    knowledge_type="factual",
+                    ownership_scope="personal",
+                ),
+                KnowledgeNode(
+                    id="mixed-institutional",
+                    title="Institutional",
+                    knowledge_type="factual",
+                    ownership_scope="institutional",
+                ),
+            ]
+        )
+        session.flush()
+        for index in range(31):
+            create_evidence_record(
+                session,
+                learner_id="mixed",
+                knowledge_node_id="mixed-institutional",
+                confidence_rating=5,
+                correctness=False,
+                timestamp=datetime(2026, 10, 18, tzinfo=UTC) + timedelta(minutes=index),
+            )
+        create_evidence_record(
+            session,
+            learner_id="mixed",
+            knowledge_node_id="mixed-personal",
+            confidence_rating=5,
+            correctness=True,
+            timestamp=datetime(2026, 10, 17, tzinfo=UTC),
+        )
+        session.commit()
+        response = client.get("/inspect/learners/mixed/overview", params={"ownership_scope": scope})
+        assert response.status_code == 200
+        result = response.json()
+        assert result["ownership_scope"] == scope
+        assert {r["knowledge_node_id"] for r in result["recent_evidence"]} == {"mixed-" + scope}
+        assert len(result["recent_evidence"]) == (1 if scope == "personal" else 25)
+        assert {r["knowledge_node_id"] for r in result["mastery"]} == {"mixed-" + scope}
+        assert result["calibration"]["sample_size"] == (1 if scope == "personal" else 31)
+        assert result["calibration"]["buckets"][0]["observed_accuracy"] == (
+            1.0 if scope == "personal" else 0.0
+        )

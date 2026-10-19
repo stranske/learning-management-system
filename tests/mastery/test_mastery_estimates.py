@@ -203,3 +203,24 @@ def test_mastery_estimates_stay_finite_with_nan_evidence(
     assert 0.5 < estimates[0]["current_estimate"] <= 1.0
     assert all(isfinite(item["current_estimate"]) for item in estimates)
     assert all(isfinite(item["confidence"]) for item in estimates)
+
+
+@pytest.mark.parametrize("scope", ["personal", "institutional"])
+def test_mastery_aggregates_only_scoped_node_evidence(db_session, scope):
+    from lms.graphs.models import KnowledgeNode
+
+    for other in ("personal", "institutional"):
+        db_session.add(
+            KnowledgeNode(id=other, title=other, knowledge_type="factual", ownership_scope=other)
+        )
+        db_session.flush()
+        create_evidence_record(
+            db_session, learner_id="mixed", knowledge_node_id=other, correctness=other == "personal"
+        )
+    db_session.commit()
+    estimates, evidence = mastery_estimates_with_evidence_for_learner(
+        db_session, "mixed", scope=scope
+    )
+    assert [e["knowledge_node_id"] for e in estimates] == [scope]
+    assert set(evidence) == {scope}
+    assert estimates[0]["evidence_count"] == 1

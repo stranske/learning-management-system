@@ -15,6 +15,7 @@ import lms.sources.models  # noqa: F401
 from lms.api.inspect import learner_overview_route
 from lms.auth.models import User
 from lms.db.base import Base
+from lms.evidence.repository import create_evidence_record
 from lms.graphs.models import KnowledgeNode
 from lms.learners.models import LearningGoal
 from lms.prompts.models import Prompt
@@ -122,6 +123,15 @@ def test_overview_honors_ownership_scope_for_prompts_and_sources() -> None:
                 prompt_institutional,
             ]
         )
+        session.flush()
+        for node in (node_personal, node_institutional):
+            create_evidence_record(
+                session,
+                learner_id="learner-overview",
+                knowledge_node_id=node.id,
+                confidence_rating=5,
+                correctness=node.ownership_scope == "personal",
+            )
         session.commit()
 
         personal_payload = learner_overview_route(
@@ -143,6 +153,20 @@ def test_overview_honors_ownership_scope_for_prompts_and_sources() -> None:
             ownership_scope="institutional",
         )
 
+        for scope, payload in (
+            ("personal", personal_payload),
+            ("institutional", institutional_payload),
+        ):
+            assert {r["knowledge_node_id"] for r in payload["recent_evidence"]} == {
+                "node-" + scope + "-overview"
+            }
+            assert {r["knowledge_node_id"] for r in payload["mastery"]} == {
+                "node-" + scope + "-overview"
+            }
+            assert payload["calibration"]["sample_size"] == 1
+            assert payload["calibration"]["buckets"][0]["observed_accuracy"] == (
+                1.0 if scope == "personal" else 0.0
+            )
         assert {row["id"] for row in personal_payload["prompt_provenance"]} == {
             "prompt-personal-overview"
         }
