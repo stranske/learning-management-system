@@ -1,0 +1,26 @@
+[
+  {
+    "control": "easy",
+    "path": "src/lms/scheduling/service.py",
+    "original": "return min(fsrs_value, 4 if signal == \"success\" else value)",
+    "replacement": "return value",
+    "exit": 1,
+    "restored_sha256": "83c93fbbfe6433cdcc2dfb4e0dbb7552dab53881dbc95bf37793eba8c3388bf8"
+  },
+  {
+    "control": "excluded",
+    "path": "src/lms/scheduling/service.py",
+    "original": "if not fsrs_rating.scheduling_included:",
+    "replacement": "if False and not fsrs_rating.scheduling_included:",
+    "exit": 1,
+    "restored_sha256": "83c93fbbfe6433cdcc2dfb4e0dbb7552dab53881dbc95bf37793eba8c3388bf8"
+  },
+  {
+    "control": "binary",
+    "path": "src/lms/scheduling/fsrs_adapter.py",
+    "original": "record.scoring_method == \"binary\"",
+    "replacement": "False",
+    "exit": 1,
+    "restored_sha256": "5bfeac3a7873b9cda244879fce296f2c7da417a5ee0614751015ef25f19beb44"
+  }
+]

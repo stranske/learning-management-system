@@ -7,7 +7,31 @@ from sqlalchemy.orm import Session
 
 from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_evidence_record
-from lms.scheduling.fsrs_adapter import FSRS_RULES, _score, evidence_to_fsrs_rating
+from lms.scheduling.fsrs_adapter import (
+    FSRS_ADDITIONAL_FINDINGS,
+    FSRS_KNOWN_REPAIRS,
+    FSRS_NEGATIVE_CONTROLS,
+    FSRS_PERSISTED_EFFECT_TRACES,
+    FSRS_PRESERVATION_INVARIANTS,
+    FSRS_RULES,
+    FSRS_SEAM_INVENTORY,
+    REQUIRED_NEGATIVE_CONTROL_IDS,
+    REQUIRED_PRESERVATION_IDS,
+    SEAM_DISPOSITIONS,
+    _score,
+    adapter_preservation_holds,
+    additional_finding,
+    additional_finding_adapter_contract_holds,
+    evidence_to_fsrs_rating,
+    known_repair,
+    negative_control,
+    nonfinite_insufficient_signal_probe_record,
+    persisted_effect_trace,
+    preservation_invariant,
+    rating_allows_persisted_mutation,
+    seam_inventory_by_kind,
+    seam_rating_rule_ids,
+)
 
 
 def test_incorrect_maps_to_again(db_session: Session) -> None:
@@ -509,6 +533,781 @@ def test_adapter_rule_table_is_data_driven() -> None:
     ]
 
 
+def test_seam_inventory_covers_every_rating_rule() -> None:
+    """Every FSRS_RULES row must appear once in the bounded seam inventory."""
+    assert seam_rating_rule_ids() == tuple(rule.rule_id for rule in FSRS_RULES)
+
+
+def test_seam_inventory_records_adapters_consumers_and_dispositions() -> None:
+    """Inventory entries must carry contract / producer / consumer / evidence / disposition."""
+    kinds = {entry.kind for entry in FSRS_SEAM_INVENTORY}
+    assert kinds == {"rating-adapter", "rating-rule", "signal-adapter", "consumer"}
+
+    signal_ids = {entry.entry_id for entry in seam_inventory_by_kind("signal-adapter")}
+    assert signal_ids == {
+        "_fsrs_to_signal",
+        "_classify_signal",
+        "_conservative_signal",
+        "_signal_to_rating_value",
+    }
+
+    consumer_ids = {entry.entry_id for entry in seam_inventory_by_kind("consumer")}
+    assert {
+        "schedule_for_evidence",
+        "schedule_from_attempt",
+        "advance_card_state",
+        "queue_schedule_decision",
+    }.issubset(consumer_ids)
+
+    seen: set[str] = set()
+    for entry in FSRS_SEAM_INVENTORY:
+        assert entry.entry_id, "entry_id required"
+        assert entry.entry_id not in seen, f"duplicate inventory id: {entry.entry_id}"
+        seen.add(entry.entry_id)
+        assert entry.contract.strip()
+        assert entry.producer.strip()
+        assert entry.consumer.strip()
+        assert entry.evidence.strip()
+        assert entry.disposition in SEAM_DISPOSITIONS
+
+
+def test_preservation_invariants_declare_required_semantics() -> None:
+    """Existing policy must declare exclusion, Easy/Good and score-selection preservation."""
+    ids = tuple(entry.invariant_id for entry in FSRS_PRESERVATION_INVARIANTS)
+    assert ids == REQUIRED_PRESERVATION_IDS
+
+    for entry in FSRS_PRESERVATION_INVARIANTS:
+        assert entry.semantics.strip()
+        assert entry.policy_basis.strip()
+        assert entry.adapter_commitment.strip()
+        assert entry.consumer_commitment.strip()
+        assert entry.owner_issue.startswith("#")
+        assert entry.owner_pr.startswith("#")
+        assert entry.evidence.strip()
+        assert preservation_invariant(entry.invariant_id) is entry
+
+
+def test_adapter_preservation_commitments_hold_under_existing_policy() -> None:
+    """Live FSRS_RULES / evidence_to_fsrs_rating must satisfy declared adapter commitments."""
+    holds = adapter_preservation_holds()
+    assert set(holds) == set(REQUIRED_PRESERVATION_IDS)
+    assert all(holds.values()), holds
+
+    # Explicit semantic spot-checks so a silent helper change cannot greenwash.
+    transfer = evidence_to_fsrs_rating(
+        EvidenceRecord(
+            learner_id="l",
+            knowledge_node_id="n",
+            correctness=True,
+            confidence_rating=5,
+            transfer_distance="near",
+        )
+    )
+    assert transfer.scheduling_included is False
+    assert transfer.value is None
+
+    easy = evidence_to_fsrs_rating(
+        EvidenceRecord(
+            learner_id="l",
+            knowledge_node_id="n",
+            scoring_method="binary",
+            correctness=True,
+            confidence_rating=5,
+            normalized_score=1.0,
+            response_time_seconds=8,
+            support_level="none",
+            attempt_context={"attempt_number": 1},
+        ),
+        prompt_class_median_seconds=8,
+    )
+    good = evidence_to_fsrs_rating(
+        EvidenceRecord(
+            learner_id="l",
+            knowledge_node_id="n",
+            scoring_method="binary",
+            correctness=True,
+            confidence_rating=4,
+            normalized_score=1.0,
+            support_level="none",
+        )
+    )
+    assert easy.value == 4 and easy.rule_id == "fast-first-attempt"
+    assert good.value == 3 and good.rule_id == "unsupported-correct"
+    assert easy.value != good.value
+
+    # Binary mastery must not steal the Easy lane via partial-at-mastery.
+    binary_mastery_candidate = EvidenceRecord(
+        learner_id="l",
+        knowledge_node_id="n",
+        scoring_method="binary",
+        correctness=True,
+        confidence_rating=5,
+        normalized_score=1.0,
+        support_level="none",
+        attempt_context={"attempt_number": 1},
+        response_time_seconds=8,
+    )
+    assert not next(r for r in FSRS_RULES if r.rule_id == "partial-at-mastery").applies(
+        binary_mastery_candidate
+    )
+
+
+def test_persisted_effect_traces_and_negative_controls_are_complete() -> None:
+    """Traces name mutation gates; controls cover every declared preservation invariant."""
+    control_ids = tuple(entry.control_id for entry in FSRS_NEGATIVE_CONTROLS)
+    assert control_ids == REQUIRED_NEGATIVE_CONTROL_IDS
+
+    for entry in FSRS_NEGATIVE_CONTROLS:
+        assert entry.invariant_id in REQUIRED_PRESERVATION_IDS
+        assert entry.target_module.endswith(".py")
+        assert entry.healthy_fragment.strip()
+        assert entry.broken_fragment.strip()
+        assert entry.healthy_fragment != entry.broken_fragment
+        assert entry.collapse_or_fallback.strip()
+        assert entry.detection_evidence.strip()
+        assert negative_control(entry.control_id) is entry
+
+    linked_invariants = {entry.invariant_id for entry in FSRS_NEGATIVE_CONTROLS}
+    assert linked_invariants == set(REQUIRED_PRESERVATION_IDS)
+
+    seen: set[str] = set()
+    for entry in FSRS_PERSISTED_EFFECT_TRACES:
+        assert entry.trace_id not in seen
+        seen.add(entry.trace_id)
+        assert entry.adapter_result.strip()
+        assert entry.persisted_effects.strip()
+        assert entry.collapse_or_fallback_if_broken.strip()
+        assert entry.evidence.strip()
+        if entry.control_id is not None:
+            assert entry.control_id in REQUIRED_NEGATIVE_CONTROL_IDS
+        assert persisted_effect_trace(entry.trace_id) is entry
+
+    assert persisted_effect_trace("transfer-excluded-freeze").mutation_allowed is False
+    assert all(
+        trace.mutation_allowed
+        for trace in FSRS_PERSISTED_EFFECT_TRACES
+        if trace.trace_id != "transfer-excluded-freeze"
+    )
+
+
+def test_negative_controls_match_recorded_offline_receipts() -> None:
+    """Machine-checkable controls must stay aligned with the offline red receipts."""
+    import json
+    from pathlib import Path
+
+    receipt_path = (
+        Path(__file__).resolve().parents[2]
+        / "docs/audits/evidence/fsrs-consumer-762/lms762-controls.json"
+    )
+    receipts = json.loads(receipt_path.read_text(encoding="utf-8"))
+    by_legacy = {row["control"]: row for row in receipts}
+    legacy_ids = {
+        "excluded-fallback-mutation": "excluded",
+        "easy-good-collapse": "easy",
+        "binary-score-selection": "binary",
+    }
+    for control in FSRS_NEGATIVE_CONTROLS:
+        row = by_legacy[legacy_ids[control.control_id]]
+        assert row["path"] == control.target_module
+        assert row["original"] == control.healthy_fragment
+        assert row["replacement"] == control.broken_fragment
+
+
+def test_transfer_exclusion_trace_freezes_persisted_card_state(db_session: Session) -> None:
+    """scheduling_included=false must not fall back into card/queue/schedule mutation."""
+    import copy
+
+    from lms.scheduling.card_state import get_or_seed_card_state
+    from lms.scheduling.models import ReviewCardState, ReviewQueueItem, ReviewSchedule
+    from lms.scheduling.service import ExcludedSchedulingOutcome, schedule_from_attempt
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    card = get_or_seed_card_state(
+        db_session, learner_id="learner-1", subject_id="node-1", prior_successes=0
+    )
+    before = copy.deepcopy(
+        {column.key: getattr(card, column.key) for column in ReviewCardState.__table__.columns}
+    )
+    attempt, evidence = _make_attempt(db_session, correctness=True, confidence_rating=5)
+    evidence.transfer_distance = "near"
+    db_session.flush()
+
+    rating = evidence_to_fsrs_rating(evidence)
+    assert rating.rule_id == "transfer-excluded"
+    assert rating_allows_persisted_mutation(rating) is False
+
+    outcome = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert isinstance(outcome, ExcludedSchedulingOutcome)
+    assert outcome.decision_log["card_mutated"] is False
+    assert outcome.decision_log["fsrs_rating"]["scheduling_included"] is False
+    assert outcome.due_at is None
+    assert {
+        column.key: getattr(card, column.key) for column in ReviewCardState.__table__.columns
+    } == before
+    assert db_session.query(ReviewQueueItem).count() == 0
+    assert db_session.query(ReviewSchedule).count() == 0
+    assert attempt.response_metadata is not None
+    assert attempt.response_metadata["scheduling_outcome"]["card_mutated"] is False
+
+
+@pytest.mark.parametrize("distance", ["near", "far", "novel"])
+@pytest.mark.parametrize("has_history", [False, True], ids=["cold", "existing"])
+def test_transfer_exclusion_preserves_all_committed_consumers(
+    db_session: Session, distance: str, has_history: bool
+) -> None:
+    """Excluded evidence preserves existing rows as well as avoiding new ones."""
+    from copy import deepcopy
+    from typing import Any
+
+    from sqlalchemy import select
+
+    from lms.evidence.models import Attempt
+    from lms.scheduling.models import (
+        ReviewCardState,
+        ReviewQueueItem,
+        ReviewSchedule,
+        SchedulerDecision,
+    )
+    from lms.scheduling.service import ExcludedSchedulingOutcome, schedule_from_attempt
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    def snapshot(session: Session) -> dict[str, list[dict[str, Any]]]:
+        return {
+            model.__tablename__: [
+                deepcopy(
+                    {column.key: getattr(row, column.key) for column in model.__table__.columns}
+                )
+                for row in session.scalars(select(model).order_by(model.id))
+            ]
+            for model in (ReviewCardState, ReviewQueueItem, ReviewSchedule, SchedulerDecision)
+        }
+
+    if has_history:
+        prior_attempt, prior_evidence = _make_attempt(db_session)
+        prior_item = schedule_from_attempt(
+            db_session, attempt=prior_attempt, evidence_record=prior_evidence
+        )
+        assert isinstance(prior_item, ReviewQueueItem)
+        db_session.commit()
+
+    # Both snapshots use fresh sessions so ORM identity-map state cannot hide
+    # writes, and SQLite datetime values have the same persisted representation.
+    bind = db_session.get_bind()
+    with Session(bind) as session:
+        before = snapshot(session)
+        assert all(len(rows) == int(has_history) for rows in before.values())
+
+    attempt, evidence = _make_attempt(db_session, prompt_id="transfer-prompt")
+    evidence.transfer_distance = distance
+    db_session.flush()
+    outcome = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert isinstance(outcome, ExcludedSchedulingOutcome)
+    attempt_id, evidence_id = attempt.id, evidence.id
+    db_session.commit()
+
+    with Session(bind) as session:
+        persisted_attempt = session.get(Attempt, attempt_id)
+        persisted_evidence = session.get(EvidenceRecord, evidence_id)
+        assert persisted_evidence is not None
+        assert persisted_evidence.attempt_id == attempt_id
+        assert persisted_evidence.transfer_distance == distance
+        assert persisted_attempt is not None
+        assert persisted_attempt.response_metadata is not None
+        receipt = persisted_attempt.response_metadata["scheduling_outcome"]
+        assert receipt["fsrs_rating"]["rule_id"] == "transfer-excluded"
+        assert receipt["fsrs_rating"]["scheduling_included"] is False
+        assert receipt["card_mutated"] is False
+        assert receipt["output"]["due_at"] is None
+        assert snapshot(session) == before
+
+
+def test_easy_versus_good_persist_distinct_engine_ratings(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Easy and Good must retain the real engine's result after commit."""
+    from copy import deepcopy
+    from typing import Any
+
+    from sqlalchemy import select
+
+    from lms.scheduling import fsrs_engine, service
+    from lms.scheduling.models import (
+        ReviewCardState,
+        ReviewQueueItem,
+        ReviewSchedule,
+        SchedulerDecision,
+    )
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    observed: list[int] = []
+    outcomes: list[fsrs_engine.ScheduleOutcome] = []
+    real_review = fsrs_engine.review
+
+    def recording_review(**kwargs: Any) -> fsrs_engine.ScheduleOutcome:
+        rating_value = kwargs["rating_value"]
+        assert isinstance(rating_value, int)
+        observed.append(rating_value)
+        outcome = real_review(**kwargs)
+        # Keep an independent expected result so subsequent ORM writes cannot
+        # silently change the spy's copy of the serialized card.
+        outcomes.append(deepcopy(outcome))
+        return outcome
+
+    monkeypatch.setattr(fsrs_engine, "review", recording_review)
+    monkeypatch.setattr(
+        service,
+        "_prompt_class_timing_context",
+        lambda *_args, **_kwargs: (20.0, 3, True),
+    )
+
+    easy_attempt, easy_evidence = _make_attempt(
+        db_session,
+        learner_id="learner-easy",
+        prompt_id="prompt-easy",
+        knowledge_node_id="node-easy",
+        correctness=True,
+        confidence_rating=5,
+        response_time_seconds=10,
+    )
+    easy_evidence.scoring_method = "binary"
+    easy_evidence.normalized_score = 1.0
+    easy_evidence.support_level = "none"
+    db_session.flush()
+
+    easy_item = service.schedule_from_attempt(
+        db_session, attempt=easy_attempt, evidence_record=easy_evidence
+    )
+    assert isinstance(easy_item, ReviewQueueItem)
+    assert observed == [4]
+    assert easy_item.decision_log["fsrs_rating"]["value"] == 4
+    assert easy_item.decision_log["fsrs_rating"]["rule_id"] == "fast-first-attempt"
+    assert rating_allows_persisted_mutation(
+        evidence_to_fsrs_rating(easy_evidence, prompt_class_median_seconds=20.0, first_attempt=True)
+    )
+
+    observed.clear()
+    good_attempt, good_evidence = _make_attempt(
+        db_session,
+        learner_id="learner-good",
+        prompt_id="prompt-good",
+        knowledge_node_id="node-good",
+        correctness=True,
+        confidence_rating=4,
+        response_time_seconds=10,
+    )
+    good_evidence.scoring_method = "binary"
+    good_evidence.normalized_score = 1.0
+    good_evidence.support_level = "none"
+    db_session.flush()
+
+    good_item = service.schedule_from_attempt(
+        db_session, attempt=good_attempt, evidence_record=good_evidence
+    )
+    assert isinstance(good_item, ReviewQueueItem)
+    assert observed == [3]
+    assert good_item.decision_log["fsrs_rating"]["value"] == 3
+    assert good_item.decision_log["fsrs_rating"]["rule_id"] == "unsupported-correct"
+    assert (
+        easy_item.decision_log["fsrs_rating"]["value"]
+        != good_item.decision_log["fsrs_rating"]["value"]
+    )
+
+    cases = [
+        (easy_item.id, easy_attempt.id, easy_evidence.id, 4, "fast-first-attempt", outcomes[0]),
+        (good_item.id, good_attempt.id, good_evidence.id, 3, "unsupported-correct", outcomes[1]),
+    ]
+    db_session.commit()
+
+    # Reread from the database rather than the scheduling session's identity
+    # map. Logging the right adapter value alone cannot prove a card was saved.
+    with Session(db_session.get_bind()) as session:
+        for item_id, attempt_id, evidence_id, rating, rule, outcome in cases:
+            item = session.get(ReviewQueueItem, item_id)
+            assert item is not None
+            card = session.scalars(
+                select(ReviewCardState).where(
+                    ReviewCardState.learner_id == item.learner_id,
+                    ReviewCardState.subject_id == item.knowledge_node_id,
+                )
+            ).one()
+            schedule = session.scalars(
+                select(ReviewSchedule).where(ReviewSchedule.review_queue_item_id == item_id)
+            ).one()
+            decision = session.scalars(
+                select(SchedulerDecision).where(SchedulerDecision.review_queue_item_id == item_id)
+            ).one()
+
+            assert card.card_state == outcome.card_state
+            assert card.stability == outcome.stability
+            assert card.difficulty == outcome.difficulty
+            assert card.review_count == outcome.review_count == 1
+            assert card.lapse_count == outcome.lapse_count == 0
+            # This fixture uses SQLite, which rereads DateTime without tzinfo.
+            assert card.due_at == outcome.due_at.replace(tzinfo=None)
+            assert item.due_at == schedule.due_at == card.due_at
+            assert item.source_attempt_id == attempt_id
+            assert (
+                item.source_evidence_record_id
+                == schedule.source_evidence_record_id
+                == decision.source_evidence_record_id
+                == evidence_id
+            )
+            assert decision.review_schedule_id == schedule.id
+            assert decision.decision_log == item.decision_log
+            assert decision.decision_log["fsrs_rating"]["value"] == rating
+            assert decision.decision_log["fsrs_rating"]["rule_id"] == rule
+
+
+@pytest.mark.parametrize(
+    ("correctness", "normalized_score", "raw_score", "expected_score", "rating", "rule"),
+    [
+        pytest.param(True, 0.0, 10.0, 0.0, 1, "partial-under-half", id="normalized-zero-wins"),
+        pytest.param(True, 0.7, 0.0, 0.7, 2, "partial-under-mastery", id="normalized-partial-wins"),
+        pytest.param(True, 0.9, 0.0, 0.9, 3, "partial-at-mastery", id="normalized-mastery-wins"),
+        pytest.param(True, None, 3.0, 0.3, 1, "partial-under-half", id="raw-under-half"),
+        pytest.param(True, None, 7.0, 0.7, 2, "partial-under-mastery", id="raw-under-mastery"),
+        pytest.param(True, None, 9.0, 0.9, 3, "partial-at-mastery", id="raw-at-mastery"),
+        pytest.param(None, 0.0, 10.0, 0.0, 1, "partial-under-half", id="nullable-zero-wins"),
+        pytest.param(None, 0.7, 0.0, 0.7, 2, "partial-under-mastery", id="nullable-partial-wins"),
+        pytest.param(None, 0.9, 0.0, 0.9, 3, "partial-at-mastery", id="nullable-mastery-wins"),
+    ],
+)
+def test_score_selection_reaches_committed_consumers(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    correctness: bool | None,
+    normalized_score: float | None,
+    raw_score: float,
+    expected_score: float,
+    rating: int,
+    rule: str,
+) -> None:
+    """Prefer explicit normalized scores, including zero, through real card writes."""
+    _assert_score_selection_persisted(
+        db_session,
+        monkeypatch,
+        correctness=correctness,
+        normalized_score=normalized_score,
+        raw_score=raw_score,
+        expected_score=expected_score,
+        rating=rating,
+        rule=rule,
+    )
+
+
+@pytest.mark.parametrize(
+    "normalized_score, raw_score, expected_score",
+    [
+        pytest.param(0.7, 0.0, 0.7, id="normalized-partial"),
+        pytest.param(0.9, 0.0, 0.9, id="normalized-mastery"),
+        pytest.param(None, 7.0, 0.7, id="raw-partial"),
+        pytest.param(None, 9.0, 0.9, id="raw-mastery"),
+    ],
+)
+def test_incorrect_precedes_scores_in_committed_consumers(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    normalized_score: float | None,
+    raw_score: float,
+    expected_score: float,
+) -> None:
+    """Explicit incorrectness remains Again despite partial or mastery scores."""
+    _assert_score_selection_persisted(
+        db_session,
+        monkeypatch,
+        correctness=False,
+        normalized_score=normalized_score,
+        raw_score=raw_score,
+        expected_score=expected_score,
+        rating=1,
+        rule="incorrect",
+    )
+
+
+@pytest.mark.parametrize("score", [0.7, 0.85], ids=["partial", "mastery-boundary"])
+@pytest.mark.parametrize(
+    "confidence, support_level, hint_used, reference_accessed",
+    [
+        (2, "none", False, False),
+        (5, "none", True, False),
+        (5, "none", False, True),
+        (5, "coach", False, False),
+    ],
+    ids=["low-confidence", "hint", "reference", "coach"],
+)
+def test_partial_credit_caps_reach_committed_consumers(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    score: float,
+    confidence: int,
+    support_level: str,
+    hint_used: bool,
+    reference_accessed: bool,
+) -> None:
+    """Partial self-grades retain support/confidence caps through real card writes."""
+    _assert_score_selection_persisted(
+        db_session,
+        monkeypatch,
+        correctness=None,
+        normalized_score=score,
+        raw_score=0.0,
+        expected_score=score,
+        rating=2,
+        rule="supported-or-low-confidence-correct",
+        confidence_rating=confidence,
+        support_level=support_level,
+        hint_used=hint_used,
+        reference_accessed=reference_accessed,
+    )
+
+
+def _assert_score_selection_persisted(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    correctness: bool | None,
+    normalized_score: float | None,
+    raw_score: float,
+    expected_score: float,
+    rating: int,
+    rule: str,
+    confidence_rating: int = 5,
+    support_level: str = "none",
+    hint_used: bool = False,
+    reference_accessed: bool = False,
+) -> None:
+    """Observe the real engine, then compare every committed scheduling consumer."""
+    from copy import deepcopy
+    from typing import Any
+
+    from sqlalchemy import select
+
+    from lms.scheduling import fsrs_engine, service
+    from lms.scheduling.models import (
+        ReviewCardState,
+        ReviewQueueItem,
+        ReviewSchedule,
+        SchedulerDecision,
+    )
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    attempt, evidence = _make_attempt(
+        db_session,
+        correctness=correctness,
+        normalized_score=normalized_score,
+        confidence_rating=confidence_rating,
+        support_level=support_level,
+    )
+    evidence.scoring_method = "partial-credit"
+    evidence.raw_score = raw_score
+    evidence.max_score = 10.0
+    evidence.hint_used = hint_used
+    evidence.reference_accessed = reference_accessed
+    db_session.flush()
+
+    assert _score(evidence) == expected_score
+    adapter_rating = evidence_to_fsrs_rating(evidence)
+    assert adapter_rating.value == rating
+    assert adapter_rating.rule_id == rule
+    observed: list[int] = []
+    outcomes: list[fsrs_engine.ScheduleOutcome] = []
+    real_review = fsrs_engine.review
+
+    def recording_review(**kwargs: Any) -> fsrs_engine.ScheduleOutcome:
+        observed.append(kwargs["rating_value"])
+        outcome = real_review(**kwargs)
+        outcomes.append(deepcopy(outcome))
+        return outcome
+
+    monkeypatch.setattr(fsrs_engine, "review", recording_review)
+    item = service.schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert isinstance(item, ReviewQueueItem)
+    assert observed == [rating]
+    item_id, attempt_id, evidence_id = item.id, attempt.id, evidence.id
+    db_session.commit()
+
+    with Session(db_session.get_bind()) as session:
+        saved_evidence = session.get(EvidenceRecord, evidence_id)
+        assert saved_evidence is not None
+        assert saved_evidence.correctness is correctness
+        assert saved_evidence.scoring_method == "partial-credit"
+        assert saved_evidence.normalized_score == normalized_score
+        assert saved_evidence.raw_score == raw_score
+        assert saved_evidence.max_score == 10.0
+        assert saved_evidence.confidence_rating == confidence_rating
+        assert saved_evidence.support_level == support_level
+        assert saved_evidence.hint_used is hint_used
+        assert saved_evidence.reference_accessed is reference_accessed
+        saved_item = session.get(ReviewQueueItem, item_id)
+        assert saved_item is not None
+        card = session.scalars(select(ReviewCardState)).one()
+        schedule = session.scalars(select(ReviewSchedule)).one()
+        decision = session.scalars(select(SchedulerDecision)).one()
+        outcome = outcomes[0]
+        assert card.learner_id == saved_evidence.learner_id
+        assert card.subject_id == saved_evidence.knowledge_node_id
+        assert card.card_state == outcome.card_state
+        assert card.stability == outcome.stability
+        assert card.difficulty == outcome.difficulty
+        assert card.review_count == outcome.review_count == 1
+        assert card.lapse_count == outcome.lapse_count
+        assert card.due_at == outcome.due_at.replace(tzinfo=None)
+        # Remediation queue dates can intentionally differ from the FSRS card.
+        assert saved_item.due_at == schedule.due_at
+        assert saved_item.source_attempt_id == attempt_id
+        assert schedule.review_queue_item_id == decision.review_queue_item_id == item_id
+        assert decision.review_schedule_id == schedule.id
+        assert (
+            saved_item.source_evidence_record_id
+            == schedule.source_evidence_record_id
+            == decision.source_evidence_record_id
+            == evidence_id
+        )
+        assert saved_item.decision_log == decision.decision_log
+        assert decision.decision_log["fsrs_rating"]["value"] == rating
+        assert decision.decision_log["fsrs_rating"]["rule_id"] == rule
+
+
+def test_known_repairs_link_owned_work_to_controls() -> None:
+    """Known per-instance losses must point at existing owned issues/PRs and controls."""
+    repair_ids = {entry.repair_id for entry in FSRS_KNOWN_REPAIRS}
+    assert repair_ids == {
+        "transfer-exclusion-gate",
+        "easy-versus-good-preservation",
+        "binary-score-selection",
+    }
+
+    linked_invariants = {entry.invariant_id for entry in FSRS_KNOWN_REPAIRS}
+    assert linked_invariants == set(REQUIRED_PRESERVATION_IDS)
+
+    for entry in FSRS_KNOWN_REPAIRS:
+        assert entry.owner_issue.startswith("#")
+        assert entry.owner_pr.startswith("#")
+        assert entry.loss.strip()
+        assert entry.control_id in REQUIRED_NEGATIVE_CONTROL_IDS
+        assert negative_control(entry.control_id).invariant_id == entry.invariant_id
+        assert preservation_invariant(entry.invariant_id).owner_issue == entry.owner_issue
+        assert preservation_invariant(entry.invariant_id).owner_pr == entry.owner_pr
+        assert known_repair(entry.repair_id) is entry
+
+
+def test_additional_findings_are_returned_without_auto_filing_or_repair() -> None:
+    """Additional confirmed losses stay review-only: no auto-filed issue, no bundled fix."""
+    assert len(FSRS_ADDITIONAL_FINDINGS) == 1
+    finding = additional_finding("insufficient-signal-success-fallback")
+    assert finding.auto_filed_issue is False
+    assert finding.bundled_repair is False
+    assert finding.evidence_limits.strip()
+    assert finding.prevention_check.strip()
+    assert "unknown" in finding.evidence_limits.lower()
+    assert additional_finding_adapter_contract_holds() is True
+
+
+def test_documents_current_nonfinite_fallback_behavior(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Document the current known loss; this is not a prevention/regression gate.
+
+    An eventual service repair must update this observation alongside the finding.
+    This audit deliberately does not claim that current behavior is correct.
+    """
+    from copy import deepcopy
+    from typing import Any
+
+    from sqlalchemy import select
+
+    from lms.scheduling import fsrs_engine
+    from lms.scheduling.models import (
+        ReviewCardState,
+        ReviewQueueItem,
+        ReviewSchedule,
+        SchedulerDecision,
+    )
+    from lms.scheduling.service import schedule_from_attempt
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    finding = additional_finding("insufficient-signal-success-fallback")
+    assert finding.auto_filed_issue is False
+    assert finding.bundled_repair is False
+
+    probe = nonfinite_insufficient_signal_probe_record()
+    adapter_rating = evidence_to_fsrs_rating(probe)
+    assert adapter_rating.value == 1
+    assert adapter_rating.rule_id == "insufficient-signal"
+    assert adapter_rating.scheduling_included is True
+
+    attempt, evidence = _make_attempt(
+        db_session,
+        correctness=True,
+        confidence_rating=5,
+        normalized_score=None,
+    )
+    evidence.raw_score = float("inf")
+    evidence.max_score = 1.0
+    evidence.normalized_score = None
+    db_session.flush()
+
+    rating = evidence_to_fsrs_rating(evidence)
+    assert rating.value == 1
+    assert rating.rule_id == "insufficient-signal"
+
+    observed: list[int] = []
+    outcomes: list[fsrs_engine.ScheduleOutcome] = []
+    real_review = fsrs_engine.review
+
+    def recording_review(**kwargs: Any) -> fsrs_engine.ScheduleOutcome:
+        observed.append(kwargs["rating_value"])
+        outcome = real_review(**kwargs)
+        outcomes.append(deepcopy(outcome))
+        return outcome
+
+    monkeypatch.setattr(fsrs_engine, "review", recording_review)
+    item = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert isinstance(item, ReviewQueueItem)
+    # Observe the mismatch at the actual engine boundary, not just in the log.
+    assert observed == [3]
+    item_id, attempt_id, evidence_id = item.id, attempt.id, evidence.id
+    db_session.commit()
+
+    with Session(db_session.get_bind()) as session:
+        saved_evidence = session.get(EvidenceRecord, evidence_id)
+        assert saved_evidence is not None
+        assert saved_evidence.raw_score == float("inf")
+        assert saved_evidence.max_score == 1.0
+        assert saved_evidence.normalized_score is None
+        assert evidence_to_fsrs_rating(saved_evidence) == rating
+        saved_item = session.get(ReviewQueueItem, item_id)
+        assert saved_item is not None
+        card = session.scalars(select(ReviewCardState)).one()
+        schedule = session.scalars(select(ReviewSchedule)).one()
+        decision = session.scalars(select(SchedulerDecision)).one()
+        outcome = outcomes[0]
+
+        # Confirmed loss: the durable log says Again while Good advances the card.
+        assert saved_item.decision_log == decision.decision_log
+        assert decision.decision_log["fsrs_rating"]["value"] == 1
+        assert decision.decision_log["fsrs_rating"]["rule_id"] == "insufficient-signal"
+        assert decision.decision_log["signal"] == "success"
+        assert card.learner_id == saved_evidence.learner_id
+        assert card.subject_id == saved_evidence.knowledge_node_id
+        assert card.card_state == outcome.card_state
+        assert card.stability == outcome.stability
+        assert card.difficulty == outcome.difficulty
+        assert card.review_count == outcome.review_count == 1
+        assert card.lapse_count == outcome.lapse_count
+        assert card.due_at == outcome.due_at.replace(tzinfo=None)
+        assert saved_item.due_at == schedule.due_at == card.due_at
+        assert saved_item.source_attempt_id == saved_evidence.attempt_id == attempt_id
+        assert schedule.review_queue_item_id == decision.review_queue_item_id == item_id
+        assert decision.review_schedule_id == schedule.id
+        assert (
+            saved_item.source_evidence_record_id
+            == schedule.source_evidence_record_id
+            == decision.source_evidence_record_id
+            == evidence_id
+        )
+
+
 @pytest.mark.parametrize("correctness", [None, True])
 @pytest.mark.parametrize("confidence", [3, 5])
 @pytest.mark.parametrize(
@@ -583,28 +1382,102 @@ def test_non_finite_transfer_evidence_remains_excluded(correctness: bool) -> Non
     assert rating.value is None
 
 
-def test_service_honors_adapter_eligibility_before_any_card_write(db_session, monkeypatch):
+@pytest.mark.parametrize("has_history", [False, True], ids=["cold", "existing"])
+@pytest.mark.parametrize("value", [None, 3], ids=["unrated", "rated"])
+def test_service_honors_adapter_eligibility_before_any_card_write(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    has_history: bool,
+    value: int | None,
+) -> None:
+    """Eligibility gates all durable consumers independently of rating or rule ID."""
+    from copy import deepcopy
+    from typing import Any, NoReturn
+
+    from sqlalchemy import select
+
+    from lms.evidence.models import Attempt
     from lms.scheduling import service
     from lms.scheduling.fsrs_adapter import FSRSRating
-    from lms.scheduling.models import ReviewCardState
+    from lms.scheduling.models import (
+        ReviewCardState,
+        ReviewQueueItem,
+        ReviewSchedule,
+        SchedulerDecision,
+    )
     from tests.scheduling.test_review_queue import _make_attempt
 
-    attempt, evidence = _make_attempt(db_session)
+    def snapshot(session: Session) -> dict[str, list[dict[str, Any]]]:
+        return {
+            model.__tablename__: [
+                deepcopy(
+                    {column.key: getattr(row, column.key) for column in model.__table__.columns}
+                )
+                for row in session.scalars(select(model).order_by(model.id))
+            ]
+            for model in (ReviewCardState, ReviewQueueItem, ReviewSchedule, SchedulerDecision)
+        }
+
+    if has_history:
+        prior_attempt, prior_evidence = _make_attempt(db_session)
+        prior_item = service.schedule_from_attempt(
+            db_session, attempt=prior_attempt, evidence_record=prior_evidence
+        )
+        assert isinstance(prior_item, ReviewQueueItem)
+        db_session.commit()
+
+    bind = db_session.get_bind()
+    with Session(bind) as session:
+        before = snapshot(session)
+        assert all(len(rows) == int(has_history) for rows in before.values())
+
+    # Ordinary successful evidence makes an accidental classifier fallback mutate
+    # state. Only the adapter's inclusion flag authorizes this bypass.
+    attempt, evidence = _make_attempt(db_session, response_metadata={"origin": "audit"})
+    assert evidence.transfer_distance is None
+    excluded_rating = FSRSRating(
+        label="excluded" if value is None else "good",
+        value=value,
+        scheduling_included=False,
+        rule_id="custom-exclusion",
+        reason="excluded",
+    )
     monkeypatch.setattr(
         service,
         "evidence_to_fsrs_rating",
-        lambda _, **context: FSRSRating(
-            label="excluded",
-            value=None,
-            scheduling_included=False,
-            rule_id="custom-exclusion",
-            reason="excluded",
-        ),
+        lambda _, **context: excluded_rating,
     )
+
+    def unexpected_card_access(*_args: Any, **_kwargs: Any) -> NoReturn:
+        raise AssertionError("Excluded ratings must bypass card seeding and advancement")
+
+    monkeypatch.setattr(service, "get_or_seed_card_state", unexpected_card_access)
+    monkeypatch.setattr(service, "advance_card_state", unexpected_card_access)
     outcome = service.schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert isinstance(outcome, service.ExcludedSchedulingOutcome)
     assert outcome.decision_log["rule"] == "custom-exclusion"
     assert outcome.due_at is None
-    assert db_session.query(ReviewCardState).count() == 0
+    attempt_id, evidence_id = attempt.id, evidence.id
+    db_session.commit()
+
+    with Session(bind) as session:
+        assert snapshot(session) == before
+        saved_evidence = session.get(EvidenceRecord, evidence_id)
+        saved_attempt = session.get(Attempt, attempt_id)
+        assert saved_evidence is not None
+        assert saved_evidence.attempt_id == attempt_id
+        assert saved_attempt is not None
+        assert saved_attempt.response_metadata is not None
+        assert saved_attempt.response_metadata["origin"] == "audit"
+        receipt = saved_attempt.response_metadata["scheduling_outcome"]
+        assert receipt["card_mutated"] is False
+        assert receipt["fsrs_rating"] == {
+            "label": excluded_rating.label,
+            "value": value,
+            "rule_id": "custom-exclusion",
+            "scheduling_included": False,
+        }
+        assert receipt["output"]["due_at"] is None
 
 
 @pytest.mark.parametrize(

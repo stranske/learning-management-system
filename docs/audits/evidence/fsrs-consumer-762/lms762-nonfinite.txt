@@ -1,0 +1,13 @@
+{
+  "adapter_value": 1,
+  "adapter_rule": "insufficient-signal",
+  "scheduler_signal": "success",
+  "card_review_count": 1,
+  "persisted_due_date": "2026-10-21T14:04:35.178008",
+  "recorded_rating": {
+    "label": "again",
+    "value": 1,
+    "rule_id": "insufficient-signal",
+    "scheduling_included": true
+  }
+}
