@@ -58,3 +58,29 @@ def test_complete_accepts_bounded_citation() -> None:
     )
 
     assert response.text == "per src1 the claim holds"
+
+
+@pytest.mark.parametrize("cited", [False, True])
+def test_linked_prompt_sources_reach_client_enforcement(api_client, monkeypatch, cited):
+    from lms.llm import api as llm_api
+    from tests.llm.test_client_routing import _recording_client, _seed_published_study_prompt
+
+    client, factory = api_client
+    with factory() as session:
+        ids = _seed_published_study_prompt(session, stable_locator="source:required-linked")
+    text = "Per source:required-linked, the claim holds." if cited else "An uncited claim."
+    recording, _, calls = _recording_client(default_provider="fake", responder=lambda *_: text)
+    monkeypatch.setattr(llm_api, "_default_client", lambda: recording)
+    response = client.post(
+        "/llm/sessions",
+        json={
+            "learner_id": ids["learner_id"],
+            "prompt_id": ids["prompt_id"],
+            "user_message": "Explain this.",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["flags"] == ([] if cited else ["unverified"])
+    # Existing client rejects the uncited constrained call; route's existing
+    # unverified fallback is a second call. Valid canonical citation needs one.
+    assert len(calls) == (1 if cited else 2)

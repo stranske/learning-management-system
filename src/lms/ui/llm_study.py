@@ -90,6 +90,7 @@ async def create_llm_study_session_route(
             mode=mode,
             user_message=form.get("user_message", ""),
             coaching_intensity=coaching_intensity,
+            prompt_id=form.get("prompt_id", "").strip() or None,
             source_constraints=_split_csv(form.get("source_constraints", "")),
             assessment_restricted=form.get("assessment_restricted") == "true",
             retrieval_active=form.get("retrieval_active") == "true",
@@ -206,6 +207,11 @@ def _start_form(learner_id: str) -> str:
             {_select("coaching_intensity", _INTENSITY_CHOICES, "full")}
             <label for="user_message">Your message</label>
             <textarea id="user_message" name="user_message" rows="4" required></textarea>
+            <label for="prompt_id">Linked prompt (optional)</label>
+            <input id="prompt_id" name="prompt_id" maxlength="36"
+              aria-describedby="prompt-source-hint">
+            <small id="prompt-source-hint">Use a published prompt reference to require
+            its approved sources automatically.</small>
             <label for="source_constraints">Required source ids (comma separated)</label>
             <input id="source_constraints" name="source_constraints"
               aria-describedby="source-hint">

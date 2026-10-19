@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -21,6 +22,7 @@ def test_llm_study_surface_get_renders_start_form(
     assert 'name="user_message"' in html
     assert 'name="mode"' in html
     assert 'name="coaching_intensity"' in html
+    assert 'name="prompt_id"' in html
 
 
 def test_llm_study_surface_shows_trace_class_cost_and_model(
@@ -176,3 +178,42 @@ def _seed_session(
         )
     )
     session.commit()
+
+
+@pytest.mark.parametrize("case", ["omitted", "mismatched", "valid"])
+def test_study_surface_uses_linked_prompt_sources(api_client, monkeypatch, case):
+    from tests.llm.test_client_routing import _recording_client, _seed_published_study_prompt
+
+    from lms.llm import api as llm_api
+    from lms.llm.models import LLMFeedbackEvent
+
+    client, factory = api_client
+    with factory() as session:
+        ids = _seed_published_study_prompt(session, stable_locator="source:ui-approved")
+    text = {
+        "omitted": "An uncited explanation.",
+        "mismatched": "Per source:other, this holds.",
+        "valid": "Per source:ui-approved, this holds.",
+    }[case]
+    recording, _, calls = _recording_client(default_provider="fake", responder=lambda *_: text)
+    monkeypatch.setattr(llm_api, "_default_client", lambda: recording)
+    response = client.post(
+        "/app/learner/llm-study/sessions",
+        data={
+            "learner_id": ids["learner_id"],
+            "prompt_id": ids["prompt_id"],
+            "user_message": "Explain this.",
+            "mode": "study-coach",
+        },
+    )
+    assert response.status_code == 200
+    assert text in response.text
+    with factory() as session:
+        event = session.query(LLMFeedbackEvent).one()
+        assert event.source_reference_ids == [ids["stable_locator"]]
+        assert event.unverified is (case != "valid")
+    assert len(calls) == (1 if case == "valid" else 2)
+    if case != "valid":
+        assert '<li class="flag flag-unverified">unverified</li>' in response.text
+    else:
+        assert '<p class="flags none">No flags on this turn.</p>' in response.text
