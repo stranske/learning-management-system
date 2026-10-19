@@ -104,3 +104,10 @@ Grounded in `lms.scheduling.service` (`SUCCESS_INTERVALS_DAYS`,
 - a non-fail signal ⇒ never resets, is a due-review
 - a low-confidence success ⇒ due within `LOW_CONFIDENCE_INTERVAL_DAYS` (1 day)
 - a clean success ⇒ priority 0.4 (lowest band) and a due-review
+
+Transfer-excluded evidence returns an explicit non-FSRS outcome: no card is
+seeded or advanced and no dated review item is created. Its decision receipt is
+retained in the attempt's `response_metadata.scheduling_outcome`, with
+`card_mutated=false`, `interval_source=none` and `output.due_at=null`. The
+baseline observes actual persisted card changes through `fsrs_card_mutated` and
+uses `fsrs_due_assigned` to distinguish no interval from an immediate review.

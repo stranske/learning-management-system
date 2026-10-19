@@ -142,3 +142,25 @@ def test_postgres_recovery_requires_the_identity_constraint(
         card_state_module._is_card_identity_conflict(IntegrityError("INSERT", {}, original))
         is recoverable
     )
+
+
+@pytest.mark.parametrize("distance", ["near", "far", "novel"])
+def test_transfer_preserves_every_existing_card_field(db_session, distance):
+    import copy
+
+    from lms.scheduling.service import schedule_from_attempt
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    card = get_or_seed_card_state(
+        db_session, learner_id="learner-1", subject_id="node-1", prior_successes=0
+    )
+    before = copy.deepcopy({c.key: getattr(card, c.key) for c in ReviewCardState.__table__.columns})
+    attempt, evidence = _make_attempt(db_session)
+    evidence.transfer_distance = distance
+    outcome = schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert outcome.due_at is None
+    assert outcome.decision_log["interval_source"] == "none"
+    assert {c.key: getattr(card, c.key) for c in ReviewCardState.__table__.columns} == before
+    recall, recall_evidence = _make_attempt(db_session)
+    schedule_from_attempt(db_session, attempt=recall, evidence_record=recall_evidence)
+    assert card.card_state != before["card_state"]

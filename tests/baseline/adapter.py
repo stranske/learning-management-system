@@ -75,6 +75,8 @@ METRIC_NAMES: tuple[str, ...] = (
     "is_remediation",
     "is_due_review",
     "fsrs_scheduling_included",
+    "fsrs_card_mutated",
+    "fsrs_due_assigned",
 )
 
 # A single deterministic reference instant shared by every scenario so the
@@ -242,6 +244,21 @@ def run_scenario(scenario: dict[str, Any]) -> dict[str, float | int]:
             transfer_distance=scenario.get("transfer_distance"),
             response_metadata=scenario.get("response_metadata"),
         )
+        import copy
+
+        from sqlalchemy import select
+
+        from lms.scheduling.models import ReviewCardState
+
+        def card_snapshot():
+            return [
+                copy.deepcopy(
+                    {c.key: getattr(row, c.key) for c in ReviewCardState.__table__.columns}
+                )
+                for row in session.scalars(select(ReviewCardState))
+            ]
+
+        before_card = card_snapshot()
         item = schedule_from_attempt(
             session,
             attempt=attempt,
@@ -249,12 +266,12 @@ def run_scenario(scenario: dict[str, Any]) -> dict[str, float | int]:
             now=FIXED_NOW,
         )
         session.flush()
-        return _flatten(item, prior_successes=prior)
+        return _flatten(item, prior_successes=prior, card_mutated=before_card != card_snapshot())
     finally:
         session.close()
 
 
-def _flatten(item: Any, *, prior_successes: int) -> dict[str, float | int]:
+def _flatten(item: Any, *, prior_successes: int, card_mutated: bool) -> dict[str, float | int]:
     """Reduce a ReviewQueueItem + its decision log to named scalars."""
     log = item.decision_log
     signal = str(log["signal"])
@@ -262,7 +279,9 @@ def _flatten(item: Any, *, prior_successes: int) -> dict[str, float | int]:
     fsrs_value = fsrs.get("value")
     reason_code = item.reason_code
 
-    interval_days = round((item.due_at - FIXED_NOW).total_seconds() / 86400.0)
+    interval_days = (
+        round((item.due_at - FIXED_NOW).total_seconds() / 86400.0) if item.due_at is not None else 0
+    )
     return {
         "next_interval_days": int(interval_days),
         # The scheduler reads prior_successful_reviews to advance the ramp; that
@@ -270,13 +289,15 @@ def _flatten(item: Any, *, prior_successes: int) -> dict[str, float | int]:
         "repetition_count": int(log["inputs"]["prior_successful_reviews"]),
         # FSRS rating value: 1=again .. 4=easy; 0 when excluded/None.
         "fsrs_rating_value": int(fsrs_value) if fsrs_value is not None else 0,
-        "signal_severity": int(_SIGNAL_SEVERITY[signal]),
+        "signal_severity": int(_SIGNAL_SEVERITY.get(signal, 0)),
         "priority": float(item.priority),
         # A failed retrieval resets the schedule to an immediate remediation item.
         "is_reset": 1 if reason_code == "remediation" else 0,
         "is_remediation": 1 if reason_code == "remediation" else 0,
         "is_due_review": 1 if reason_code == "due-review" else 0,
         "fsrs_scheduling_included": 1 if fsrs.get("scheduling_included") else 0,
+        "fsrs_card_mutated": int(card_mutated),
+        "fsrs_due_assigned": int(item.due_at is not None),
     }
 
 

@@ -466,3 +466,27 @@ def test_non_finite_transfer_evidence_remains_excluded(correctness: bool) -> Non
     assert rating.rule_id == "transfer-excluded"
     assert rating.scheduling_included is False
     assert rating.value is None
+
+
+def test_service_honors_adapter_eligibility_before_any_card_write(db_session, monkeypatch):
+    from lms.scheduling import service
+    from lms.scheduling.fsrs_adapter import FSRSRating
+    from lms.scheduling.models import ReviewCardState
+    from tests.scheduling.test_review_queue import _make_attempt
+
+    attempt, evidence = _make_attempt(db_session)
+    monkeypatch.setattr(
+        service,
+        "evidence_to_fsrs_rating",
+        lambda _: FSRSRating(
+            label="excluded",
+            value=None,
+            scheduling_included=False,
+            rule_id="custom-exclusion",
+            reason="excluded",
+        ),
+    )
+    outcome = service.schedule_from_attempt(db_session, attempt=attempt, evidence_record=evidence)
+    assert outcome.decision_log["rule"] == "custom-exclusion"
+    assert outcome.due_at is None
+    assert db_session.query(ReviewCardState).count() == 0

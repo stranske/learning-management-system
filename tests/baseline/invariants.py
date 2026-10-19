@@ -92,6 +92,19 @@ def check_scenario(scenario: dict[str, Any]) -> list[InvariantResult]:
     # Internal signal severity ordinal range.
     add("signal_severity_in_range", 0 <= severity <= 2, f"signal_severity={severity}")
 
+    if not m["fsrs_scheduling_included"]:
+        add(
+            "excluded_does_not_mutate_card",
+            m["fsrs_card_mutated"] == 0,
+            f"card_mutated={m['fsrs_card_mutated']}",
+        )
+        add(
+            "excluded_has_no_due",
+            m["fsrs_due_assigned"] == 0 and is_due == 0,
+            f"fsrs_due_assigned={m['fsrs_due_assigned']}",
+        )
+        return results
+
     # Reason flags partition the outcome: exactly one of remediation / due-review.
     add(
         "reason_flags_one_hot",
