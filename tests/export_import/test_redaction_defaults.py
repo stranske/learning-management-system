@@ -403,3 +403,72 @@ def test_imported_excerpt_export_uses_current_source_visibility(
     assert records["SourceReference"]["source_visibility"] == current_visibility
     assert records["SourceReference"]["content_hash"] == content_hash
     assert db_session.query(KnowledgeNode).one().description == sentinel
+
+
+@pytest.mark.parametrize("content_mode", ["public-only", "none", "all"])
+def test_mixed_visibility_round_trip_preserves_only_exported_excerpts(
+    db_session: Session, tmp_path: Path, content_mode: str
+) -> None:
+    from sqlalchemy import create_engine
+
+    from lms.db.base import Base
+    from lms.export_import import import_jsonl
+    from lms.graphs.models import KnowledgeNode
+    from lms.importers.markdown import import_markdown_notes
+
+    sentinels = {
+        "public": "SENTINEL_ROUND_TRIP_PUBLIC_BODY_757",
+        "local-only": "SENTINEL_ROUND_TRIP_PRIVATE_BODY_757",
+    }
+    for visibility, sentinel in sentinels.items():
+        note = tmp_path / f"{visibility}.md"
+        note.write_text(f"# {visibility}\n{sentinel}\n", encoding="utf-8")
+        import_markdown_notes(db_session, note, source_visibility=visibility)
+    db_session.commit()
+
+    expected_descriptions = {
+        node.id: (
+            sentinels[node.title]
+            if content_mode == "all" or (content_mode == "public-only" and node.title == "public")
+            else None
+        )
+        for node in db_session.query(KnowledgeNode)
+    }
+    source_links = {node.id: node.source_reference_id for node in db_session.query(KnowledgeNode)}
+    source_metadata = {
+        source.id: (source.content_hash, source.source_visibility)
+        for source in db_session.query(SourceReference)
+    }
+    stream = "\n".join(
+        export_jsonl(
+            db_session, include_source_content=content_mode, confirm_all=content_mode == "all"
+        )
+    )
+    path = tmp_path / "mixed.jsonl"
+    path.write_text(stream + "\n", encoding="utf-8")
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as destination:
+            import_jsonl(destination, path, dry_run=False)
+            destination.commit()
+            destination.expunge_all()
+            restored = destination.query(KnowledgeNode).all()
+            assert {node.id: node.description for node in restored} == expected_descriptions
+            assert {node.id: node.source_reference_id for node in restored} == source_links
+            assert {
+                source.id: (source.content_hash, source.source_visibility)
+                for source in destination.query(SourceReference)
+            } == source_metadata
+            # Even a later opt-in can only emit the excerpts the bundle retained.
+            restored_stream = "\n".join(
+                export_jsonl(destination, include_source_content="all", confirm_all=True)
+            )
+            for visibility, sentinel in sentinels.items():
+                visible = content_mode == "all" or (
+                    content_mode == "public-only" and visibility == "public"
+                )
+                assert (sentinel in stream) is visible
+                assert (sentinel in restored_stream) is visible
+    finally:
+        engine.dispose()
