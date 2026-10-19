@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -11,6 +13,7 @@ import lms.evidence.models  # noqa: F401
 import lms.graphs.models  # noqa: F401
 import lms.learners.models  # noqa: F401
 import lms.prompts.models  # noqa: F401
+import lms.scheduling.models  # noqa: F401
 import lms.sources.models  # noqa: F401
 from lms.api.inspect import learner_overview_route
 from lms.auth.models import User
@@ -19,11 +22,12 @@ from lms.evidence.repository import create_evidence_record
 from lms.graphs.models import KnowledgeNode
 from lms.learners.models import LearningGoal
 from lms.prompts.models import Prompt
+from lms.scheduling.models import ReviewQueueItem, SchedulerDecision
 from lms.settings import Settings
 from lms.sources.models import SourceReference
 
 
-def test_overview_honors_ownership_scope_for_prompts_and_sources() -> None:
+def test_overview_honors_ownership_scope_for_every_panel() -> None:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -110,6 +114,49 @@ def test_overview_honors_ownership_scope_for_prompts_and_sources() -> None:
         )
         prompt_personal.source_references.append(source_personal)
         prompt_institutional.source_references.append(source_institutional)
+        due_at = datetime(2026, 5, 31, 15, 0, tzinfo=UTC)
+        queue_personal = ReviewQueueItem(
+            learner_id="learner-overview",
+            knowledge_node_id=node_personal.id,
+            reason_code="due-review",
+            reason_explanation="Personal review due.",
+            due_at=due_at,
+            priority=0.9,
+            status="pending",
+            decision_log={"scope": "personal"},
+        )
+        queue_institutional = ReviewQueueItem(
+            learner_id="learner-overview",
+            knowledge_node_id=node_institutional.id,
+            reason_code="remediation",
+            reason_explanation="Institutional remediation due.",
+            due_at=due_at,
+            priority=0.8,
+            status="pending",
+            decision_log={"scope": "institutional"},
+        )
+        decision_personal = SchedulerDecision(
+            learner_id="learner-overview",
+            knowledge_node_id=node_personal.id,
+            reason_code="due-review",
+            decision_rationale="Personal cadence selected.",
+            policy_version="2026.05",
+            knowledge_type="factual",
+            ownership_scope="personal",
+            support_level="none",
+            decision_log={"scope": "personal"},
+        )
+        decision_institutional = SchedulerDecision(
+            learner_id="learner-overview",
+            knowledge_node_id=node_institutional.id,
+            reason_code="remediation",
+            decision_rationale="Institutional remediation selected.",
+            policy_version="2026.05",
+            knowledge_type="factual",
+            ownership_scope="institutional",
+            support_level="hint",
+            decision_log={"scope": "institutional"},
+        )
         session.add_all(
             [
                 node_personal,
@@ -121,6 +168,10 @@ def test_overview_honors_ownership_scope_for_prompts_and_sources() -> None:
                 source_unlinked,
                 prompt_personal,
                 prompt_institutional,
+                queue_personal,
+                queue_institutional,
+                decision_personal,
+                decision_institutional,
             ]
         )
         session.flush()
@@ -167,6 +218,13 @@ def test_overview_honors_ownership_scope_for_prompts_and_sources() -> None:
             assert payload["calibration"]["buckets"][0]["observed_accuracy"] == (
                 1.0 if scope == "personal" else 0.0
             )
+            assert {event["knowledge_node_id"] for event in payload["scheduler"]["events"]} == {
+                "node-" + scope + "-overview"
+            }
+            assert {
+                decision["knowledge_node_id"] for decision in payload["scheduler"]["decisions"]
+            } == {"node-" + scope + "-overview"}
+            assert payload["scheduler"]["ownership_scope"] == scope
         assert {row["id"] for row in personal_payload["prompt_provenance"]} == {
             "prompt-personal-overview"
         }
