@@ -97,11 +97,62 @@ def test_per_mode_cap_loaded_from_env_blocks_mode(monkeypatch: pytest.MonkeyPatc
         client.budget.reserve("study-coach", 3)
         with pytest.raises(BudgetExceeded, match="mode 'study-coach' daily cap 5"):
             client.budget.reserve("study-coach", 3)
+        assert client.budget.spent_micro_usd("study-coach") == 3
+        assert client.budget.spent_micro_usd() == 3
+        assert client.budget.remaining_micro_usd("study-coach") == 2
         with pytest.raises(BudgetExceeded, match="mode 'transfer' daily cap 0"):
             client.budget.reserve("transfer", 1)
+        assert client.budget.spent_micro_usd("transfer") == 0
         client.budget.reserve("practice", 3)
         assert client.budget.spent_micro_usd() == 6
         assert client.budget.remaining_micro_usd() == 94
+        client.budget.reserve("study-coach", 2)
+        assert client.budget.remaining_micro_usd("study-coach") == 0
+        with pytest.raises(BudgetExceeded, match="mode 'study-coach' daily cap 5"):
+            client.budget.reserve("study-coach", 1)
+        assert client.budget.spent_micro_usd("study-coach") == 5
+        assert client.budget.spent_micro_usd() == 8
+    finally:
+        api._default_client.cache_clear()
+
+
+@pytest.mark.parametrize("mode", LLM_MODES)
+def test_environment_mode_cap_stops_completion_before_provider(
+    mode: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Runtime caps block provider calls without preventing other modes' work."""
+    from lms.llm import api
+
+    calls: list[str] = []
+
+    def respond(_model: str, prompt: str) -> str:
+        calls.append(prompt)
+        return "ok"
+
+    monkeypatch.setenv("LLM_MODE_DAILY_CAPS_MICRO_USD", json.dumps({mode: 5}))
+    monkeypatch.setenv("LLM_DAILY_CAP_MICRO_USD", "100")
+    monkeypatch.setenv("LLM_DEFAULT_PROVIDER", "fake")
+    monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(anthropic_api_key=None))
+    monkeypatch.setattr(api, "_fake_learning_policy_responder", respond)
+    api._default_client.cache_clear()
+    try:
+        client = api._default_client()
+        response = client.complete(mode=mode, prompt="first", trace_class="formative", max_tokens=1)
+        assert response.session.cost_micro_usd == 5
+        assert client.budget.spent_micro_usd(mode) == 5
+        with pytest.raises(BudgetExceeded, match=f"mode '{mode}' daily cap 5"):
+            client.complete(mode=mode, prompt="blocked", trace_class="formative", max_tokens=1)
+        assert calls == ["first"]
+        assert client.budget.spent_micro_usd() == 5
+        assert client.budget.remaining_micro_usd() == 95
+
+        uncapped_mode = next(other for other in LLM_MODES if other != mode)
+        client.complete(
+            mode=uncapped_mode, prompt="uncapped", trace_class="formative", max_tokens=1
+        )
+        assert calls == ["first", "uncapped"]
+        assert client.budget.spent_micro_usd(uncapped_mode) == 5
+        assert client.budget.spent_micro_usd() == 10
     finally:
         api._default_client.cache_clear()
 
