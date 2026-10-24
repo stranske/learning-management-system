@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
 from lms.llm.config import LLMConfig, load_llm_config_from_env
 from lms.llm.exceptions import BudgetExceeded, ProviderCallError
+from lms.llm.models import LLM_MODES
 from lms.llm.providers import AnthropicProvider, FakeProvider, ProviderResponse
 
 
@@ -114,6 +116,33 @@ def test_unconfigured_mode_caps_preserve_global_budget(raw: str | None) -> None:
     assert config.global_daily_cap_micro_usd == 100
 
 
+@pytest.mark.parametrize("mode", LLM_MODES)
+@pytest.mark.parametrize("cap", [0, 1, 2**63])
+def test_environment_mode_caps_preserve_integer_values(mode: str, cap: int) -> None:
+    """Every supported mode accepts zero and positive caps without coercion."""
+    config = load_llm_config_from_env(
+        {
+            "LLM_MODE_DAILY_CAPS_MICRO_USD": json.dumps({mode: cap}),
+            "LLM_DAILY_CAP_MICRO_USD": "100",
+        }
+    )
+
+    assert config.per_mode_daily_cap_micro_usd == {mode: cap}
+    assert type(config.per_mode_daily_cap_micro_usd[mode]) is int
+    assert config.global_daily_cap_micro_usd == 100
+
+
+def test_environment_mode_caps_keep_distinct_limits_for_all_modes() -> None:
+    """Loading all caps preserves each limit and does not change model routing."""
+    caps = {mode: cap for cap, mode in enumerate(LLM_MODES)}
+    config = load_llm_config_from_env({"LLM_MODE_DAILY_CAPS_MICRO_USD": json.dumps(caps)})
+    defaults = load_llm_config_from_env({})
+
+    assert config.per_mode_daily_cap_micro_usd == caps
+    assert config.mode_models == defaults.mode_models
+    assert config.global_daily_cap_micro_usd == defaults.global_daily_cap_micro_usd
+
+
 @pytest.mark.parametrize(
     "raw",
     [
@@ -125,12 +154,19 @@ def test_unconfigured_mode_caps_preserve_global_budget(raw: str | None) -> None:
         '{"unknown-mode": 5}',
         '{"study-coach": -1}',
         '{"study-coach": true}',
+        '{"study-coach": false}',
         '{"study-coach": null}',
         '{"study-coach": "5"}',
         '{"study-coach": 0.5}',
+        '{"study-coach": 1.0}',
+        '{"study-coach": 1e3}',
         '{"study-coach": NaN}',
         '{"study-coach": Infinity}',
+        '{"study-coach": -Infinity}',
+        '{"study-coach": 1e309}',
+        '{"study-coach": []}',
         '{"study-coach": {}}',
+        '{"practice": 5, "study-coach": -1}',
     ],
 )
 def test_invalid_environment_mode_caps_fail_closed(raw: str) -> None:
