@@ -202,9 +202,9 @@ def _default_client() -> LLMClient:
         providers=providers,
         budget=DailyBudgetTracker(
             # Honor LLM_DAILY_CAP_MICRO_USD (preferred) or LLM_DAILY_BUDGET_USD
-            # instead of a hardcoded ceiling. Per-mode caps come from config,
-            # not environment overrides. Without a global override, the
-            # LLMConfig default is $0.20/day.
+            # instead of a hardcoded ceiling. The shared loader also resolves
+            # LLM_MODE_DAILY_CAPS_MICRO_USD for web and CLI callers. Without a
+            # global override, the LLMConfig default is $0.20/day.
             mode_caps_micro_usd=config.per_mode_daily_cap_micro_usd,
             global_cap_micro_usd=config.global_daily_cap_micro_usd,
         ),

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import threading
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
-from lms.llm.config import LLMConfig
+from lms.llm.config import LLMConfig, load_llm_config_from_env
 from lms.llm.exceptions import BudgetExceeded, ProviderCallError
 from lms.llm.providers import AnthropicProvider, FakeProvider, ProviderResponse
 
@@ -78,6 +79,63 @@ def test_per_mode_cap_blocks_even_when_global_cap_has_room() -> None:
         )
 
     assert client.budget.spent_micro_usd() == 0
+
+
+def test_per_mode_cap_loaded_from_env_blocks_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise environment loading through the runtime client's real tracker."""
+    from lms.llm import api
+
+    monkeypatch.setenv("LLM_MODE_DAILY_CAPS_MICRO_USD", '{"study-coach": 5, "transfer": 0}')
+    monkeypatch.setenv("LLM_DAILY_CAP_MICRO_USD", "100")
+    monkeypatch.setenv("LLM_DEFAULT_PROVIDER", "fake")
+    monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(anthropic_api_key=None))
+    api._default_client.cache_clear()
+    try:
+        client = api._default_client()
+        client.budget.reserve("study-coach", 3)
+        with pytest.raises(BudgetExceeded, match="mode 'study-coach' daily cap 5"):
+            client.budget.reserve("study-coach", 3)
+        with pytest.raises(BudgetExceeded, match="mode 'transfer' daily cap 0"):
+            client.budget.reserve("transfer", 1)
+        client.budget.reserve("practice", 3)
+        assert client.budget.spent_micro_usd() == 6
+        assert client.budget.remaining_micro_usd() == 94
+    finally:
+        api._default_client.cache_clear()
+
+
+@pytest.mark.parametrize("raw", [None, "{}"])
+def test_unconfigured_mode_caps_preserve_global_budget(raw: str | None) -> None:
+    env = {"LLM_DAILY_CAP_MICRO_USD": "100"}
+    if raw is not None:
+        env["LLM_MODE_DAILY_CAPS_MICRO_USD"] = raw
+    config = load_llm_config_from_env(env)
+    assert config.per_mode_daily_cap_micro_usd == {}
+    assert config.global_daily_cap_micro_usd == 100
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "",
+        "not-json",
+        "null",
+        "[]",
+        "5",
+        '{"unknown-mode": 5}',
+        '{"study-coach": -1}',
+        '{"study-coach": true}',
+        '{"study-coach": null}',
+        '{"study-coach": "5"}',
+        '{"study-coach": 0.5}',
+        '{"study-coach": NaN}',
+        '{"study-coach": Infinity}',
+        '{"study-coach": {}}',
+    ],
+)
+def test_invalid_environment_mode_caps_fail_closed(raw: str) -> None:
+    with pytest.raises(ValueError, match="LLM_MODE_DAILY_CAPS_MICRO_USD"):
+        load_llm_config_from_env({"LLM_MODE_DAILY_CAPS_MICRO_USD": raw})
 
 
 class _UnpricedProvider:
