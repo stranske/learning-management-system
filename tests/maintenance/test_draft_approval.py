@@ -37,6 +37,7 @@ import lms.sources.models  # noqa: F401
 from lms.auth.repository import get_or_create_local_dev_user
 from lms.db.base import Base
 from lms.db.session import get_session
+from lms.learners.models import Learner
 from lms.learners.repository import create_learner_for_user
 from lms.main import create_app
 from lms.maintenance.drafts import (
@@ -599,6 +600,21 @@ def test_concurrent_load_respects_pending_draft_cap(
     with factory() as session:
         session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(pending)])
         session.commit()
+        original_updated = session.get(Learner, learner_id).updated_at
+
+    # Exercise rollback on each real backend before competing for the same slots.
+    # Flushing proves rollback releases persisted drafts, not just unsaved objects.
+    with factory() as session:
+        remaining = PENDING_DRAFT_CAP - pending
+        assert reserve_draft_capacity(session, learner_id=learner_id, wanted=remaining)
+        session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(remaining)])
+        session.flush()
+        assert count_pending_drafts(session, learner_id=learner_id) == PENDING_DRAFT_CAP
+        session.rollback()
+    with factory() as session:
+        assert count_pending_drafts(session, learner_id=learner_id) == pending
+        assert session.get(Learner, learner_id).updated_at == original_updated
+
     first_checked = threading.Event()
     second_started = threading.Event()
     second_checked = threading.Event()
@@ -643,6 +659,7 @@ def test_concurrent_load_respects_pending_draft_cap(
     assert all(isinstance(value, bool) for value in outcomes), outcomes
     with factory() as session:
         count = count_pending_drafts(session, learner_id=learner_id)
+        assert session.get(Learner, learner_id).updated_at == original_updated
     assert count <= PENDING_DRAFT_CAP, (count, outcomes)
     assert sum(outcomes) == winners
     assert count == pending + winners * wanted
@@ -693,8 +710,6 @@ def test_cli_load_reserves_the_full_batch(
 def test_reserved_draft_batch_rolls_back_with_outer_transaction(
     env: tuple[TestClient, sessionmaker[Session], str],
 ) -> None:
-    from lms.learners.models import Learner
-
     _client, factory, learner_id = env
     with factory() as session:
         original_updated = session.get(Learner, learner_id).updated_at

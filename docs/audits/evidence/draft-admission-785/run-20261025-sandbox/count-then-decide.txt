@@ -1,0 +1,343 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.8, pytest-9.1.1, pluggy-1.7.0
+rootdir: /home/runner/work/learning-management-system/learning-management-system
+configfile: pyproject.toml
+plugins: cov-7.1.0, xdist-3.8.0, platformdirs-4.13.5, regressions-2.11.0, langsmith-0.14.12, anyio-4.15.1, datadir-1.8.0
+collected 106 items / 102 deselected / 4 selected
+
+tests/maintenance/test_draft_approval.py FFFF                            [100%]
+
+=================================== FAILURES ===================================
+________ test_concurrent_load_respects_pending_draft_cap[sqlite-39-1-1] ________
+
+concurrent_draft_store = (sessionmaker(class_='Session', bind=Engine(sqlite+pysqlite:////tmp/pytest-of-runner/pytest-2/test_concurrent_load_respects_0/draft-admission.db), autoflush=False, expire_on_commit=False), '9823c5e9-3b1b-4d2a-b3a9-86b868b122ca')
+pending = 39, wanted = 1, winners = 1
+
+    @pytest.mark.parametrize("pending,wanted,winners", [(39, 1, 1), (38, 2, 1), (39, 2, 0), (0, 21, 1)])
+    def test_concurrent_load_respects_pending_draft_cap(
+        concurrent_draft_store, pending: int, wanted: int, winners: int
+    ) -> None:
+        """Competing full-batch admissions hold the learner lock through commit."""
+        factory, learner_id = concurrent_draft_store
+        spec = {"item_type": "idea", "title": "Concurrent", "prompt": "?", "payload": {}}
+        with factory() as session:
+            session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(pending)])
+            session.commit()
+            original_updated = session.get(Learner, learner_id).updated_at
+    
+        # Exercise rollback on each real backend before competing for the same slots.
+        # Flushing proves rollback releases persisted drafts, not just unsaved objects.
+        with factory() as session:
+            remaining = PENDING_DRAFT_CAP - pending
+            assert reserve_draft_capacity(session, learner_id=learner_id, wanted=remaining)
+            session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(remaining)])
+            session.flush()
+            assert count_pending_drafts(session, learner_id=learner_id) == PENDING_DRAFT_CAP
+            session.rollback()
+        with factory() as session:
+            assert count_pending_drafts(session, learner_id=learner_id) == pending
+            assert session.get(Learner, learner_id).updated_at == original_updated
+    
+        first_checked = threading.Event()
+        second_started = threading.Event()
+        second_checked = threading.Event()
+        release_first = threading.Event()
+        results = Queue()
+    
+        def load_batch(first: bool) -> None:
+            try:
+                if not first and not first_checked.wait(timeout=10):
+                    raise TimeoutError("first loader did not reach admission")
+                with factory() as session:
+                    if not first:
+                        second_started.set()
+                    accepted = reserve_draft_capacity(session, learner_id=learner_id, wanted=wanted)
+                    if first:
+                        first_checked.set()
+                    else:
+                        second_checked.set()
+                    if accepted:
+                        for _ in range(wanted):
+                            session.add(prepare_draft(spec, learner_id=learner_id))
+                    if first and not release_first.wait(timeout=10):
+                        raise TimeoutError("first loader was not released")
+                    session.commit()
+                    results.put(accepted)
+            except Exception as exc:
+                results.put(exc)
+                first_checked.set()
+    
+        threads = [threading.Thread(target=load_batch, args=(first,)) for first in (True, False)]
+        for thread in threads:
+            thread.start()
+        try:
+            assert second_started.wait(timeout=10), "second loader did not start"
+            stale_admission = second_checked.wait(timeout=0.5)
+        finally:
+            release_first.set()
+            for thread in threads:
+                thread.join(timeout=15)
+        assert all(not thread.is_alive() for thread in threads)
+        outcomes = [results.get_nowait() for _ in threads]
+        assert all(isinstance(value, bool) for value in outcomes), outcomes
+        with factory() as session:
+            count = count_pending_drafts(session, learner_id=learner_id)
+            assert session.get(Learner, learner_id).updated_at == original_updated
+>       assert count <= PENDING_DRAFT_CAP, (count, outcomes)
+E       AssertionError: (41, [True, True])
+E       assert 41 <= 40
+
+tests/maintenance/test_draft_approval.py:663: AssertionError
+________ test_concurrent_load_respects_pending_draft_cap[sqlite-38-2-1] ________
+
+concurrent_draft_store = (sessionmaker(class_='Session', bind=Engine(sqlite+pysqlite:////tmp/pytest-of-runner/pytest-2/test_concurrent_load_respects_1/draft-admission.db), autoflush=False, expire_on_commit=False), '0be2e642-3f93-48f1-880e-5b4b06942e46')
+pending = 38, wanted = 2, winners = 1
+
+    @pytest.mark.parametrize("pending,wanted,winners", [(39, 1, 1), (38, 2, 1), (39, 2, 0), (0, 21, 1)])
+    def test_concurrent_load_respects_pending_draft_cap(
+        concurrent_draft_store, pending: int, wanted: int, winners: int
+    ) -> None:
+        """Competing full-batch admissions hold the learner lock through commit."""
+        factory, learner_id = concurrent_draft_store
+        spec = {"item_type": "idea", "title": "Concurrent", "prompt": "?", "payload": {}}
+        with factory() as session:
+            session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(pending)])
+            session.commit()
+            original_updated = session.get(Learner, learner_id).updated_at
+    
+        # Exercise rollback on each real backend before competing for the same slots.
+        # Flushing proves rollback releases persisted drafts, not just unsaved objects.
+        with factory() as session:
+            remaining = PENDING_DRAFT_CAP - pending
+            assert reserve_draft_capacity(session, learner_id=learner_id, wanted=remaining)
+            session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(remaining)])
+            session.flush()
+            assert count_pending_drafts(session, learner_id=learner_id) == PENDING_DRAFT_CAP
+            session.rollback()
+        with factory() as session:
+            assert count_pending_drafts(session, learner_id=learner_id) == pending
+            assert session.get(Learner, learner_id).updated_at == original_updated
+    
+        first_checked = threading.Event()
+        second_started = threading.Event()
+        second_checked = threading.Event()
+        release_first = threading.Event()
+        results = Queue()
+    
+        def load_batch(first: bool) -> None:
+            try:
+                if not first and not first_checked.wait(timeout=10):
+                    raise TimeoutError("first loader did not reach admission")
+                with factory() as session:
+                    if not first:
+                        second_started.set()
+                    accepted = reserve_draft_capacity(session, learner_id=learner_id, wanted=wanted)
+                    if first:
+                        first_checked.set()
+                    else:
+                        second_checked.set()
+                    if accepted:
+                        for _ in range(wanted):
+                            session.add(prepare_draft(spec, learner_id=learner_id))
+                    if first and not release_first.wait(timeout=10):
+                        raise TimeoutError("first loader was not released")
+                    session.commit()
+                    results.put(accepted)
+            except Exception as exc:
+                results.put(exc)
+                first_checked.set()
+    
+        threads = [threading.Thread(target=load_batch, args=(first,)) for first in (True, False)]
+        for thread in threads:
+            thread.start()
+        try:
+            assert second_started.wait(timeout=10), "second loader did not start"
+            stale_admission = second_checked.wait(timeout=0.5)
+        finally:
+            release_first.set()
+            for thread in threads:
+                thread.join(timeout=15)
+        assert all(not thread.is_alive() for thread in threads)
+        outcomes = [results.get_nowait() for _ in threads]
+        assert all(isinstance(value, bool) for value in outcomes), outcomes
+        with factory() as session:
+            count = count_pending_drafts(session, learner_id=learner_id)
+            assert session.get(Learner, learner_id).updated_at == original_updated
+>       assert count <= PENDING_DRAFT_CAP, (count, outcomes)
+E       AssertionError: (42, [True, True])
+E       assert 42 <= 40
+
+tests/maintenance/test_draft_approval.py:663: AssertionError
+________ test_concurrent_load_respects_pending_draft_cap[sqlite-39-2-0] ________
+
+concurrent_draft_store = (sessionmaker(class_='Session', bind=Engine(sqlite+pysqlite:////tmp/pytest-of-runner/pytest-2/test_concurrent_load_respects_2/draft-admission.db), autoflush=False, expire_on_commit=False), '7b6242e9-6763-49f4-837b-17846a59f3d5')
+pending = 39, wanted = 2, winners = 0
+
+    @pytest.mark.parametrize("pending,wanted,winners", [(39, 1, 1), (38, 2, 1), (39, 2, 0), (0, 21, 1)])
+    def test_concurrent_load_respects_pending_draft_cap(
+        concurrent_draft_store, pending: int, wanted: int, winners: int
+    ) -> None:
+        """Competing full-batch admissions hold the learner lock through commit."""
+        factory, learner_id = concurrent_draft_store
+        spec = {"item_type": "idea", "title": "Concurrent", "prompt": "?", "payload": {}}
+        with factory() as session:
+            session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(pending)])
+            session.commit()
+            original_updated = session.get(Learner, learner_id).updated_at
+    
+        # Exercise rollback on each real backend before competing for the same slots.
+        # Flushing proves rollback releases persisted drafts, not just unsaved objects.
+        with factory() as session:
+            remaining = PENDING_DRAFT_CAP - pending
+            assert reserve_draft_capacity(session, learner_id=learner_id, wanted=remaining)
+            session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(remaining)])
+            session.flush()
+            assert count_pending_drafts(session, learner_id=learner_id) == PENDING_DRAFT_CAP
+            session.rollback()
+        with factory() as session:
+            assert count_pending_drafts(session, learner_id=learner_id) == pending
+            assert session.get(Learner, learner_id).updated_at == original_updated
+    
+        first_checked = threading.Event()
+        second_started = threading.Event()
+        second_checked = threading.Event()
+        release_first = threading.Event()
+        results = Queue()
+    
+        def load_batch(first: bool) -> None:
+            try:
+                if not first and not first_checked.wait(timeout=10):
+                    raise TimeoutError("first loader did not reach admission")
+                with factory() as session:
+                    if not first:
+                        second_started.set()
+                    accepted = reserve_draft_capacity(session, learner_id=learner_id, wanted=wanted)
+                    if first:
+                        first_checked.set()
+                    else:
+                        second_checked.set()
+                    if accepted:
+                        for _ in range(wanted):
+                            session.add(prepare_draft(spec, learner_id=learner_id))
+                    if first and not release_first.wait(timeout=10):
+                        raise TimeoutError("first loader was not released")
+                    session.commit()
+                    results.put(accepted)
+            except Exception as exc:
+                results.put(exc)
+                first_checked.set()
+    
+        threads = [threading.Thread(target=load_batch, args=(first,)) for first in (True, False)]
+        for thread in threads:
+            thread.start()
+        try:
+            assert second_started.wait(timeout=10), "second loader did not start"
+            stale_admission = second_checked.wait(timeout=0.5)
+        finally:
+            release_first.set()
+            for thread in threads:
+                thread.join(timeout=15)
+        assert all(not thread.is_alive() for thread in threads)
+        outcomes = [results.get_nowait() for _ in threads]
+        assert all(isinstance(value, bool) for value in outcomes), outcomes
+        with factory() as session:
+            count = count_pending_drafts(session, learner_id=learner_id)
+            assert session.get(Learner, learner_id).updated_at == original_updated
+        assert count <= PENDING_DRAFT_CAP, (count, outcomes)
+        assert sum(outcomes) == winners
+        assert count == pending + winners * wanted
+>       assert not stale_admission, "second admission read before first transaction ended"
+E       AssertionError: second admission read before first transaction ended
+E       assert not True
+
+tests/maintenance/test_draft_approval.py:666: AssertionError
+________ test_concurrent_load_respects_pending_draft_cap[sqlite-0-21-1] ________
+
+concurrent_draft_store = (sessionmaker(class_='Session', bind=Engine(sqlite+pysqlite:////tmp/pytest-of-runner/pytest-2/test_concurrent_load_respects_3/draft-admission.db), autoflush=False, expire_on_commit=False), 'e4c40837-17ea-414e-b830-1f5cda9bc7f8')
+pending = 0, wanted = 21, winners = 1
+
+    @pytest.mark.parametrize("pending,wanted,winners", [(39, 1, 1), (38, 2, 1), (39, 2, 0), (0, 21, 1)])
+    def test_concurrent_load_respects_pending_draft_cap(
+        concurrent_draft_store, pending: int, wanted: int, winners: int
+    ) -> None:
+        """Competing full-batch admissions hold the learner lock through commit."""
+        factory, learner_id = concurrent_draft_store
+        spec = {"item_type": "idea", "title": "Concurrent", "prompt": "?", "payload": {}}
+        with factory() as session:
+            session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(pending)])
+            session.commit()
+            original_updated = session.get(Learner, learner_id).updated_at
+    
+        # Exercise rollback on each real backend before competing for the same slots.
+        # Flushing proves rollback releases persisted drafts, not just unsaved objects.
+        with factory() as session:
+            remaining = PENDING_DRAFT_CAP - pending
+            assert reserve_draft_capacity(session, learner_id=learner_id, wanted=remaining)
+            session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(remaining)])
+            session.flush()
+            assert count_pending_drafts(session, learner_id=learner_id) == PENDING_DRAFT_CAP
+            session.rollback()
+        with factory() as session:
+            assert count_pending_drafts(session, learner_id=learner_id) == pending
+            assert session.get(Learner, learner_id).updated_at == original_updated
+    
+        first_checked = threading.Event()
+        second_started = threading.Event()
+        second_checked = threading.Event()
+        release_first = threading.Event()
+        results = Queue()
+    
+        def load_batch(first: bool) -> None:
+            try:
+                if not first and not first_checked.wait(timeout=10):
+                    raise TimeoutError("first loader did not reach admission")
+                with factory() as session:
+                    if not first:
+                        second_started.set()
+                    accepted = reserve_draft_capacity(session, learner_id=learner_id, wanted=wanted)
+                    if first:
+                        first_checked.set()
+                    else:
+                        second_checked.set()
+                    if accepted:
+                        for _ in range(wanted):
+                            session.add(prepare_draft(spec, learner_id=learner_id))
+                    if first and not release_first.wait(timeout=10):
+                        raise TimeoutError("first loader was not released")
+                    session.commit()
+                    results.put(accepted)
+            except Exception as exc:
+                results.put(exc)
+                first_checked.set()
+    
+        threads = [threading.Thread(target=load_batch, args=(first,)) for first in (True, False)]
+        for thread in threads:
+            thread.start()
+        try:
+            assert second_started.wait(timeout=10), "second loader did not start"
+            stale_admission = second_checked.wait(timeout=0.5)
+        finally:
+            release_first.set()
+            for thread in threads:
+                thread.join(timeout=15)
+        assert all(not thread.is_alive() for thread in threads)
+        outcomes = [results.get_nowait() for _ in threads]
+        assert all(isinstance(value, bool) for value in outcomes), outcomes
+        with factory() as session:
+            count = count_pending_drafts(session, learner_id=learner_id)
+            assert session.get(Learner, learner_id).updated_at == original_updated
+>       assert count <= PENDING_DRAFT_CAP, (count, outcomes)
+E       AssertionError: (42, [True, True])
+E       assert 42 <= 40
+
+tests/maintenance/test_draft_approval.py:663: AssertionError
+=========================== short test summary info ============================
+FAILED tests/maintenance/test_draft_approval.py::test_concurrent_load_respects_pending_draft_cap[sqlite-39-1-1] - AssertionError: (41, [True, True])
+assert 41 <= 40
+FAILED tests/maintenance/test_draft_approval.py::test_concurrent_load_respects_pending_draft_cap[sqlite-38-2-1] - AssertionError: (42, [True, True])
+assert 42 <= 40
+FAILED tests/maintenance/test_draft_approval.py::test_concurrent_load_respects_pending_draft_cap[sqlite-39-2-0] - AssertionError: second admission read before first transaction ended
+assert not True
+FAILED tests/maintenance/test_draft_approval.py::test_concurrent_load_respects_pending_draft_cap[sqlite-0-21-1] - AssertionError: (42, [True, True])
+assert 42 <= 40
+====================== 4 failed, 102 deselected in 0.61s =======================
