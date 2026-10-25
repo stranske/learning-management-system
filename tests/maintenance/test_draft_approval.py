@@ -15,6 +15,7 @@ from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from queue import Queue
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -731,3 +732,25 @@ def test_reserved_draft_batch_rolls_back_with_outer_transaction(
         assert count_pending_drafts(session, learner_id=learner_id) == 6
         assert session.get(Learner, learner_id).updated_at == original_updated
         assert reserve_draft_capacity(session, learner_id=learner_id, wanted=34)
+
+
+@pytest.mark.parametrize("wanted", [True, False, -1, 1.5, "2", None])
+def test_reserve_draft_capacity_rejects_invalid_wanted(wanted: object) -> None:
+    session = Mock(spec=Session)
+    with pytest.raises(ValueError, match="non-negative integer"):
+        reserve_draft_capacity(session, learner_id="missing", wanted=wanted)
+    assert session.mock_calls == []
+
+
+def test_reserve_draft_capacity_zero_does_not_access_session() -> None:
+    session = Mock(spec=Session)
+    assert reserve_draft_capacity(session, learner_id="missing", wanted=0)
+    assert session.mock_calls == []
+
+
+def test_reserve_draft_capacity_unknown_learner(
+    env: tuple[TestClient, sessionmaker[Session], str],
+) -> None:
+    _client, factory, _learner_id = env
+    with factory() as session, pytest.raises(ValueError, match="learner not found"):
+        reserve_draft_capacity(session, learner_id="missing", wanted=1)
