@@ -639,10 +639,10 @@ def _dispatch_maintenance(args: argparse.Namespace, *, parser: argparse.Argument
             raise SystemExit(f"user {args.username} has no learner profile yet")
         learner_id = learners[0].id
 
-        from lms.maintenance.drafts import can_accept_drafts, prepare_draft
+        from lms.maintenance.drafts import prepare_draft, reserve_draft_capacity
 
         specs = seed.all_items()
-        if not args.activate and not can_accept_drafts(
+        if not args.activate and not reserve_draft_capacity(
             session, learner_id=learner_id, wanted=len(specs)
         ):
             raise SystemExit(

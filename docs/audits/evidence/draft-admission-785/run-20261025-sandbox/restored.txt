@@ -1,0 +1,10 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.8, pytest-9.1.1, pluggy-1.7.0
+rootdir: /home/runner/work/learning-management-system/learning-management-system
+configfile: pyproject.toml
+plugins: cov-7.1.0, xdist-3.8.0, platformdirs-4.13.5, regressions-2.11.0, langsmith-0.14.12, anyio-4.15.1, datadir-1.8.0
+collected 106 items / 102 deselected / 4 selected
+
+tests/maintenance/test_draft_approval.py ....                            [100%]
+
+====================== 4 passed, 102 deselected in 2.60s =======================

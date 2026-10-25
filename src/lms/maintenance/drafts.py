@@ -28,10 +28,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from lms.auth.models import utc_now
+from lms.learners.models import Learner
 from lms.maintenance.models import DraftRejection, MaintenanceItem
 
 # An unapproved draft lapses rather than accumulating. A draft you never got
@@ -167,6 +168,32 @@ def can_accept_drafts(
 ) -> bool:
     """Whether ``wanted`` more drafts fit under the cap."""
     return remaining_draft_capacity(session, learner_id=learner_id, now=now) >= wanted
+
+
+def reserve_draft_capacity(
+    session: Session, *, learner_id: str, wanted: int = 1, now: datetime | None = None
+) -> bool:
+    """Admit a whole batch while holding its learner lock until commit/rollback.
+
+    Call before adding drafts, and insert them in this same transaction. The
+    no-op update locks the learner row on PostgreSQL and acquires SQLite's
+    writer lock before counting, including when the draft queue is empty.
+    Keep ``can_accept_drafts`` as a read-only capacity preview.
+    """
+    if isinstance(wanted, bool) or not isinstance(wanted, int) or wanted < 0:
+        raise ValueError("wanted must be a non-negative integer")
+    if wanted == 0:
+        return True
+    locked = session.execute(
+        update(Learner)
+        .where(Learner.id == learner_id)
+        .values(updated_at=Learner.updated_at)
+        .returning(Learner.id)
+    ).scalar_one_or_none()
+    if locked is None:
+        raise ValueError("learner not found")
+    session.flush()
+    return can_accept_drafts(session, learner_id=learner_id, wanted=wanted, now=now)
 
 
 def prepare_draft(
@@ -332,4 +359,5 @@ __all__ = [
     "reject_draft",
     "rejection_guidance",
     "remaining_draft_capacity",
+    "reserve_draft_capacity",
 ]

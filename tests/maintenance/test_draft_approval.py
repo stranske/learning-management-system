@@ -8,12 +8,18 @@ that make the queue trustworthy and keep it from becoming a backlog.
 
 from __future__ import annotations
 
+import os
+import threading
+import uuid
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from queue import Queue
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -32,6 +38,7 @@ import lms.sources.models  # noqa: F401
 from lms.auth.repository import get_or_create_local_dev_user
 from lms.db.base import Base
 from lms.db.session import get_session
+from lms.learners.models import Learner
 from lms.learners.repository import create_learner_for_user
 from lms.main import create_app
 from lms.maintenance.drafts import (
@@ -47,6 +54,7 @@ from lms.maintenance.drafts import (
     prepare_draft,
     reject_draft,
     rejection_guidance,
+    reserve_draft_capacity,
 )
 from lms.maintenance.models import DraftRejection, MaintenanceItem
 from lms.maintenance.seeds import ipo_surge_2026
@@ -545,3 +553,204 @@ def test_service_level_approve_and_reject_round_trip(
         reject_draft(session, item=drafts[1].item, reason="nope")
         session.commit()
         assert count_pending_drafts(session, learner_id=learner_id) == 4
+
+
+@pytest.fixture(params=["sqlite", "postgresql"])
+def concurrent_draft_store(request, tmp_path: Path):
+    """Use a file DB or an isolated schema on an explicitly supplied test PG."""
+    backend = request.param
+    schema = "draft_admission_" + uuid.uuid4().hex
+    admin = None
+    if backend == "postgresql":
+        url = os.environ.get("LMS_TEST_POSTGRES_URL")
+        if not url:
+            pytest.skip("LMS_TEST_POSTGRES_URL is needed for real PostgreSQL concurrency")
+        admin = create_engine(url)
+        with admin.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        engine = create_engine(url, connect_args={"options": f"-csearch_path={schema}"})
+    else:
+        engine = create_engine(
+            f"sqlite+pysqlite:///{tmp_path / 'draft-admission.db'}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+    try:
+        Base.metadata.create_all(engine)
+        factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+        with factory() as session:
+            user = get_or_create_local_dev_user(session)
+            learner = create_learner_for_user(session, user_id=user.id, display_name="Concurrent")
+            session.commit()
+            learner_id = learner.id
+        yield factory, learner_id
+    finally:
+        engine.dispose()
+        if admin is not None:
+            with admin.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+            admin.dispose()
+
+
+@pytest.mark.parametrize("pending,wanted,winners", [(39, 1, 1), (38, 2, 1), (39, 2, 0), (0, 21, 1)])
+@pytest.mark.parametrize("rollback_first", [False, True], ids=["commit", "rollback"])
+def test_concurrent_load_respects_pending_draft_cap(
+    concurrent_draft_store, pending: int, wanted: int, winners: int, rollback_first: bool
+) -> None:
+    """Admissions wait for commit or rollback, then count the surviving drafts."""
+    factory, learner_id = concurrent_draft_store
+    spec = {"item_type": "idea", "title": "Concurrent", "prompt": "?", "payload": {}}
+    with factory() as session:
+        session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(pending)])
+        session.commit()
+        original_updated = session.get(Learner, learner_id).updated_at
+
+    # Exercise rollback on each real backend before competing for the same slots.
+    # Flushing proves rollback releases persisted drafts, not just unsaved objects.
+    with factory() as session:
+        remaining = PENDING_DRAFT_CAP - pending
+        assert reserve_draft_capacity(session, learner_id=learner_id, wanted=remaining)
+        session.add_all([prepare_draft(spec, learner_id=learner_id) for _ in range(remaining)])
+        session.flush()
+        assert count_pending_drafts(session, learner_id=learner_id) == PENDING_DRAFT_CAP
+        session.rollback()
+    with factory() as session:
+        assert count_pending_drafts(session, learner_id=learner_id) == pending
+        assert session.get(Learner, learner_id).updated_at == original_updated
+
+    first_checked = threading.Event()
+    second_started = threading.Event()
+    second_checked = threading.Event()
+    release_first = threading.Event()
+    results = Queue()
+
+    def load_batch(first: bool) -> None:
+        try:
+            if not first and not first_checked.wait(timeout=10):
+                raise TimeoutError("first loader did not reach admission")
+            with factory() as session:
+                if not first:
+                    second_started.set()
+                accepted = reserve_draft_capacity(session, learner_id=learner_id, wanted=wanted)
+                if first:
+                    first_checked.set()
+                else:
+                    second_checked.set()
+                if accepted:
+                    for _ in range(wanted):
+                        session.add(prepare_draft(spec, learner_id=learner_id))
+                if first and not release_first.wait(timeout=10):
+                    raise TimeoutError("first loader was not released")
+                if first and rollback_first:
+                    # The waiting loader must acquire the released lock and see
+                    # capacity restored by rollback of the first loader's batch.
+                    session.flush()
+                    session.rollback()
+                else:
+                    session.commit()
+                results.put(accepted)
+        except Exception as exc:
+            results.put(exc)
+            first_checked.set()
+
+    threads = [threading.Thread(target=load_batch, args=(first,)) for first in (True, False)]
+    for thread in threads:
+        thread.start()
+    try:
+        assert second_started.wait(timeout=10), "second loader did not start"
+        stale_admission = second_checked.wait(timeout=0.5)
+    finally:
+        release_first.set()
+        for thread in threads:
+            thread.join(timeout=15)
+    assert all(not thread.is_alive() for thread in threads)
+    outcomes = [results.get_nowait() for _ in threads]
+    assert all(isinstance(value, bool) for value in outcomes), outcomes
+    with factory() as session:
+        count = count_pending_drafts(session, learner_id=learner_id)
+        assert session.get(Learner, learner_id).updated_at == original_updated
+    assert count <= PENDING_DRAFT_CAP, (count, outcomes)
+    assert sum(outcomes) == winners * (2 if rollback_first else 1)
+    assert count == pending + winners * wanted
+    assert not stale_admission, "second admission read before first transaction ended"
+
+
+def test_cli_load_reserves_the_full_batch(
+    env: tuple[TestClient, sessionmaker[Session], str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import argparse
+    from contextlib import contextmanager
+
+    import lms.__main__ as cli
+    import lms.maintenance.drafts as drafts
+
+    _client, factory, learner_id = env
+    calls = []
+
+    @contextmanager
+    def scope():
+        with factory.begin() as session:
+            yield session
+
+    def observe(session, **kwargs):
+        calls.append(kwargs)
+        return reserve_draft_capacity(session, **kwargs)
+
+    monkeypatch.setattr(cli, "session_scope", scope)
+    monkeypatch.setattr(drafts, "reserve_draft_capacity", observe)
+    with factory() as session:
+        from lms.auth.models import User
+
+        username = session.scalar(select(User.username))
+    cli._dispatch_maintenance(
+        argparse.Namespace(
+            maintenance_command="load-seed",
+            seed="ipo_surge_2026",
+            username=username,
+            activate=False,
+        ),
+        parser=argparse.ArgumentParser(),
+    )
+    assert calls == [{"learner_id": learner_id, "wanted": len(ipo_surge_2026.all_items())}]
+    with factory() as session:
+        assert count_pending_drafts(session, learner_id=learner_id) == 12
+
+
+def test_reserved_draft_batch_rolls_back_with_outer_transaction(
+    env: tuple[TestClient, sessionmaker[Session], str],
+) -> None:
+    _client, factory, learner_id = env
+    with factory() as session:
+        original_updated = session.get(Learner, learner_id).updated_at
+        assert reserve_draft_capacity(session, learner_id=learner_id, wanted=34)
+        session.add_all(
+            [prepare_draft(ipo_surge_2026.all_items()[0], learner_id=learner_id) for _ in range(34)]
+        )
+        session.flush()
+        assert count_pending_drafts(session, learner_id=learner_id) == 40
+        session.rollback()
+    with factory() as session:
+        assert count_pending_drafts(session, learner_id=learner_id) == 6
+        assert session.get(Learner, learner_id).updated_at == original_updated
+        assert reserve_draft_capacity(session, learner_id=learner_id, wanted=34)
+
+
+@pytest.mark.parametrize("wanted", [True, False, -1, 1.5, "2", None])
+def test_reserve_draft_capacity_rejects_invalid_wanted(wanted: object) -> None:
+    session = Mock(spec=Session)
+    with pytest.raises(ValueError, match="non-negative integer"):
+        reserve_draft_capacity(session, learner_id="missing", wanted=wanted)
+    assert session.mock_calls == []
+
+
+def test_reserve_draft_capacity_zero_does_not_access_session() -> None:
+    session = Mock(spec=Session)
+    assert reserve_draft_capacity(session, learner_id="missing", wanted=0)
+    assert session.mock_calls == []
+
+
+def test_reserve_draft_capacity_unknown_learner(
+    env: tuple[TestClient, sessionmaker[Session], str],
+) -> None:
+    _client, factory, _learner_id = env
+    with factory() as session, pytest.raises(ValueError, match="learner not found"):
+        reserve_draft_capacity(session, learner_id="missing", wanted=1)
