@@ -318,3 +318,29 @@ Build the first UI as a small internal web app with five tabs:
 5. Inspect
 
 The later tabs can expand into Review Queue, Capability, Coach, Public Education, Accessibility/Reading, and Research Review once the backend supports those records.
+
+
+## Concurrent maintenance draft admission
+
+`lms maintenance load-seed` reserves room for the entire batch before adding
+drafts. Admission locks the learner row until the loader transaction commits or
+rolls back. PostgreSQL serializes competing loads for that learner; SQLite holds
+its database writer lock. The read-only `can_accept_drafts` function is only a
+preview: writers must use `reserve_draft_capacity` and insert in the same
+transaction. With 39 pending drafts, a two-item batch is refused in full. The cap
+and expiry rules are unchanged; rollback releases the reserved capacity.
+
+The default regression uses separate SQLite sessions against a file database.
+To also exercise PostgreSQL, set `LMS_TEST_POSTGRES_URL` to an isolated test
+database using the `postgresql+psycopg://` driver and run:
+
+```sh
+python -m pytest --no-cov -q tests/maintenance/test_draft_approval.py
+```
+
+The PostgreSQL cases create and remove a unique schema per case; the test user
+needs schema creation permission. They skip with an explicit reason when the
+variable is absent. The concurrency cases cover competing single-item and
+two-item batches, over-cap refusal, and an initially empty queue. CLI wiring and
+outer-transaction rollback have separate regressions. This focused command does
+not measure the full-suite coverage requirement.
