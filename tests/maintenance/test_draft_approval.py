@@ -591,10 +591,11 @@ def concurrent_draft_store(request, tmp_path: Path):
 
 
 @pytest.mark.parametrize("pending,wanted,winners", [(39, 1, 1), (38, 2, 1), (39, 2, 0), (0, 21, 1)])
+@pytest.mark.parametrize("rollback_first", [False, True], ids=["commit", "rollback"])
 def test_concurrent_load_respects_pending_draft_cap(
-    concurrent_draft_store, pending: int, wanted: int, winners: int
+    concurrent_draft_store, pending: int, wanted: int, winners: int, rollback_first: bool
 ) -> None:
-    """Competing full-batch admissions hold the learner lock through commit."""
+    """Admissions wait for commit or rollback, then count the surviving drafts."""
     factory, learner_id = concurrent_draft_store
     spec = {"item_type": "idea", "title": "Concurrent", "prompt": "?", "payload": {}}
     with factory() as session:
@@ -638,7 +639,13 @@ def test_concurrent_load_respects_pending_draft_cap(
                         session.add(prepare_draft(spec, learner_id=learner_id))
                 if first and not release_first.wait(timeout=10):
                     raise TimeoutError("first loader was not released")
-                session.commit()
+                if first and rollback_first:
+                    # The waiting loader must acquire the released lock and see
+                    # capacity restored by rollback of the first loader's batch.
+                    session.flush()
+                    session.rollback()
+                else:
+                    session.commit()
                 results.put(accepted)
         except Exception as exc:
             results.put(exc)
@@ -661,7 +668,7 @@ def test_concurrent_load_respects_pending_draft_cap(
         count = count_pending_drafts(session, learner_id=learner_id)
         assert session.get(Learner, learner_id).updated_at == original_updated
     assert count <= PENDING_DRAFT_CAP, (count, outcomes)
-    assert sum(outcomes) == winners
+    assert sum(outcomes) == winners * (2 if rollback_first else 1)
     assert count == pending + winners * wanted
     assert not stale_admission, "second admission read before first transaction ended"
 

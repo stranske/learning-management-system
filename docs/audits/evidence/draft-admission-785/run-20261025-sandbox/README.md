@@ -65,3 +65,36 @@ Black checked 448 files. Staging the test change failed because `.git` is
 read-only (`Unable to create .git/index.lock`). GitHub API access also fails,
 so this run cannot post a blocker comment, set `needs-human`, or update PR
 checkboxes. No PR was created or changed.
+
+## Follow-up: waiting loaders after rollback
+
+Reviewed commits `8c3e336` and `175c977`. The admission helper and full-batch
+CLI call are already implemented. The PostgreSQL regression is present, but
+fresh PostgreSQL verification remains blocked here. PR task reconciliation
+could not be posted: the PR-body, comment, and label tools all require approval,
+which this run's policy does not permit. PR #788 remains open and ready for review.
+
+The concurrency regression now runs every boundary twice: once with the first
+loader committing, and once with it flushing and rolling back. The waiting
+loader must remain blocked until either transaction outcome and must see the
+capacity returned by rollback. Final counts and unchanged learner timestamps
+are checked in both cases.
+
+Fresh results with Python 3.14.8:
+
+- Named concurrency test: **8 passed, 8 skipped** (PostgreSQL).
+- Deliberately bypass the learner update in an isolated source copy: **8 failed**,
+  including committed queues of 41 and 42. Restore exact original bytes:
+  **8 passed**. Original, restored, and workspace `drafts.py` SHA256:
+  `216162a5f15ae06e0ecec8fe6b4cd7525cee88f7db8571a221b0f3996e86b674`.
+- Full-file attempt: timed out after 25 seconds at the first HTTP test, after
+  30 cases passed. A selection excluding the 16 HTTP cases:
+  **90 passed, 8 PostgreSQL skips, 16 deselected**. No tests were disabled.
+- Black's required repository-wide check: **448 files unchanged**. Ruff and
+  `git diff --check` passed.
+
+The installed PostgreSQL 18 server could initialize a temporary data directory,
+but startup failed with `could not create IPv4 socket ... Operation not permitted`.
+No PostgreSQL success is claimed for this follow-up. The original checkout's
+commit attempt failed creating `.git/index.lock` because `.git` is read-only;
+the source/test changes remain in the working tree for the automation runner.
