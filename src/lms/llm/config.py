@@ -8,6 +8,7 @@ runtime policy; the running client reads environment variables here.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -61,6 +62,26 @@ def _env_var_for(mode: str) -> str:
     return f"LLM_MODEL_{mode.upper().replace('-', '_')}"
 
 
+def _mode_caps_from_env(env: Mapping[str, str]) -> dict[str, int]:
+    key = "LLM_MODE_DAILY_CAPS_MICRO_USD"
+    if key not in env:
+        return {}
+    try:
+        caps = json.loads(env[key])
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"{key} must be a JSON object of non-negative integer caps") from exc
+    if not isinstance(caps, dict):
+        raise ValueError(f"{key} must be a JSON object of non-negative integer caps")
+    for mode, cap in caps.items():
+        if mode not in LLM_MODES:
+            raise ValueError(f"{key} contains unknown mode {mode!r}; valid modes: {LLM_MODES}")
+        # Reject bools, fractions and non-finite JSON numbers rather than
+        # silently disabling or truncating the configured kill switch.
+        if type(cap) is not int or cap < 0:
+            raise ValueError(f"{key}[{mode!r}] must be a non-negative integer in micro-USD")
+    return caps
+
+
 def load_llm_config_from_env(
     environ: Mapping[str, str] | None = None,
     *,
@@ -93,6 +114,7 @@ def load_llm_config_from_env(
     return LLMConfig(
         mode_models=mode_models,
         global_daily_cap_micro_usd=cap,
+        per_mode_daily_cap_micro_usd=_mode_caps_from_env(env),
         default_provider=provider,
     )
 

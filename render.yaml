@@ -92,6 +92,12 @@ services:
       # Daily LLM budget in USD; used by the budget guard.
       - key: LLM_DAILY_BUDGET_USD
         sync: false
+      # Optional JSON per-mode caps in integer micro-USD, e.g. {"study-coach":50000}.
+      # Known keys: study-coach, practice, transfer, authoring-assist. Zero blocks
+      # positive-cost calls; omitted modes use the global cap. Invalid caps fail
+      # configuration. Accounting remains process-local and resets at UTC midnight.
+      - key: LLM_MODE_DAILY_CAPS_MICRO_USD
+        sync: false
 
 databases:
   - name: lms-db
