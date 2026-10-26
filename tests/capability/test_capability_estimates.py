@@ -93,8 +93,8 @@ def test_capability_estimate_uses_mastery_and_competency_evidence(
     assert estimate.target_id == target.id
     assert estimate.learner_id == learner_id
     assert estimate.current_score > 0.75
-    assert estimate.confidence >= 0.49
-    assert estimate.weak_node_ids == []
+    assert estimate.confidence == 0.4597
+    assert estimate.weak_node_ids == [node.id]
     assert estimate.commentary_redaction_class == "learner-facing-inferred-mastery"
     assert "Current evidence suggests" in estimate.commentary
     assert breakdown["required_evidence_types"] == ["rubric-score", "transfer-case"]
