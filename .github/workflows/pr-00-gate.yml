@@ -126,7 +126,9 @@ jobs:
       }}
     uses: stranske/Workflows/.github/workflows/reusable-10-ci-python.yml@main
     with:
-      python-versions: '["3.12", "3.13"]'
+      python-versions: '["3.13", "3.14"]'
+      primary-python-version: '3.14'
+      coverage-python-version: '3.14'
       # PR Gate is optimized for fast feedback. Full coverage enforcement runs on main.
       # Coverage measurement was OFF on the Gate while ci.yml has had `coverage: true` all
       # along, and this repo's own ci.yml payload measures 87.48% over 10,805 statements. The
@@ -198,7 +200,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Set up Node
         uses: actions/setup-node@v7
