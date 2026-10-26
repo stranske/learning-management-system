@@ -46,6 +46,19 @@ def test_estimate_returns_zeroes_when_no_records() -> None:
     assert policy.estimate([]) == (0.0, 0.0)
 
 
+def test_estimate_confidence_reflects_performance_history() -> None:
+    policy = MasteryEstimatorPolicy()
+    strong = [_record(correctness=True) for _ in range(6)]
+    weak = [_record(correctness=False) for _ in range(6)]
+    mixed = [_record(correctness=bool(index % 2)) for index in range(6)]
+
+    strong_confidence = policy.estimate(strong)[1]
+    weak_confidence = policy.estimate(weak)[1]
+    mixed_confidence = policy.estimate(mixed)[1]
+
+    assert 0.0 <= weak_confidence < mixed_confidence < strong_confidence <= 1.0
+
+
 def test_estimate_applies_recency_weighting_and_confidence_growth() -> None:
     policy = MasteryEstimatorPolicy()
     records = [
@@ -57,7 +70,21 @@ def test_estimate_applies_recency_weighting_and_confidence_growth() -> None:
     mastery, confidence = policy.estimate(records)
 
     assert mastery == 0.3768
-    assert confidence == 0.71
+    assert confidence == 0.4888
+
+
+def test_estimate_confidence_grows_with_consistent_evidence() -> None:
+    policy = MasteryEstimatorPolicy()
+    for correctness in (True, False):
+        history = [_record(correctness=correctness) for _ in range(6)]
+        assert policy.estimate(history[:1])[1] < policy.estimate(history)[1]
+
+
+def test_estimate_confidence_uses_the_scored_recency_weighted_history() -> None:
+    policy = MasteryEstimatorPolicy()
+    improving = [_record(normalized_score=score) for score in (0.0, 0.5, 1.0)]
+    declining = list(reversed(improving))
+    assert policy.estimate(improving)[1] > policy.estimate(declining)[1]
 
 
 @pytest.mark.parametrize("score", [float("nan"), float("inf"), float("-inf")])

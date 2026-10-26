@@ -24,3 +24,13 @@ Author knowledge, goals and prompts → learner starts a question → answers an
 - CF3: automatic feedback is identical for opposite answer outcomes; only author-created feedback names a gap.
 - CF5: mastery confidence is record-count-only (`0.71` for both 100% and 0% learners).
 - CF6: calibration computation varies correctly but has no learner-facing HTML readout.
+
+## Current mastery confidence
+
+The `fsrs-4.5-placeholder-v2` estimator addresses CF5's record-count-only confidence gap.
+For nonempty histories it multiplies `min(1.0, 0.35 + count * 0.12)` by
+`0.5 + 0.5 * mastery`, using the existing recency-weighted score for mastery.
+Six correct attempts yield confidence `1.0`; six incorrect attempts yield `0.5`.
+Empty histories still return zero mastery and confidence. The estimator version remains
+visible in mastery API responses. This is a heuristic confidence in demonstrated mastery,
+not a calibrated probability, uncertainty interval, or validated FSRS production model.

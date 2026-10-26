@@ -87,7 +87,7 @@ def test_mastery_recomputes_from_evidence_history() -> None:
     assert second["current_estimate"] > first["current_estimate"]
     assert second["current_estimate"] > 0.5
     assert second["evidence_count"] == 2
-    assert second["estimator_version"] == "fsrs-4.5-placeholder-v1"
+    assert second["estimator_version"] == "fsrs-4.5-placeholder-v2"
     assert second["generated_at"]
 
 
