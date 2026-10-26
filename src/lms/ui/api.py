@@ -82,6 +82,7 @@ from lms.scheduling.service import (
 )
 from lms.sources.models import SourceReference
 from lms.sources.repository import list_source_references
+from lms.ui.attempts import _attempt_feedback_surface
 from lms.ui.forms import FormValueError, optional_float, optional_int
 from lms.ui.shell import empty_state, render_page
 
@@ -237,31 +238,12 @@ async def submit_learn_attempt_route(
     session.commit()
     attempt = recorded.attempt
     session.refresh(attempt)
-    prompt = session.get(Prompt, attempt.prompt_id)
-    citations = _source_citation_items(prompt) if prompt is not None else []
-
-    return render_page(
-        "Learn",
-        f"""
-        <main class="surface learn-surface">
-          <header>
-            <p class="eyebrow">Attempt recorded</p>
-            <h1>Learn</h1>
-          </header>
-          <section aria-labelledby="feedback-heading">
-            <h2 id="feedback-heading">Feedback and next action</h2>
-            <p>Attempt <strong>{escape(attempt.id)}</strong> was recorded.</p>
-            <p>Confidence: {escape(_confidence_label(attempt.confidence_rating))}</p>
-            <p>Correctness: pending scoring evidence.</p>
-            <p>Review feedback and continue practice.</p>
-          </section>
-          <section aria-labelledby="sources-heading" class="source-panel">
-            <h2 id="sources-heading">Source citations after attempt</h2>
-            <ul>{"".join(citations) if citations else "<li>No source citations linked.</li>"}</ul>
-          </section>
-        </main>
-        """,
-        active_path="/app/learner",
+    return _attempt_feedback_surface(
+        session=session,
+        learner_id=learner_id,
+        prompt_id=attempt.prompt_id,
+        attempt_id=attempt.id,
+        just_submitted=True,
     )
 
 
