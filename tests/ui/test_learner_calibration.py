@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -12,53 +13,10 @@ from lms.learners.models import Learner
 from lms.settings import Settings, get_settings
 
 
-def test_learner_calibration_page_shows_bucket_accuracy(
+@pytest.fixture
+def calibration_learners(
     api_client: tuple[TestClient, sessionmaker[Session]],
-) -> None:
-    client, factory = api_client
-    with factory() as session:
-        for index in range(5):
-            create_evidence_record(
-                session,
-                learner_id="learner-over",
-                knowledge_node_id="node-1",
-                confidence_rating=5,
-                correctness=index == 0,
-                response_time_seconds=30,
-            )
-        create_evidence_record(
-            session,
-            learner_id="another-learner",
-            knowledge_node_id="node-1",
-            confidence_rating=2,
-            correctness=True,
-        )
-        session.commit()
-    response = client.get("/app/learner/calibration?learner_id=learner-over")
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    assert '<th scope="row">5/5</th><td>5</td><td>20%</td>' in response.text
-    assert "30 seconds</td><td>Yes</td>" in response.text
-    assert "Scored records: 5. Overconfidence flagged: Yes." in response.text
-    assert '<th scope="row">2/5</th>' not in response.text
-    dashboard = client.get("/app/learner?learner_id=learner-over")
-    assert 'href="/app/learner/calibration?learner_id=learner-over"' in dashboard.text
-
-
-def test_learner_calibration_empty_state(
-    api_client: tuple[TestClient, sessionmaker[Session]],
-) -> None:
-    client, _ = api_client
-    response = client.get("/app/learner/calibration?learner_id=empty")
-    assert response.status_code == 200
-    assert "No calibration evidence yet" in response.text
-    assert "Scored records: 0" in response.text
-    assert "<table>" not in response.text
-
-
-def test_learner_calibration_requires_session_and_ownership(
-    api_client: tuple[TestClient, sessionmaker[Session]],
-) -> None:
+) -> tuple[str, str]:
     client, factory = api_client
     client.app.dependency_overrides[get_settings] = lambda: Settings(auth_required=True)
     with factory() as session:
@@ -75,18 +33,90 @@ def test_learner_calibration_requires_session_and_ownership(
         foreign = Learner(user_id=other.id, display_name="Other")
         session.add_all([own, foreign])
         session.commit()
-        own_id, foreign_id = own.id, foreign.id
+        return own.id, foreign.id
+
+
+def _login(client: TestClient) -> None:
+    response = client.post(
+        "/login",
+        data={"username": "owner", "password": "calibration-password"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+
+@pytest.mark.parametrize("explicit_learner", [False, True])
+def test_learner_calibration_page_shows_bucket_accuracy(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    calibration_learners: tuple[str, str],
+    explicit_learner: bool,
+) -> None:
+    client, factory = api_client
+    own_id, foreign_id = calibration_learners
+    with factory() as session:
+        for index in range(5):
+            create_evidence_record(
+                session,
+                learner_id=own_id,
+                knowledge_node_id="node-1",
+                confidence_rating=5,
+                correctness=index == 0,
+                response_time_seconds=30,
+            )
+        create_evidence_record(
+            session,
+            learner_id=foreign_id,
+            knowledge_node_id="node-1",
+            confidence_rating=2,
+            correctness=True,
+        )
+        # Neither unscored nor unrated evidence should inflate the sample or buckets.
+        create_evidence_record(
+            session, learner_id=own_id, knowledge_node_id="node-1", confidence_rating=1
+        )
+        create_evidence_record(
+            session, learner_id=own_id, knowledge_node_id="node-1", correctness=True
+        )
+        session.commit()
+    _login(client)
+    params = {"learner_id": own_id} if explicit_learner else {}
+    response = client.get("/app/learner/calibration", params=params)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert '<th scope="row">5/5</th><td>5</td><td>20%</td>' in response.text
+    assert "30 seconds</td><td>Yes</td>" in response.text
+    assert "Scored records: 5. Overconfidence flagged: Yes." in response.text
+    assert '<th scope="row">2/5</th>' not in response.text
+    assert '<th scope="row">1/5</th>' not in response.text
+    dashboard = client.get("/app/learner", params=params)
+    assert dashboard.status_code == 200
+    assert f'href="/app/learner/calibration?learner_id={own_id}"' in dashboard.text
+    assert f'href="/app/learner?learner_id={own_id}"' in response.text
+
+
+def test_learner_calibration_empty_state(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, _ = api_client
+    response = client.get("/app/learner/calibration?learner_id=empty")
+    assert response.status_code == 200
+    assert "No calibration evidence yet" in response.text
+    assert "Scored records: 0" in response.text
+    assert "<table>" not in response.text
+
+
+def test_learner_calibration_requires_session_and_ownership(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    calibration_learners: tuple[str, str],
+) -> None:
+    client, _ = api_client
+    own_id, foreign_id = calibration_learners
     path = "/app/learner/calibration"
     assert client.get(path).status_code == 401
     browser = client.get(path, headers={"Accept": "text/html"}, follow_redirects=False)
     assert browser.status_code == 302
     assert browser.headers["location"].startswith("/login?")
-    login = client.post(
-        "/login",
-        data={"username": "owner", "password": "calibration-password"},
-        follow_redirects=False,
-    )
-    assert login.status_code == 303
+    _login(client)
     assert client.get(path).status_code == 200
     assert client.get(path, params={"learner_id": own_id}).status_code == 200
     assert client.get(path, params={"learner_id": foreign_id}).status_code == 403
