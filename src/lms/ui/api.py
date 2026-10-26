@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from lms.analytics.calibration import calibration_for_learner
 from lms.auth.login import SettingsDep
 from lms.auth.models import utc_now
 from lms.capability.models import CapabilityTarget, MaintenancePlan
@@ -111,6 +112,50 @@ def learner_app_route(
 ) -> str:
     """Return the learner home dashboard."""
     return _dashboard_surface(session=session, learner_id=learner_id)
+
+
+@router.get("/app/learner/calibration", response_class=HTMLResponse)
+def learner_calibration_route(session: SessionDep, learner_id: LearnerIdDep) -> str:
+    """Show calibration for the learner resolved through authenticated ownership."""
+    report = calibration_for_learner(session, learner_id).as_dict()
+    rows = []
+    for bucket in report["buckets"]:
+        timing = bucket["median_response_time_seconds"]
+        timing_label = f"{timing:g} seconds" if timing is not None else "Not recorded"
+        rows.append(
+            f'<tr><th scope="row">{bucket["confidence_rating"]}/5</th>'
+            f'<td>{bucket["count"]}</td><td>{bucket["observed_accuracy"]:.0%}</td>'
+            f"<td>{timing_label}</td>"
+            f'<td>{"Yes" if bucket["overconfident"] else "No"}</td></tr>'
+        )
+    table = (
+        "<table><caption>Accuracy by reported confidence</caption><thead><tr>"
+        '<th scope="col">Confidence</th><th scope="col">Scored records</th>'
+        '<th scope="col">Observed accuracy</th><th scope="col">Median response time</th>'
+        '<th scope="col">Overconfident</th></tr></thead><tbody>'
+        + "".join(rows)
+        + "</tbody></table>"
+        if rows
+        else empty_state(
+            "No calibration evidence yet",
+            "Complete and score confidence-rated attempts to compare confidence with accuracy.",
+        )
+    )
+    flag = "Yes" if report["overconfident"] else "No"
+    return render_page(
+        "Calibration",
+        f"""
+        <main class="surface app-surface">
+          <h1>Confidence and accuracy</h1>
+          <p>Scored records: {report["sample_size"]}. Overconfidence flagged: {flag}.</p>
+          <p>A bucket is flagged when confidence is at least 4/5 and observed accuracy
+          is below 50%. Unscored or unrated records are excluded.</p>
+          {table}
+          <p><a href="/app/learner?learner_id={quote_plus(learner_id)}">Back to learner home</a></p>
+        </main>
+        """,
+        active_path="/app/learner",
+    )
 
 
 @router.get("/learn", response_class=HTMLResponse)
@@ -1003,7 +1048,7 @@ def _dashboard_surface(*, session: Session, learner_id: str) -> str:
             informational, not scores.</p>
           </header>
           {_onboarding_panel(goals=goals, evidence=evidence, review=review)}
-          {_dashboard_quick_links()}
+          {_dashboard_quick_links(learner_id=learner_id)}
           <div class="dashboard-grid">
             {_next_actions_panel(actions, zone=zone)}
             {_reviews_panel(review, titles=titles, zone=zone)}
@@ -1045,12 +1090,14 @@ def _onboarding_panel(
     """
 
 
-def _dashboard_quick_links() -> str:
+def _dashboard_quick_links(*, learner_id: str) -> str:
     return (
         '<nav class="dashboard-links" aria-label="Dashboard quick links"><ul>'
         '<li><a href="/learn">Start or continue an attempt</a></li>'
         '<li><a href="/app/learner/review">Open the review queue</a></li>'
         '<li><a href="/app/learner/maintenance">Keep knowledge reachable</a></li>'
+        f'<li><a href="/app/learner/calibration?learner_id={quote_plus(learner_id)}">'
+        "Compare confidence and accuracy</a></li>"
         '<li><a href="#next-actions">See feedback actions</a></li>'
         '<li><a href="#capability">See capability targets</a></li>'
         "</ul></nav>"
