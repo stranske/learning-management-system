@@ -73,7 +73,7 @@ dev = [
     "pytest-cov==7.1.0",
     "pytest-xdist==3.8.0",
     "httpx>=0.28.1",
-    "ruff==0.17.2",
+    "ruff==0.17.3",
     "mypy==2.4.0",
     "black==26.10.1",
     "jupyter>=1.1.1",
