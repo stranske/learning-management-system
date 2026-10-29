@@ -43,7 +43,7 @@ OWNER_PASSWORD = "first-use-gate-passw0rd"
 
 
 @pytest.fixture
-def deployed_app() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
+def deployed_app() -> Generator[tuple[TestClient, sessionmaker[Session]]]:
     """The real app factory in the deployed posture (auth on, no local identity)."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -56,7 +56,7 @@ def deployed_app() -> Generator[tuple[TestClient, sessionmaker[Session]], None, 
         bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
     )
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         s = session_factory()
         try:
             yield s

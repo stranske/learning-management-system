@@ -23,7 +23,7 @@ from lms.main import create_app
 
 
 @pytest.fixture
-def api_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
+def api_client() -> Generator[tuple[TestClient, sessionmaker[Session]]]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -33,7 +33,7 @@ def api_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, No
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session

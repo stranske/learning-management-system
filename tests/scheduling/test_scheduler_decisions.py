@@ -67,7 +67,7 @@ def test_scheduler_decisions_endpoint_returns_rationale_and_sources() -> None:
         session.commit()
         evidence_id = evidence.id
 
-    def override_session() -> Generator[Session, None, None]:
+    def override_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session

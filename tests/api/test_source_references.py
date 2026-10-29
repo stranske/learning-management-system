@@ -52,7 +52,7 @@ def test_create_reference_preserves_normalized_passage_hash(
 
 
 @pytest.fixture
-def api_client() -> Generator[tuple[TestClient, Session], None, None]:
+def api_client() -> Generator[tuple[TestClient, Session]]:
     """Provide a FastAPI test client backed by a shared in-memory SQLite engine."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -69,7 +69,7 @@ def api_client() -> Generator[tuple[TestClient, Session], None, None]:
     )
     session = session_factory()
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session

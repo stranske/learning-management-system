@@ -268,7 +268,7 @@ def _rubric(db_session: Session) -> tuple[str, str, str]:
 
 def _scheduling_api_client(
     *, auth_required: bool
-) -> Generator[tuple[TestClient, sessionmaker[Session], User], None, None]:
+) -> Generator[tuple[TestClient, sessionmaker[Session], User]]:
     """Provide a FastAPI client with a stable authenticated test user."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -288,7 +288,7 @@ def _scheduling_api_client(
         session.add(current_user)
         session.commit()
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session
@@ -356,7 +356,7 @@ def _queue_item_for_user(
 
 @pytest.fixture
 def scheduling_api_client() -> (
-    Generator[tuple[TestClient, sessionmaker[Session], User], None, None]
+    Generator[tuple[TestClient, sessionmaker[Session], User]]
 ):
     """Provide the local development client using the shared request lifecycle."""
     yield from _scheduling_api_client(auth_required=False)
@@ -364,7 +364,7 @@ def scheduling_api_client() -> (
 
 @pytest.fixture
 def deployed_scheduling_api_client() -> (
-    Generator[tuple[TestClient, sessionmaker[Session], User], None, None]
+    Generator[tuple[TestClient, sessionmaker[Session], User]]
 ):
     """Provide a deployed-mode client that enforces learner ownership."""
     yield from _scheduling_api_client(auth_required=True)

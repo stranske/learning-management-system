@@ -28,7 +28,7 @@ pytestmark = pytest.mark.slow
 
 
 @pytest.fixture
-def auth_required_app_client() -> Generator[TestClient, None, None]:
+def auth_required_app_client() -> Generator[TestClient]:
     """The real ``create_app()`` factory with ``auth_required=True`` forced on.
 
     Only the settings and DB session are overridden; the router wiring under test
@@ -43,7 +43,7 @@ def auth_required_app_client() -> Generator[TestClient, None, None]:
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         session = factory()
         try:
             yield session

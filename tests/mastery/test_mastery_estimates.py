@@ -27,7 +27,7 @@ from lms.mastery.service import mastery_estimates_with_evidence_for_learner
 
 
 @contextmanager
-def _client() -> Generator[tuple[TestClient, Session], None, None]:
+def _client() -> Generator[tuple[TestClient, Session]]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -38,7 +38,7 @@ def _client() -> Generator[tuple[TestClient, Session], None, None]:
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = session_factory()
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session
@@ -188,7 +188,7 @@ def test_mastery_estimates_stay_finite_with_nan_evidence(
     # path without letting SQLite sanitize the regression input.
     set_committed_value(record, "normalized_score", bad_score)
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         with db_session.no_autoflush:
             yield db_session
 

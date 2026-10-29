@@ -3,7 +3,7 @@
 Validates that the four tool sections required by the CI gate are present and
 set to values that will satisfy the template-provided reusable workflow:
   - ruff    : correct target version and line length
-  - black   : line-length 100 and at least py312 target
+  - black   : line-length 100 and at least py313 target
   - mypy    : strict mode enabled
   - pytest  : testpaths declared, coverage fail_under >= 80
 """
@@ -33,7 +33,7 @@ def test_ruff_line_length() -> None:
 
 def test_ruff_target_version() -> None:
     ruff = _load()["tool"]["ruff"]
-    assert ruff.get("target-version") == "py312", "ruff target-version must be py312"
+    assert ruff.get("target-version") == "py313", "ruff target-version must be py313"
 
 
 def test_black_section_present() -> None:
@@ -46,10 +46,10 @@ def test_black_line_length() -> None:
     assert black.get("line-length") == 100, "black line-length must be 100"
 
 
-def test_black_targets_py312() -> None:
+def test_black_targets_py313() -> None:
     black = _load()["tool"]["black"]
     targets = black.get("target-version", [])
-    assert "py312" in targets, "black must target at least py312"
+    assert "py313" in targets, "black must target at least py313"
 
 
 def test_mypy_section_present() -> None:

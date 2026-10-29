@@ -59,7 +59,7 @@ ITEM = f"{MAINTENANCE}/item"
 
 
 @pytest.fixture
-def env() -> Generator[tuple[TestClient, sessionmaker[Session], str], None, None]:
+def env() -> Generator[tuple[TestClient, sessionmaker[Session], str]]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -69,7 +69,7 @@ def env() -> Generator[tuple[TestClient, sessionmaker[Session], str], None, None
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
-    def override() -> Generator[Session, None, None]:
+    def override() -> Generator[Session]:
         s = factory()
         try:
             yield s

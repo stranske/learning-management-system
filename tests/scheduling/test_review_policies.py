@@ -124,7 +124,7 @@ def test_get_or_create_review_policy_recovers_from_concurrent_insert(
 
 
 def _make_app_with_overridden_session(session_factory: sessionmaker[Session]):  # type: ignore[no-untyped-def]
-    def override_session() -> Generator[Session, None, None]:
+    def override_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session

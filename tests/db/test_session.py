@@ -19,7 +19,7 @@ from lms.main import create_app
 @pytest.fixture
 def app_client(
     monkeypatch: pytest.MonkeyPatch,
-) -> Generator[tuple[TestClient, sessionmaker[Session], list[int]], None, None]:
+) -> Generator[tuple[TestClient, sessionmaker[Session], list[int]]]:
     """Provide an app wired to an in-memory database and commit counter."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",

@@ -167,7 +167,7 @@ def test_calibration_ignores_nan_normalized_score(db_session: Session, score: fl
 
 
 @contextmanager
-def _client() -> Generator[tuple[TestClient, Session], None, None]:
+def _client() -> Generator[tuple[TestClient, Session]]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -178,7 +178,7 @@ def _client() -> Generator[tuple[TestClient, Session], None, None]:
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = session_factory()
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session
@@ -242,7 +242,7 @@ def test_calibration_endpoint_surfaces_overconfidence(db_session: Session) -> No
     # Use the same session in the request so SQLite cannot sanitize this NaN.
     set_committed_value(corrupt_record, "normalized_score", float("nan"))
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         with db_session.no_autoflush:
             yield db_session
 

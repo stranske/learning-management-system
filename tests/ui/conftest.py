@@ -30,7 +30,7 @@ from lms.main import create_app
 @pytest.fixture
 def api_client(
     request: pytest.FixtureRequest,
-) -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
+) -> Generator[tuple[TestClient, sessionmaker[Session]]]:
     enable_local_identity_routes = bool(getattr(request, "param", False))
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -46,7 +46,7 @@ def api_client(
         expire_on_commit=False,
     )
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session

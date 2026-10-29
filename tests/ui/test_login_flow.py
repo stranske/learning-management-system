@@ -35,7 +35,7 @@ from lms.settings import Settings, get_settings
 
 
 @pytest.fixture
-def full_app_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
+def full_app_client() -> Generator[tuple[TestClient, sessionmaker[Session]]]:
     """Spin up the real ``create_app()`` with AUTH_REQUIRED=true."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -48,7 +48,7 @@ def full_app_client() -> Generator[tuple[TestClient, sessionmaker[Session]], Non
         bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
     )
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         s = session_factory()
         try:
             yield s
