@@ -212,7 +212,7 @@ mistune==3.2.1
     # via
     #   lms (pyproject.toml)
     #   nbconvert
-mypy==2.4.0
+mypy==2.4.1
     # via lms (pyproject.toml)
 mypy-extensions==1.1.0
     # via
@@ -308,7 +308,7 @@ pygments==2.19.2
     #   jupyter-console
     #   nbconvert
     #   pytest
-pytest==9.1.1
+pytest==9.2.0
     # via
     #   lms (pyproject.toml)
     #   app-baseline-kit
