@@ -188,7 +188,7 @@ def test_knowledge_profile_route_filters_personal_scope_by_default() -> None:
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
-    def override_session() -> Generator[Session, None, None]:
+    def override_session() -> Generator[Session]:
         session = session_factory()
         try:
             yield session

@@ -46,7 +46,7 @@ ACTOR = "system:e2e-loop-test"
 
 
 @pytest.fixture
-def loop_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
+def loop_client() -> Generator[tuple[TestClient, sessionmaker[Session]]]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -58,7 +58,7 @@ def loop_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, N
         bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
     )
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         s = session_factory()
         try:
             yield s

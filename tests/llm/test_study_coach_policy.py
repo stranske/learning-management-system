@@ -152,7 +152,7 @@ def test_assessment_restriction_disables_hints_and_direct_answers() -> None:
 
 
 @contextmanager
-def _client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
+def _client() -> Generator[tuple[TestClient, sessionmaker[Session]]]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -162,7 +162,7 @@ def _client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session

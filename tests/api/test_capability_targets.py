@@ -31,7 +31,7 @@ def _client(db_session: Session) -> TestClient:
         expire_on_commit=False,
     )
 
-    def _override_session() -> Generator[Session, None, None]:
+    def _override_session() -> Generator[Session]:
         session = session_factory()
         try:
             yield session

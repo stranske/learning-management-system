@@ -54,7 +54,7 @@ def test_dispute_float_parser_preserves_finite_values(value: str, expected: floa
 
 
 @pytest.fixture
-def client_and_items() -> Generator[tuple[TestClient, sessionmaker[Session], str], None, None]:
+def client_and_items() -> Generator[tuple[TestClient, sessionmaker[Session], str]]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -64,7 +64,7 @@ def client_and_items() -> Generator[tuple[TestClient, sessionmaker[Session], str
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
-    def override_session() -> Generator[Session, None, None]:
+    def override_session() -> Generator[Session]:
         s = factory()
         try:
             yield s

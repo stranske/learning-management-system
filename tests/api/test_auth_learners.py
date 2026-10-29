@@ -30,7 +30,7 @@ def test_create_user_and_learner_endpoints() -> None:
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
-    def override_session() -> Generator[Session, None, None]:
+    def override_session() -> Generator[Session]:
         session = session_factory()
         try:
             yield session

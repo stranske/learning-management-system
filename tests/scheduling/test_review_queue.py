@@ -483,7 +483,7 @@ def test_review_queue_endpoint_returns_items_with_reasons() -> None:
     finally:
         session.close()
 
-    def override_session() -> Generator[Session, None, None]:
+    def override_session() -> Generator[Session]:
         s = session_factory()
         try:
             yield s
@@ -575,7 +575,7 @@ def test_complete_review_queue_ownership(
 
     request_session_factory = sessionmaker(bind=db_session.get_bind(), expire_on_commit=False)
 
-    def override_session() -> Generator[Session, None, None]:
+    def override_session() -> Generator[Session]:
         with request_session_factory() as request_session:
             yield request_session
 

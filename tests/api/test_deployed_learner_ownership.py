@@ -36,7 +36,7 @@ from lms.settings import Settings, get_settings
 
 def _deployed_client(
     *, auth_required: bool = True
-) -> Generator[tuple[TestClient, Session], None, None]:
+) -> Generator[tuple[TestClient, Session]]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -104,7 +104,7 @@ def _deployed_client(
     )
     session.commit()
 
-    def override_session() -> Generator[Session, None, None]:
+    def override_session() -> Generator[Session]:
         yield session
 
     app = create_app(enable_local_identity_routes=False)
@@ -127,7 +127,7 @@ def _deployed_client(
 
 
 @pytest.fixture
-def competency_client() -> Generator[tuple[TestClient, Session, dict[str, str]], None, None]:
+def competency_client() -> Generator[tuple[TestClient, Session, dict[str, str]]]:
     fixture = _deployed_client()
     client, session = next(fixture)
     try:
@@ -372,7 +372,7 @@ def test_create_feedback_rejects_cross_learner_attempt_reference() -> None:
     session.add(second_attempt)
     session.commit()
 
-    def override_session() -> Generator[Session, None, None]:
+    def override_session() -> Generator[Session]:
         yield session
 
     app = create_app()
@@ -1288,7 +1288,7 @@ def test_work_product_ownership_uses_real_login_session() -> None:
 @pytest.fixture
 def llm_ownership_client(
     monkeypatch: pytest.MonkeyPatch,
-) -> Generator[tuple[TestClient, Session, dict[str, str], LLMClient], None, None]:
+) -> Generator[tuple[TestClient, Session, dict[str, str], LLMClient]]:
     fixture = _deployed_client()
     client, session = next(fixture)
     llm_client = LLMClient(

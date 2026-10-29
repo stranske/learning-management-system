@@ -23,7 +23,7 @@ from lms.sources.repository import create_source_reference
 
 
 @contextmanager
-def _client() -> Generator[tuple[TestClient, Session], None, None]:
+def _client() -> Generator[tuple[TestClient, Session]]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -34,7 +34,7 @@ def _client() -> Generator[tuple[TestClient, Session], None, None]:
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = session_factory()
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session

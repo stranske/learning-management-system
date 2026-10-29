@@ -44,7 +44,7 @@ def test_review_schedules_endpoint_returns_filtered_records() -> None:
         )
         session.commit()
 
-    def override_session() -> Generator[Session, None, None]:
+    def override_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session

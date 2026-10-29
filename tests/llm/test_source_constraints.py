@@ -60,7 +60,7 @@ def test_bounded_citation_among_other_text_is_accepted() -> None:
 
 
 @contextmanager
-def _client() -> Generator[TestClient, None, None]:
+def _client() -> Generator[TestClient]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -70,7 +70,7 @@ def _client() -> Generator[TestClient, None, None]:
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         request_session = session_factory()
         try:
             yield request_session

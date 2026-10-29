@@ -27,7 +27,7 @@ from lms.db.base import Base
 
 
 @pytest.fixture
-def db_session() -> Generator[Session, None, None]:
+def db_session() -> Generator[Session]:
     """Provide an isolated SQLAlchemy session for model-level tests."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",

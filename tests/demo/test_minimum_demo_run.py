@@ -52,7 +52,7 @@ from lms.sources.models import SourceReference
 
 
 @pytest.fixture
-def demo_session() -> Generator[Session, None, None]:
+def demo_session() -> Generator[Session]:
     """An in-memory SQLite session with the full schema applied."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",

@@ -45,7 +45,7 @@ from lms.settings import Settings, get_settings
 
 
 @pytest.fixture
-def auth_required_client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
+def auth_required_client() -> Generator[tuple[TestClient, sessionmaker[Session]]]:
     """A FastAPI app with AUTH_REQUIRED=true and a single protected route.
 
     We build the smallest app that exercises ``require_authenticated_user``
@@ -63,7 +63,7 @@ def auth_required_client() -> Generator[tuple[TestClient, sessionmaker[Session]]
         bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
     )
 
-    def override_get_session() -> Generator[Session, None, None]:
+    def override_get_session() -> Generator[Session]:
         s = session_factory()
         try:
             yield s
