@@ -7,7 +7,7 @@ name = "lms"
 version = "0.1.0"
 description = "API-first Learning Management System backend"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = {text = "MIT"}
 authors = [
     {name = "stranske", email = "tim@stranskemo.com"},
@@ -17,8 +17,8 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
     # FastAPI 0.141+ currently resolves a TestClient stack that hangs on
@@ -143,7 +143,7 @@ exclude_lines = [
 fail_under = 80
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py313"
 line-length = 100
 src = ["src", "tests"]
 
@@ -167,7 +167,7 @@ ignore = [
 known-first-party = ["lms", "tools"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 files = ["src", "tests", "scripts"]
 mypy_path = ["src"]
 explicit_package_bases = true
@@ -188,7 +188,7 @@ line-length = 100
 # cannot parse py313 syntax when the runner is on Python 3.12, so listing both
 # versions produces a warning on the 3.12 CI leg.  Code formatted for py312 is
 # valid on py313, so a single entry correctly covers both supported versions.
-target-version = ["py312"]
+target-version = ["py313"]
 
 [[tool.mypy.overrides]]
 # lms.analytics will use pandas, which ships incomplete stubs.  Keep strict
