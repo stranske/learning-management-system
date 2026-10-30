@@ -184,10 +184,9 @@ show_error_codes = true
 
 [tool.black]
 line-length = 100
-# Target only the minimum supported Python (3.12).  Black's AST safety check
-# cannot parse py313 syntax when the runner is on Python 3.12, so listing both
-# versions produces a warning on the 3.12 CI leg.  Code formatted for py312 is
-# valid on py313, so a single entry correctly covers both supported versions.
+# Target only the minimum supported Python (3.13, matching requires-python).
+# Code formatted for py313 is valid on py314, so a single entry covers both
+# CI runtimes.
 target-version = ["py313"]
 
 [[tool.mypy.overrides]]
