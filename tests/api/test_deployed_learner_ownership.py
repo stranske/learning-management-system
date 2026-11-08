@@ -34,9 +34,7 @@ from lms.main import create_app
 from lms.settings import Settings, get_settings
 
 
-def _deployed_client(
-    *, auth_required: bool = True
-) -> Generator[tuple[TestClient, Session]]:
+def _deployed_client(*, auth_required: bool = True) -> Generator[tuple[TestClient, Session]]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
