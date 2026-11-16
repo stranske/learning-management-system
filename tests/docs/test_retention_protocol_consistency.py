@@ -16,9 +16,11 @@ def test_plan_does_not_restate_protocol_differently() -> None:
         "## Implementation Roadmap",
     )
 
-    assert "demo-retention-protocol.md" in demo_section
+    assert "](../handoff/demo-retention-protocol.md)" in demo_section
     assert "verbatim" not in demo_section
     assert "paraphrase" not in demo_section
+    for category in ("complete", "partial", "gist-only", "missed"):
+        assert f"`{category}`" in demo_section
 
 
 def _section_between(text: str, start_marker: str, end_marker: str) -> str:
