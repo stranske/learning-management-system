@@ -1317,14 +1317,12 @@ Implemented preview surfaces outside this list, including `/capability/*` and
 exploration. They are not Minimum Demo requirements and must not be used as
 evidence that the Milestones 0-4 core learner-loop gate is complete.
 
-Day-30 retention protocol (default shape; locked in `docs/handoff/demo-retention-protocol.md` before any of the items are picked):
+Day-30 retention protocol: follow the locked
+[`demo-retention-protocol.md`](../handoff/demo-retention-protocol.md), finalized before
+item selection.
 
-- Select 8 candidate items from the seeded content before the demo period begins.
-- Route 4 items through the system: prompt + scheduled review + at least one `study-coach` interaction during the period.
-- Hold the other 4 as informal comparison: read passively at the start of the period, no system intervention afterward.
-- For all 8, record initial confidence and an unaided pre-attempt at day 0.
-- At day 30, run an unaided free-recall test on all 8 items in a single sitting. Record per item: recall quality (`verbatim` / `paraphrase` / `partial` / `failed`), elapsed seconds, confidence.
-- The protocol document is finalized before items are selected, so item selection and scoring rules cannot drift to fit the outcome.
+At day 30, record each item's recall quality as `complete`, `partial`, `gist-only`, or
+`missed`, along with elapsed seconds and confidence.
 
 If any of the six criteria above cannot be demonstrated, the v1 design has not yet validated its thesis and additional features should not be added until they can.
 
