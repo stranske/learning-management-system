@@ -1,8 +1,4 @@
-"""Guard the project plan against restating the locked retention protocol.
-
-Add `--no-cov` when running this file by itself. The check reads Markdown
-and cannot satisfy the repository-wide LMS coverage threshold on its own.
-"""
+"""Guard the project plan against restating the locked retention protocol."""
 
 from __future__ import annotations
 
