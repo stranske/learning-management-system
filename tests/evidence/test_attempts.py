@@ -13,6 +13,8 @@ from lms.evidence.api import create_attempt_route
 from lms.evidence.models import SUPPORT_LEVELS, Attempt
 from lms.evidence.repository import create_attempt, get_attempt, list_evidence_records
 from lms.evidence.schemas import AttemptCreate, AttemptRead
+from lms.prompts.models import Prompt, PromptVersion
+from lms.prompts.repository import version_prompt
 from lms.scheduling.fsrs_adapter import evidence_to_fsrs_rating
 from lms.settings import Settings
 
@@ -173,6 +175,8 @@ def test_post_attempt_route_returns_stable_linked_attempt_id(db_session: Session
     assert created.id
     assert created.learner_id == payload.learner_id
     assert created.prompt_id == payload.prompt_id
+    assert created.prompt_version_id is None
+    assert created.task_context is None
 
     loaded = get_attempt(db_session, created.id)
     assert loaded is not None
@@ -289,7 +293,6 @@ def test_post_attempt_with_evidence_without_scoring_does_not_create_record(
     payload = _attempt_payload()
     payload["evidence"] = {
         "knowledge_node_id": "node-1",
-        "prompt_version_id": "prompt-version-1",
         "knowledge_type": "procedural",
     }
 
@@ -303,3 +306,89 @@ def test_post_attempt_with_evidence_without_scoring_does_not_create_record(
         knowledge_node_id="node-1",
     )
     assert records == []
+
+
+@pytest.mark.parametrize("entry_point", ["repository", "service", "api"])
+def test_attempt_entry_points_save_version_and_task_context(
+    db_session: Session, published_prompt: Prompt, entry_point: str
+) -> None:
+    """Every ingestion path shares version capture, even without scoring evidence."""
+    from lms.evidence.service import record_attempt
+
+    payload = AttemptCreate.model_validate(_attempt_payload())
+    if entry_point == "repository":
+        attempt = create_attempt(db_session, **payload.model_dump())
+    elif entry_point == "service":
+        attempt = record_attempt(db_session, **payload.model_dump()).attempt
+    else:
+        user, settings = _local_route_dependencies()
+        result = create_attempt_route(payload, db_session, user, settings)
+        loaded = get_attempt(db_session, result.id)
+        assert loaded is not None
+        attempt = loaded
+    db_session.commit()
+    db_session.refresh(attempt)
+    read = AttemptRead.model_validate(attempt)
+    assert read.prompt_version_id == published_prompt.versions[0].id
+    assert read.task_context == {
+        "target_node_id": "node-1",
+        "learning_goal_id": "goal-1",
+        "knowledge_type": "procedural",
+        "intended_cognitive_action": "explain",
+        "demand_level": "medium",
+        "expected_answer_form": "short-text",
+        "source_reference_ids": ["source-1"],
+    }
+
+
+@pytest.mark.parametrize("version_location", ["attempt", "evidence"])
+def test_attempt_keeps_explicit_presented_version(
+    db_session: Session, published_prompt: Prompt, version_location: str
+) -> None:
+    """A newer wording version cannot replace the version supplied by the caller."""
+    version_id = published_prompt.versions[0].id
+    version_prompt(db_session, published_prompt, body="New wording", actor_id="author-1")
+    payload: dict[str, Any] = dict(_attempt_payload())
+    if version_location == "attempt":
+        payload["prompt_version_id"] = version_id
+    else:
+        payload["evidence"] = {"knowledge_node_id": "node-1", "prompt_version_id": version_id}
+    attempt = create_attempt(db_session, **payload)
+    db_session.commit()
+    db_session.refresh(attempt)
+    assert attempt.prompt_version_id == version_id
+    assert not attempt.evidence_records
+
+
+@pytest.mark.parametrize("invalid_version", ["", "missing", "other-version"])
+def test_attempt_rejects_unknown_or_unrelated_version_before_writes(
+    db_session: Session, published_prompt: Prompt, invalid_version: str
+) -> None:
+    other = PromptVersion(
+        id="other-version",
+        prompt_id="other-prompt",
+        version_number=1,
+        body="Other task",
+        created_by="author-1",
+    )
+    db_session.add(other)
+    db_session.commit()
+    payload: dict[str, Any] = dict(_attempt_payload())
+    payload["prompt_version_id"] = invalid_version
+    with pytest.raises(ValueError, match="version of this prompt"):
+        create_attempt(db_session, **payload)
+    assert db_session.query(Attempt).count() == 0
+    assert db_session.is_active
+
+
+def test_attempt_rejects_conflicting_version_sources(
+    db_session: Session, published_prompt: Prompt
+) -> None:
+    payload: dict[str, Any] = dict(_attempt_payload())
+    payload.update(
+        prompt_version_id=published_prompt.versions[0].id,
+        evidence={"knowledge_node_id": "node-1", "prompt_version_id": "other"},
+    )
+    with pytest.raises(ValueError, match="must match"):
+        create_attempt(db_session, **payload)
+    assert db_session.query(Attempt).count() == 0

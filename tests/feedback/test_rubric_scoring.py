@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from lms.evidence.models import EvidenceRecord
+from lms.evidence.models import Attempt, EvidenceRecord
 from lms.evidence.repository import create_attempt, get_evidence_record
 from lms.feedback.models import FeedbackAction, FeedbackRecord, RubricScore
 from lms.feedback.repository import create_rubric, get_feedback_record, list_feedback_actions
@@ -20,6 +20,9 @@ from lms.feedback.scoring import (
     score_attempt_with_rubric,
 )
 from lms.graphs.repository import create_knowledge_node
+from lms.prompts.models import Prompt
+from lms.prompts.repository import publish_prompt, version_prompt
+from lms.scheduling import fsrs_engine
 from lms.scheduling.models import ReviewCardState, ReviewQueueItem
 
 
@@ -104,6 +107,137 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
     assert evidence.scorer_version == "rubric-v1"
     assert evidence.partial_credit_dimensions["rubric_id"] == rubric_id
     assert evidence.partial_credit_dimensions["criterion_scores"][1]["points"] == 2
+    assert evidence.prompt_version_id is None
+    assert evidence.demand_level is None
+    assert evidence.knowledge_type is None
+
+
+@pytest.mark.parametrize(
+    ("confidence", "reference", "hint", "support"),
+    [
+        (1, True, True, "coach"),
+        (1, False, False, "none"),
+        (4, True, False, "none"),
+        (4, False, True, "none"),
+        (4, False, False, "coach"),
+    ],
+    ids=["all-conditions", "low-confidence", "reference", "hint", "support"],
+)
+def test_rubric_evidence_preserves_attempt_conditions_and_prompt_version(
+    db_session: Session,
+    published_prompt: Prompt,
+    monkeypatch: pytest.MonkeyPatch,
+    confidence: int,
+    reference: bool,
+    hint: bool,
+    support: str,
+) -> None:
+    """Delayed full-credit scoring retains v1 evidence and sends Hard to the real engine."""
+    rubric_id, criterion_ids = _rubric(db_session)
+    version_id = published_prompt.versions[0].id
+    attempt = create_attempt(
+        db_session,
+        learner_id="learner-1",
+        prompt_id=published_prompt.id,
+        prompt_version_id=version_id,
+        response_text="A complete, assisted answer.",
+        response_metadata={"attempt_number": 1, "client": {"surface": "activity"}},
+        confidence_rating=confidence,
+        reference_accessed=reference,
+        hint_used=hint,
+        support_level=support,
+        elapsed_seconds=42,
+        feedback={"goal": "Explain algebra", "next_action": "Await scoring"},
+    )
+    db_session.commit()
+    snapshot = dict(attempt.task_context or {})
+    version_prompt(
+        db_session,
+        published_prompt,
+        body="A different task in v2.",
+        actor_id="author-1",
+        demand_level="high",
+        knowledge_type="conceptual",
+        expected_answer_form="long-text",
+    )
+    publish_prompt(db_session, published_prompt, reviewing_actor="reviewer-1")
+    db_session.commit()
+    assert published_prompt.versions[-1].id != version_id
+    engine_review = Mock(wraps=fsrs_engine.review)
+    monkeypatch.setattr(fsrs_engine, "review", engine_review)
+
+    score = score_attempt_with_rubric(
+        db_session,
+        rubric_id=rubric_id,
+        attempt_id=attempt.id,
+        scorer_type="human",
+        criterion_scores=[
+            {"criterion_id": criterion_ids[0], "points": 2},
+            {"criterion_id": criterion_ids[1], "points": 3},
+        ],
+    )
+    db_session.commit()
+    db_session.expire_all()
+    evidence = db_session.get(EvidenceRecord, score.evidence_record_id)
+    assert evidence is not None
+    engine_review.assert_called_once()
+    # Check the engine's actual input as well as the persisted adapter decision.
+    assert engine_review.call_args.kwargs["rating_value"] == 2
+    assert evidence.normalized_score == 1.0
+    assert evidence.correctness is True
+    assert evidence.prompt_version_id == version_id
+    assert evidence.demand_level == "medium"
+    assert evidence.knowledge_type == "procedural"
+    assert evidence.confidence_rating == confidence
+    assert evidence.reference_accessed is reference
+    assert evidence.hint_used is hint
+    assert evidence.support_level == support
+    assert evidence.response_time_seconds == 42
+    assert evidence.attempt_context == {
+        "attempt_number": 1,
+        "client": {"surface": "activity"},
+        "task_context": snapshot,
+    }
+    item = db_session.scalar(
+        select(ReviewQueueItem).where(ReviewQueueItem.source_evidence_record_id == evidence.id)
+    )
+    assert item is not None
+    assert item.decision_log["fsrs_rating"]["value"] == 2
+    assert item.decision_log["fsrs_rating"]["label"] == "hard"
+    assert db_session.scalar(select(ReviewCardState.review_count)) == 1
+
+
+def test_legacy_rubric_attempt_keeps_unknown_version_and_context(
+    db_session: Session, published_prompt: Prompt
+) -> None:
+    """Scoring a pre-migration attempt cannot recover its original prompt context."""
+    rubric_id, criterion_ids = _rubric(db_session)
+    legacy = Attempt(
+        learner_id="learner-1",
+        prompt_id=published_prompt.id,
+        response_text="Legacy answer",
+        feedback={},
+        response_metadata={"client": "legacy"},
+    )
+    db_session.add(legacy)
+    db_session.commit()
+    score = score_attempt_with_rubric(
+        db_session,
+        rubric_id=rubric_id,
+        attempt_id=legacy.id,
+        scorer_type="human",
+        criterion_scores=[
+            {"criterion_id": criterion_ids[0], "points": 2},
+            {"criterion_id": criterion_ids[1], "points": 3},
+        ],
+    )
+    db_session.commit()
+    evidence = db_session.get(EvidenceRecord, score.evidence_record_id)
+    assert evidence is not None
+    assert evidence.prompt_version_id is None
+    assert evidence.demand_level is None
+    assert evidence.knowledge_type is None
+    assert evidence.attempt_context == {"client": "legacy"}
 
 
 @pytest.mark.parametrize(

@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import re
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from lms.auth.models import utc_now
-from lms.evidence.models import Attempt
+from lms.evidence.models import Attempt, EvidenceRecord
 from lms.evidence.repository import create_attempt
 from lms.feedback.repository import create_rubric
 from lms.feedback.scoring import score_attempt_with_rubric
 from lms.graphs.models import KnowledgeNode
 from lms.prompts.models import Prompt, PromptVersion
+from lms.prompts.repository import publish_prompt, version_prompt
 from lms.sources.models import SourceReference
 
 ATTEMPTS_PATH = "/app/learner/attempts"
@@ -114,9 +118,129 @@ def test_attempt_start_renders_prompt_metadata_provenance_and_citations(
     assert "Expected answer form:" in html
     assert 'name="confidence_rating"' in html
     assert 'name="reference_accessed"' in html
+    assert 'name="prompt_version_id"' in html
     assert "Provenance: human-authored; author author-1; reviewer reviewer-1." in html
     assert "Source citations after attempt" in html
     assert "https://example.test/source" in html
+
+
+def test_presented_version_survives_submission_and_delayed_self_grade(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, factory = api_client
+    with factory() as session:
+        _seed_prompt(session, visibility="public", locator="https://example.test/source")
+    start = client.get(f"{ATTEMPTS_PATH}?learner_id=learner-1&prompt_id=prompt-1")
+    match = re.search(r'name="prompt_version_id" value="([^"]+)"', start.text)
+    assert match is not None
+    presented_id = match.group(1)
+    # A new version can be published while the learner's form remains open.
+    with factory() as session:
+        prompt = session.get(Prompt, "prompt-1")
+        assert prompt is not None
+        version_prompt(session, prompt, body="Version two wording", actor_id="author-1")
+        publish_prompt(session, prompt, reviewing_actor="reviewer-1")
+        session.commit()
+    submitted = client.post(
+        ATTEMPTS_PATH,
+        data={
+            "learner_id": "learner-1",
+            "prompt_id": "prompt-1",
+            "prompt_version_id": presented_id,
+            "response_text": "A full response",
+            "confidence_rating": "1",
+            "reference_accessed": "true",
+            "elapsed_seconds": "42",
+        },
+    )
+    assert submitted.status_code == 200
+    with factory() as session:
+        attempt = session.scalars(select(Attempt)).one()
+        assert attempt.prompt_version_id == presented_id
+        attempt_id = attempt.id
+        snapshot = dict(attempt.task_context or {})
+        # Response metadata is also copied, including nested values.
+        attempt.response_metadata = {"client": {"surface": "activity"}}
+        prompt = session.get(Prompt, "prompt-1")
+        assert prompt is not None
+        version_prompt(
+            session,
+            prompt,
+            body="Version three wording",
+            actor_id="author-1",
+            demand_level="high",
+            knowledge_type="factual",
+        )
+        publish_prompt(session, prompt, reviewing_actor="reviewer-1")
+        session.commit()
+    graded = client.post(
+        "/app/learner/attempts/self-grade",
+        data={
+            "learner_id": "learner-1",
+            "attempt_id": attempt_id,
+            "grade": "correct",
+        },
+    )
+    assert graded.status_code == 200
+    with factory() as session:
+        evidence = session.scalars(select(EvidenceRecord)).one()
+        assert evidence.prompt_version_id == presented_id
+        assert evidence.demand_level == "medium"
+        assert evidence.knowledge_type == "conceptual"
+        assert evidence.confidence_rating == 1
+        assert evidence.reference_accessed is True
+        assert evidence.hint_used is False
+        assert evidence.support_level == "none"
+        assert evidence.response_time_seconds == 42
+        assert evidence.attempt_context == {
+            "client": {"surface": "activity"},
+            "task_context": snapshot,
+        }
+
+
+@pytest.mark.parametrize("surface", ["ui", "api"])
+@pytest.mark.parametrize("version_id", ["missing-version", "unrelated-version"])
+def test_attempt_submission_rejects_invalid_prompt_version(
+    api_client: tuple[TestClient, sessionmaker[Session]], surface: str, version_id: str
+) -> None:
+    client, factory = api_client
+    with factory() as session:
+        _seed_prompt(session, visibility="public", locator="https://example.test/source")
+        session.add(
+            PromptVersion(
+                id="unrelated-version",
+                prompt_id="other-prompt",
+                version_number=1,
+                body="Other prompt",
+                created_by="author-1",
+            )
+        )
+        session.commit()
+    payload = {
+        "learner_id": "learner-1",
+        "prompt_id": "prompt-1",
+        "prompt_version_id": version_id,
+        "response_text": "Answer",
+    }
+    response = (
+        client.post(ATTEMPTS_PATH, data=payload)
+        if surface == "ui"
+        else client.post(
+            "/attempts",
+            json={
+                **payload,
+                "feedback": {
+                    "goal": "Explain",
+                    "observed_evidence": "Answer",
+                    "next_action": "Review",
+                },
+            },
+        )
+    )
+    assert response.status_code == 422
+    assert "version of this prompt" in response.json()["detail"]
+    with factory() as session:
+        assert session.scalar(select(Attempt)) is None
 
 
 def test_attempt_start_hides_local_only_source_locator(
