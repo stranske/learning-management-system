@@ -1,4 +1,8 @@
-"""Inspect and author flows for per-prompt source drift from version snapshots."""
+"""Inspect and author flows for per-prompt source drift from version snapshots.
+
+Deliberate-break evidence (source-only drift break reverted): see
+``docs/evidence/issue-834-prompt-drift-deliberate-break.md``.
+"""
 
 from __future__ import annotations
 
