@@ -22,6 +22,7 @@ from lms.db.base import Base
 from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_evidence_record
+from lms.graphs.models import KnowledgeNode
 from lms.main import create_app
 from lms.mastery.service import mastery_estimates_with_evidence_for_learner
 
@@ -57,9 +58,19 @@ def _client() -> Generator[tuple[TestClient, Session]]:
         engine.dispose()
 
 
+def _seed_personal_node(session: Session) -> None:
+    session.add(
+        KnowledgeNode(
+            id="node-1", title="Topic", knowledge_type="procedural", ownership_scope="personal"
+        )
+    )
+    session.flush()
+
+
 def test_mastery_recomputes_from_evidence_history() -> None:
     """Changing evidence history changes the computed estimate."""
     with _client() as (client, session):
+        _seed_personal_node(session)
         create_evidence_record(
             session,
             learner_id="learner-1",
@@ -105,6 +116,7 @@ def test_no_mastery_estimate_table_is_required() -> None:
 def test_mastery_estimate_orders_same_observed_at_records_deterministically(
     db_session: Session,
 ) -> None:
+    _seed_personal_node(db_session)
     observed_at = datetime(2026, 5, 31, 12, 0, tzinfo=UTC)
     created_at = datetime(2026, 5, 31, 12, 0, 1, tzinfo=UTC)
 
@@ -157,10 +169,10 @@ def test_mastery_estimate_orders_same_observed_at_records_deterministically(
     db_session.commit()
 
     first_estimates, first_evidence = mastery_estimates_with_evidence_for_learner(
-        db_session, "learner-first"
+        db_session, "learner-first", scope="personal"
     )
     reverse_estimates, reverse_evidence = mastery_estimates_with_evidence_for_learner(
-        db_session, "learner-reverse"
+        db_session, "learner-reverse", scope="personal"
     )
 
     assert [record.normalized_score for record in first_evidence["node-1"]] == [0.0, 1.0]
@@ -174,6 +186,7 @@ def test_mastery_estimate_orders_same_observed_at_records_deterministically(
 def test_mastery_estimates_stay_finite_with_nan_evidence(
     db_session: Session, bad_score: float
 ) -> None:
+    _seed_personal_node(db_session)
     record = create_evidence_record(
         db_session,
         learner_id="learner-bad-score",
@@ -207,8 +220,6 @@ def test_mastery_estimates_stay_finite_with_nan_evidence(
 
 @pytest.mark.parametrize("scope", ["personal", "institutional"])
 def test_mastery_aggregates_only_scoped_node_evidence(db_session, scope):
-    from lms.graphs.models import KnowledgeNode
-
     for other in ("personal", "institutional"):
         db_session.add(
             KnowledgeNode(id=other, title=other, knowledge_type="factual", ownership_scope=other)
