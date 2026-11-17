@@ -48,6 +48,9 @@ ANSWER_FORMS: tuple[str, ...] = (
 )
 PROMPT_STATUSES: tuple[str, ...] = ("draft", "in-review", "published", "archived")
 AUTHORING_METHODS: tuple[str, ...] = ("human-authored", "llm-generated", "imported")
+UNKNOWN_SOURCE_HASH = "unknown"
+UNKNOWN_HASH_ALGORITHM = "unknown"
+PROMPT_DRIFT_STATUSES: tuple[str, ...] = ("current", "stale", "missing", "unknown")
 
 prompt_source_references = Table(
     "prompt_source_references",
@@ -156,6 +159,12 @@ class Prompt(Base):
         cascade="all, delete-orphan",
         order_by="PromptVersion.version_number",
     )
+    drift_acknowledgements: Mapped[list[PromptDriftAcknowledgement]] = relationship(
+        "PromptDriftAcknowledgement",
+        back_populates="prompt",
+        cascade="all, delete-orphan",
+        order_by="PromptDriftAcknowledgement.acknowledged_at",
+    )
 
 
 class PromptVersion(Base):
@@ -186,3 +195,92 @@ class PromptVersion(Base):
     task_context: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
     prompt: Mapped[Prompt] = relationship("Prompt", back_populates="versions")
+    source_snapshots: Mapped[list[PromptVersionSourceSnapshot]] = relationship(
+        "PromptVersionSourceSnapshot",
+        back_populates="prompt_version",
+        cascade="all, delete-orphan",
+        order_by="PromptVersionSourceSnapshot.source_reference_id",
+    )
+
+
+class PromptVersionSourceSnapshot(Base):
+    """Immutable source hash captured when a prompt version was authored."""
+
+    __tablename__ = "prompt_version_source_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "prompt_version_id",
+            "source_reference_id",
+            name="prompt_version_source_snapshot_unique",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    prompt_version_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("prompt_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_reference_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("source_references.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    content_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    hash_algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    prompt_version: Mapped[PromptVersion] = relationship(
+        "PromptVersion",
+        back_populates="source_snapshots",
+    )
+    source_reference: Mapped[SourceReference] = relationship("SourceReference")
+
+
+class PromptDriftAcknowledgement(Base):
+    """Author acknowledgement that prompt-level source drift was reviewed."""
+
+    __tablename__ = "prompt_drift_acknowledgements"
+    __table_args__ = (
+        UniqueConstraint(
+            "prompt_id",
+            "prompt_version_id",
+            name="prompt_drift_acknowledgement_unique",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    prompt_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("prompts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    prompt_version_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("prompt_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    acknowledged_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    acknowledged_source_states: Mapped[dict[str, dict[str, Any]]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+    )
+    acknowledged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    prompt: Mapped[Prompt] = relationship("Prompt", back_populates="drift_acknowledgements")
+    prompt_version: Mapped[PromptVersion] = relationship("PromptVersion")

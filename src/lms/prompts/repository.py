@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import hashlib
+import json
+import logging
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
@@ -19,11 +23,19 @@ from lms.prompts.models import (
     AUTHORING_METHODS,
     COGNITIVE_ACTIONS,
     DEMAND_LEVELS,
+    PROMPT_DRIFT_STATUSES,
     PROMPT_STATUSES,
     Prompt,
+    PromptDriftAcknowledgement,
     PromptVersion,
+    PromptVersionSourceSnapshot,
 )
 from lms.sources.models import SourceReference
+from lms.sources.repository import compute_source_hash_for_reference
+
+logger = logging.getLogger(__name__)
+
+_PROMPT_DRIFT_RANK = {status: index for index, status in enumerate(PROMPT_DRIFT_STATUSES)}
 
 
 def create_prompt(
@@ -84,15 +96,16 @@ def create_prompt(
         prompt_template_version=prompt_template_version,
         source_references=references,
     )
-    prompt.versions.append(
-        PromptVersion(
-            version_number=1,
-            body=body,
-            created_by=authoring_actor,
-            task_context=_prompt_task_context(prompt),
-        )
+    initial_version = PromptVersion(
+        version_number=1,
+        body=body,
+        created_by=authoring_actor,
+        task_context=_prompt_task_context(prompt),
     )
+    prompt.versions.append(initial_version)
     session.add(prompt)
+    session.flush()
+    _capture_version_source_snapshots(initial_version, references)
     session.flush()
     record_audit_event(
         session,
@@ -110,7 +123,11 @@ def get_prompt(session: Session, prompt_id: str) -> Prompt | None:
     """Return a prompt by stable id."""
     return session.scalar(
         select(Prompt)
-        .options(selectinload(Prompt.source_references), selectinload(Prompt.versions))
+        .options(
+            selectinload(Prompt.source_references),
+            selectinload(Prompt.drift_acknowledgements),
+            selectinload(Prompt.versions).selectinload(PromptVersion.source_snapshots),
+        )
         .where(Prompt.id == prompt_id)
     )
 
@@ -125,7 +142,8 @@ def list_prompts(
     """List prompts with optional publication or goal filters."""
     statement = select(Prompt).options(
         selectinload(Prompt.source_references),
-        selectinload(Prompt.versions),
+        selectinload(Prompt.drift_acknowledgements),
+        selectinload(Prompt.versions).selectinload(PromptVersion.source_snapshots),
     )
     if status is not None:
         _require_choice(status, PROMPT_STATUSES, "prompt status")
@@ -157,18 +175,19 @@ def version_prompt(
         )
         or 0
     ) + 1
-    prompt.versions.append(
-        PromptVersion(
-            version_number=next_version,
-            body=body,
-            created_by=actor_id,
-            task_context=_prompt_task_context(prompt),
-        )
+    version = PromptVersion(
+        version_number=next_version,
+        body=body,
+        created_by=actor_id,
+        task_context=_prompt_task_context(prompt),
     )
+    prompt.versions.append(version)
     if prompt.status == "published":
         prompt.status = "in-review"
         prompt.reviewing_actor = None
         prompt.approval_timestamp = None
+    session.flush()
+    _capture_version_source_snapshots(version, prompt.source_references)
     session.flush()
     record_audit_event(
         session,
@@ -181,6 +200,89 @@ def version_prompt(
         after_summary=_prompt_summary(prompt),
     )
     return prompt
+
+
+def prompt_drift_status(prompt: Prompt, *, base_path: str | Path | None = None) -> str:
+    """Return prompt-level drift from version snapshots and source scan state."""
+    if not prompt.versions or not prompt.source_references:
+        return "current"
+    latest_version = prompt.versions[-1]
+    acknowledgement = next(
+        (
+            ack
+            for ack in reversed(prompt.drift_acknowledgements)
+            if ack.prompt_version_id == latest_version.id
+        ),
+        None,
+    )
+    snapshots = {
+        snapshot.source_reference_id: snapshot for snapshot in latest_version.source_snapshots
+    }
+    per_source = [
+        (
+            "current"
+            if _is_source_drift_acknowledged(reference, acknowledgement, base_path=base_path)
+            else _source_drift_for_reference(reference, snapshots.get(reference.id))
+        )
+        for reference in prompt.source_references
+    ]
+    return max(per_source, key=lambda status: _PROMPT_DRIFT_RANK[status])
+
+
+def acknowledge_prompt_drift(
+    session: Session,
+    prompt: Prompt,
+    *,
+    actor_id: str,
+    prompt_version_id: str | None = None,
+    source_subsystem: str = "api",
+    reviewed_source_states: dict[str, dict[str, Any]] | None = None,
+    base_path: str | Path | None = None,
+) -> PromptDriftAcknowledgement:
+    """Record that an author reviewed prompt-level source drift for one version."""
+    if not prompt.versions:
+        raise ValueError("prompt has no versions to acknowledge")
+    version_id = prompt_version_id or prompt.versions[-1].id
+    if not any(version.id == version_id for version in prompt.versions):
+        raise ValueError("prompt_version_id does not belong to prompt")
+    reviewed_states = (
+        capture_prompt_source_states(prompt, base_path=base_path)
+        if reviewed_source_states is None
+        else deepcopy(reviewed_source_states)
+    )
+    existing = next(
+        (ack for ack in prompt.drift_acknowledgements if ack.prompt_version_id == version_id),
+        None,
+    )
+    if existing is not None:
+        existing.acknowledged_by = actor_id
+        existing.acknowledged_at = datetime.now(UTC)
+        existing.acknowledged_source_states = reviewed_states
+        acknowledgement = existing
+    else:
+        acknowledgement = PromptDriftAcknowledgement(
+            prompt_id=prompt.id,
+            prompt_version_id=version_id,
+            acknowledged_by=actor_id,
+            acknowledged_source_states=reviewed_states,
+        )
+        prompt.drift_acknowledgements.append(acknowledgement)
+    session.flush()
+    record_audit_event(
+        session,
+        actor_id=actor_id,
+        action="acknowledge-drift",
+        entity_type="Prompt",
+        entity_id=prompt.id,
+        source_subsystem=source_subsystem,
+        after_summary={
+            "prompt_id": prompt.id,
+            "prompt_version_id": version_id,
+            "acknowledged_by": actor_id,
+            "acknowledged_source_states": reviewed_states,
+        },
+    )
+    return acknowledgement
 
 
 def require_publishable_prompt(prompt: Prompt) -> Prompt:
@@ -228,6 +330,128 @@ def publish_prompt(
         after_summary=_prompt_summary(prompt),
     )
     return prompt
+
+
+def _capture_version_source_snapshots(
+    version: PromptVersion,
+    references: Sequence[SourceReference],
+) -> None:
+    """Persist immutable source hashes for one prompt version."""
+    for reference in references:
+        version.source_snapshots.append(
+            PromptVersionSourceSnapshot(
+                source_reference_id=reference.id,
+                content_hash=reference.content_hash,
+                hash_algorithm=reference.hash_algorithm,
+            )
+        )
+
+
+def _resolved_markdown_hash(
+    reference: SourceReference, *, base_path: str | Path | None = None
+) -> str | None:
+    if reference.source_type != "markdown-file":
+        return None
+    try:
+        return compute_source_hash_for_reference(
+            source_type=reference.source_type,
+            stable_locator=reference.stable_locator,
+            passage_range=reference.passage_range,
+            content=None,
+            hash_algorithm=reference.hash_algorithm,
+            base_path=base_path,
+        )
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        logger.warning(
+            "unable to resolve markdown hash for source reference %s at %s: %s",
+            reference.id,
+            reference.stable_locator,
+            exc,
+        )
+        return None
+
+
+def _capture_acknowledged_source_states(
+    references: Sequence[SourceReference],
+    *,
+    base_path: str | Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Snapshot the reviewed state of each linked source reference."""
+    states: dict[str, dict[str, Any]] = {}
+    for reference in references:
+        state: dict[str, Any] = {
+            "content_hash": reference.content_hash,
+            "hash_algorithm": reference.hash_algorithm,
+            "drift_status": reference.drift_status,
+        }
+        resolved_hash = _resolved_markdown_hash(reference, base_path=base_path)
+        if resolved_hash is not None:
+            state["resolved_content_hash"] = resolved_hash
+        states[reference.id] = state
+    return states
+
+
+def capture_prompt_source_states(
+    prompt: Prompt, *, base_path: str | Path | None = None
+) -> dict[str, dict[str, Any]]:
+    """Capture the source state shown for drift acknowledgement."""
+    return _capture_acknowledged_source_states(prompt.source_references, base_path=base_path)
+
+
+def source_state_digest(states: Mapping[str, Mapping[str, Any]]) -> str:
+    """Return a stable digest of captured source states."""
+    payload = {reference_id: dict(state) for reference_id, state in states.items()}
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def prompt_source_state_digest(prompt: Prompt, *, base_path: str | Path | None = None) -> str:
+    """Return a stable digest of the source state shown for drift acknowledgement."""
+    return source_state_digest(capture_prompt_source_states(prompt, base_path=base_path))
+
+
+def _is_source_drift_acknowledged(
+    reference: SourceReference,
+    acknowledgement: PromptDriftAcknowledgement | None,
+    *,
+    base_path: str | Path | None = None,
+) -> bool:
+    if acknowledgement is None:
+        return False
+    acknowledged_states = acknowledgement.acknowledged_source_states or {}
+    state = acknowledged_states.get(reference.id)
+    if not isinstance(state, dict):
+        return False
+    if (
+        state.get("content_hash") != reference.content_hash
+        or state.get("hash_algorithm") != reference.hash_algorithm
+        or state.get("drift_status") != reference.drift_status
+    ):
+        return False
+    if reference.drift_status == "stale" and "resolved_content_hash" in state:
+        current_resolved_hash = _resolved_markdown_hash(reference, base_path=base_path)
+        if current_resolved_hash is None or current_resolved_hash != state["resolved_content_hash"]:
+            return False
+    return True
+
+
+def _source_drift_for_reference(
+    reference: SourceReference,
+    snapshot: PromptVersionSourceSnapshot | None,
+) -> str:
+    if reference.drift_status == "missing":
+        return "missing"
+    if reference.drift_status == "stale":
+        return "stale"
+    if snapshot is None:
+        return "unknown"
+    if (
+        snapshot.content_hash != reference.content_hash
+        or snapshot.hash_algorithm != reference.hash_algorithm
+    ):
+        return "stale"
+    return "current"
 
 
 def _get_goal(session: Session, learning_goal_id: str) -> LearningGoal:

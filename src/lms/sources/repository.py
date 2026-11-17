@@ -281,6 +281,34 @@ def compute_source_hash_for_reference(
     raise ValueError("content or content_hash is required for non-file source references")
 
 
+def rehash_source_reference(
+    session: Session,
+    reference: SourceReference,
+    *,
+    actor_id: str,
+    content: str | bytes | None = None,
+    base_path: str | Path | None = None,
+    source_subsystem: str = "drift-scan",
+) -> SourceReference:
+    """Recompute and store the current source hash, clearing drift_status to current."""
+    new_hash = compute_source_hash_for_reference(
+        source_type=reference.source_type,
+        stable_locator=reference.stable_locator,
+        passage_range=reference.passage_range,
+        content=content,
+        hash_algorithm=reference.hash_algorithm,
+        base_path=base_path,
+    )
+    return update_source_reference(
+        session,
+        reference,
+        actor_id=actor_id,
+        content_hash=new_hash,
+        drift_status="current",
+        source_subsystem=source_subsystem,
+    )
+
+
 def scan_source_references(
     session: Session,
     *,

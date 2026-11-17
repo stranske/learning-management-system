@@ -59,7 +59,13 @@ from lms.learners.models import Learner, LearnerReflection, LearningGoal, learni
 from lms.llm.models import LearningInteractionSkill, LLMFeedbackEvent, LLMSession
 from lms.llm.proposals import LLMProposal
 from lms.maintenance.models import DraftRejection, GradeDispute, MaintenanceItem
-from lms.prompts.models import Prompt, PromptVersion, prompt_source_references
+from lms.prompts.models import (
+    Prompt,
+    PromptDriftAcknowledgement,
+    PromptVersion,
+    PromptVersionSourceSnapshot,
+    prompt_source_references,
+)
 from lms.scheduling.models import (
     RemediationTrigger,
     ReviewCardState,
@@ -81,6 +87,8 @@ MODEL_BY_TYPE = {
     "LearningGoal": LearningGoal,
     "Prompt": Prompt,
     "PromptVersion": PromptVersion,
+    "PromptVersionSourceSnapshot": PromptVersionSourceSnapshot,
+    "PromptDriftAcknowledgement": PromptDriftAcknowledgement,
     "LLMSession": LLMSession,
     "Attempt": Attempt,
     "EvidenceRecord": EvidenceRecord,
@@ -166,6 +174,8 @@ EXPORT_ORDER = (
     LearningGoal,
     Prompt,
     PromptVersion,
+    PromptVersionSourceSnapshot,
+    PromptDriftAcknowledgement,
     LLMSession,
     Attempt,
     EvidenceRecord,
@@ -261,6 +271,14 @@ DEPENDENCIES = {
         "learning_goal_id": "LearningGoal",
     },
     "PromptVersion": {"prompt_id": "Prompt"},
+    "PromptVersionSourceSnapshot": {
+        "prompt_version_id": "PromptVersion",
+        "source_reference_id": "SourceReference",
+    },
+    "PromptDriftAcknowledgement": {
+        "prompt_id": "Prompt",
+        "prompt_version_id": "PromptVersion",
+    },
     "Attempt": {
         "learner_id": "Learner",
         "prompt_id": "Prompt",
