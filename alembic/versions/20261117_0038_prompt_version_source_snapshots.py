@@ -47,7 +47,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "prompt_version_id",
             "source_reference_id",
-            name=op.f("uq_prompt_version_source_snapshots_prompt_version_id"),
+            name="prompt_version_source_snapshot_unique",
         ),
     )
     op.create_index(
@@ -67,6 +67,7 @@ def upgrade() -> None:
         sa.Column("prompt_id", sa.String(length=36), nullable=False),
         sa.Column("prompt_version_id", sa.String(length=36), nullable=False),
         sa.Column("acknowledged_by", sa.String(length=255), nullable=False),
+        sa.Column("acknowledged_source_states", sa.JSON(), nullable=False),
         sa.Column(
             "acknowledged_at",
             sa.DateTime(timezone=True),
@@ -89,7 +90,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "prompt_id",
             "prompt_version_id",
-            name=op.f("uq_prompt_drift_acknowledgements_prompt_id"),
+            name="prompt_drift_acknowledgement_unique",
         ),
     )
     op.create_index(

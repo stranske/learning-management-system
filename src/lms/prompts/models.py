@@ -270,6 +270,11 @@ class PromptDriftAcknowledgement(Base):
         index=True,
     )
     acknowledged_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    acknowledged_source_states: Mapped[dict[str, dict[str, Any]]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+    )
     acknowledged_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,

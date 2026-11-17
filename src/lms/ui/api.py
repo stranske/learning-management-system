@@ -883,6 +883,7 @@ async def acknowledge_author_prompt_drift_route(
     """Record author review of prompt-level source drift for the latest version."""
     form = await _read_form(request)
     ownership_scope = form.get("ownership_scope", "personal")
+    submitted_version_id = _optional_text(form.get("prompt_version_id"))
     prompt = get_prompt(session, prompt_id)
     if prompt is None:
         return _author_prompts_surface(
@@ -891,8 +892,21 @@ async def acknowledge_author_prompt_drift_route(
             message=None,
             error="Prompt not found.",
         )
+    if not prompt.versions or submitted_version_id != prompt.versions[-1].id:
+        return _author_prompts_surface(
+            session=session,
+            ownership_scope=ownership_scope,
+            message=None,
+            error="Prompt version changed before drift was acknowledged; review the latest version.",
+        )
     try:
-        acknowledge_prompt_drift(session, prompt, actor_id="author-ui")
+        acknowledge_prompt_drift(
+            session,
+            prompt,
+            actor_id="author-ui",
+            prompt_version_id=submitted_version_id,
+            source_subsystem="author-ui",
+        )
         session.commit()
     except ValueError as exc:
         session.rollback()
@@ -1715,11 +1729,13 @@ def _author_prompts_surface(
     for prompt in prompts:
         drift_status = prompt_drift_status(prompt)
         acknowledge_form = ""
-        if drift_status != "current":
+        if drift_status != "current" and prompt.versions:
+            latest_version_id = prompt.versions[-1].id
             acknowledge_form = (
                 f"<form method='post' action='/app/author/prompts/{escape(prompt.id)}"
                 f"/acknowledge-drift'>"
                 f"<input type='hidden' name='ownership_scope' value='{escape(ownership_scope)}'>"
+                f"<input type='hidden' name='prompt_version_id' value='{escape(latest_version_id)}'>"
                 "<button type='submit'>Acknowledge drift</button></form>"
             )
         prompt_items.append(

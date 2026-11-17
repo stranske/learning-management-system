@@ -7,7 +7,7 @@ from pathlib import Path
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 import lms.prompts.models  # noqa: F401
 import lms.sources.models  # noqa: F401
@@ -93,14 +93,21 @@ def test_prompt_version_source_snapshot_round_trip(db_session: Session) -> None:
         )
     )
     db_session.commit()
+    version_id = version.id
+    source_id = source.id
+    db_session.expunge_all()
 
-    loaded = db_session.scalar(select(PromptVersion).where(PromptVersion.id == version.id))
+    loaded = db_session.scalar(
+        select(PromptVersion)
+        .options(selectinload(PromptVersion.source_snapshots))
+        .where(PromptVersion.id == version_id)
+    )
     assert loaded is not None
     assert len(loaded.source_snapshots) == 1
     snapshot = loaded.source_snapshots[0]
     assert snapshot.content_hash == "hash-v1"
     assert snapshot.hash_algorithm == "sha256"
-    assert snapshot.source_reference_id == source.id
+    assert snapshot.source_reference_id == source_id
 
 
 def test_prompt_drift_acknowledgement_is_per_prompt_version(db_session: Session) -> None:
@@ -135,11 +142,18 @@ def test_prompt_drift_acknowledgement_is_per_prompt_version(db_session: Session)
         )
     )
     db_session.commit()
+    prompt_id = prompt.id
+    version_id = version.id
+    db_session.expunge_all()
 
-    loaded = db_session.scalar(select(Prompt).where(Prompt.id == prompt.id))
+    loaded = db_session.scalar(
+        select(Prompt)
+        .options(selectinload(Prompt.drift_acknowledgements))
+        .where(Prompt.id == prompt_id)
+    )
     assert loaded is not None
     assert len(loaded.drift_acknowledgements) == 1
-    assert loaded.drift_acknowledgements[0].prompt_version_id == version.id
+    assert loaded.drift_acknowledgements[0].prompt_version_id == version_id
 
 
 def test_new_tables_exist_on_fresh_metadata_create_all() -> None:

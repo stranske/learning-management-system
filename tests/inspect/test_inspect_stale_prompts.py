@@ -42,6 +42,14 @@ def _seed_graph_and_source(session: Session, tmp_path: Path) -> tuple[dict[str, 
         status="published",
         actor_id="user:alice",
     )
+    user = User(
+        id="user-alice",
+        email="alice@example.test",
+        username="alice",
+        display_name="Alice",
+    )
+    session.add(user)
+    session.flush()
     learner = create_learner_for_user(session, user_id="user-alice", display_name="Alice")
     goal = create_learning_goal(
         session,
@@ -160,6 +168,60 @@ def test_prompt_versions_keep_source_hash_and_flag_drift_per_prompt(
     final_b = _reload_prompt(db_session, prompt_b.id)
     assert prompt_drift_status(final_a) == "current"
     assert prompt_drift_status(final_b) == "stale"
+
+
+def test_second_source_change_after_acknowledgement_reflags_drift(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Subsequent source changes after an acknowledgement re-flag prompt drift."""
+    ids, note = _seed_graph_and_source(db_session, tmp_path)
+    prompt = _create_draft_prompt(db_session, ids, body="Reviewed prompt")
+
+    note.write_text("# Heading\nfirst revision\n", encoding="utf-8")
+    scan_source_references(db_session, base_path=tmp_path, actor_id="system:test")
+    db_session.commit()
+
+    reloaded = _reload_prompt(db_session, prompt.id)
+    rehash_source_reference(
+        db_session,
+        reloaded.source_references[0],
+        actor_id="user:alice",
+        base_path=tmp_path,
+    )
+    db_session.commit()
+
+    after_first_rehash = _reload_prompt(db_session, prompt.id)
+    assert prompt_drift_status(after_first_rehash) == "stale"
+    acknowledge_prompt_drift(db_session, after_first_rehash, actor_id="user:bob")
+    db_session.commit()
+
+    acknowledged = _reload_prompt(db_session, prompt.id)
+    assert prompt_drift_status(acknowledged) == "current"
+
+    note.write_text("# Heading\nsecond revision\n", encoding="utf-8")
+    scan_source_references(db_session, base_path=tmp_path, actor_id="system:test")
+    db_session.commit()
+
+    after_second_scan = _reload_prompt(db_session, prompt.id)
+    assert prompt_drift_status(after_second_scan) == "stale"
+
+    rehash_source_reference(
+        db_session,
+        after_second_scan.source_references[0],
+        actor_id="user:alice",
+        base_path=tmp_path,
+    )
+    db_session.commit()
+
+    after_second_rehash = _reload_prompt(db_session, prompt.id)
+    assert prompt_drift_status(after_second_rehash) == "stale"
+
+    acknowledge_prompt_drift(db_session, after_second_rehash, actor_id="user:bob")
+    db_session.commit()
+
+    reacknowledged = _reload_prompt(db_session, prompt.id)
+    assert prompt_drift_status(reacknowledged) == "current"
 
 
 def test_legacy_prompt_versions_without_snapshots_report_unknown_hash(

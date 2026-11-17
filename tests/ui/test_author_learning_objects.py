@@ -18,7 +18,8 @@ from lms.graphs.models import KnowledgeNode
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.models import LearningGoal
 from lms.learners.repository import create_learner_for_user, create_learning_goal
-from lms.prompts.models import Prompt, PromptVersion
+from lms.prompts.models import Prompt, PromptDriftAcknowledgement, PromptVersion
+from lms.prompts.repository import get_prompt, version_prompt
 from lms.settings import Settings, get_settings
 from lms.sources.repository import create_source_reference, scan_source_references
 
@@ -182,21 +183,212 @@ def test_author_prompts_acknowledge_drift_action_clears_stale_status(
     assert "Acknowledge drift" in listing.text
 
     with session_factory() as session:
-        prompt_id = (
+        prompt = (
             session.query(Prompt)
             .join(PromptVersion)
             .filter(PromptVersion.body == "Prompt with markdown source")
             .one()
-            .id
         )
+        prompt_id = prompt.id
+        version_id = prompt.versions[-1].id
+
+    assert f"name='prompt_version_id' value='{version_id}'" in listing.text
 
     ack_response = client.post(
         f"/app/author/prompts/{prompt_id}/acknowledge-drift",
-        data={"ownership_scope": "personal"},
+        data={
+            "ownership_scope": "personal",
+            "prompt_version_id": version_id,
+        },
     )
     assert ack_response.status_code == 200
     assert "Prompt drift acknowledged." in ack_response.text
     assert "drift current" in client.get("/app/author/prompts").text
+
+    note.write_text("# Note\nchanged passage again\n", encoding="utf-8")
+    with session_factory() as session:
+        scan_source_references(session, base_path=tmp_path, actor_id="system:test")
+        session.commit()
+    assert "drift stale" in client.get("/app/author/prompts").text
+
+
+def test_author_prompts_acknowledge_drift_rejects_stale_version_submission(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    tmp_path: Path,
+) -> None:
+    """Submitting acknowledge-drift for v1 after v2 was created is rejected."""
+    client, session_factory = api_client
+    note = tmp_path / "prompt-version-race.md"
+    note.write_text("# Note\noriginal passage\n", encoding="utf-8")
+    with session_factory() as session:
+        node = create_knowledge_node(
+            session,
+            title="Version race node",
+            knowledge_type="conceptual",
+            scope="personal",
+            status="published",
+            actor_id="test-author",
+        )
+        learner = create_learner_for_user(
+            session,
+            user_id="author-version-race",
+            display_name="Version race learner",
+        )
+        goal = create_learning_goal(
+            session,
+            learner_id=learner.id,
+            title="Version race goal",
+            knowledge_type="conceptual",
+            target_node_ids=[node.id],
+            ownership_scope="personal",
+        )
+        source = create_source_reference(
+            session,
+            source_type="markdown-file",
+            stable_locator=str(note),
+            passage_range="L2-L2",
+            actor_id="test-author",
+        )
+        session.commit()
+        node_id = node.id
+        goal_id = goal.id
+        source_id = source.id
+
+    client.post(
+        "/app/author/prompts",
+        data={
+            "learning_goal_id": goal_id,
+            "target_node_id": node_id,
+            "knowledge_type": "conceptual",
+            "intended_cognitive_action": "explain",
+            "demand_level": "medium",
+            "expected_answer_form": "short-text",
+            "source_reference_ids": source_id,
+            "body": "Version 1 body",
+        },
+    )
+    note.write_text("# Note\nedited passage\n", encoding="utf-8")
+    with session_factory() as session:
+        scan_source_references(session, base_path=tmp_path, actor_id="system:test")
+        session.commit()
+        prompt_obj = (
+            session.query(Prompt)
+            .join(PromptVersion)
+            .filter(PromptVersion.body == "Version 1 body")
+            .one()
+        )
+        prompt_id = prompt_obj.id
+        v1_id = prompt_obj.versions[-1].id
+
+    listing = client.get("/app/author/prompts")
+    assert listing.status_code == 200
+    assert f"name='prompt_version_id' value='{v1_id}'" in listing.text
+
+    with session_factory() as session:
+        loaded_prompt = get_prompt(session, prompt_id)
+        assert loaded_prompt is not None
+        version_prompt(session, loaded_prompt, body="Version 2 body", actor_id="other-author")
+        session.commit()
+
+    stale_submit = client.post(
+        f"/app/author/prompts/{prompt_id}/acknowledge-drift",
+        data={
+            "ownership_scope": "personal",
+            "prompt_version_id": v1_id,
+        },
+    )
+    assert stale_submit.status_code == 200
+    assert "Prompt version changed before drift was acknowledged" in stale_submit.text
+    assert "Prompt drift acknowledged." not in stale_submit.text
+    with session_factory() as session:
+        assert session.query(PromptDriftAcknowledgement).count() == 0
+
+
+def test_author_prompts_acknowledge_drift_requires_authentication(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    tmp_path: Path,
+) -> None:
+    """Unauthenticated POST to acknowledge-drift is rejected when auth_required=True."""
+    client, session_factory = api_client
+    note = tmp_path / "auth-prompt-source.md"
+    note.write_text("# Note\ninitial text\n", encoding="utf-8")
+    with session_factory() as session:
+        node = create_knowledge_node(
+            session,
+            title="Auth drift node",
+            knowledge_type="conceptual",
+            scope="personal",
+            status="published",
+            actor_id="test-author",
+        )
+        learner = create_learner_for_user(
+            session,
+            user_id="author-auth-drift",
+            display_name="Auth drift learner",
+        )
+        goal = create_learning_goal(
+            session,
+            learner_id=learner.id,
+            title="Auth drift goal",
+            knowledge_type="conceptual",
+            target_node_ids=[node.id],
+            ownership_scope="personal",
+        )
+        source = create_source_reference(
+            session,
+            source_type="markdown-file",
+            stable_locator=str(note),
+            passage_range="L2-L2",
+            actor_id="test-author",
+        )
+        session.commit()
+        node_id = node.id
+        goal_id = goal.id
+        source_id = source.id
+
+    client.post(
+        "/app/author/prompts",
+        data={
+            "learning_goal_id": goal_id,
+            "target_node_id": node_id,
+            "knowledge_type": "conceptual",
+            "intended_cognitive_action": "explain",
+            "demand_level": "medium",
+            "expected_answer_form": "short-text",
+            "source_reference_ids": source_id,
+            "body": "Auth protected prompt",
+        },
+    )
+    note.write_text("# Note\nupdated text\n", encoding="utf-8")
+    with session_factory() as session:
+        scan_source_references(session, base_path=tmp_path, actor_id="system:test")
+        session.commit()
+        prompt_obj = (
+            session.query(Prompt)
+            .join(PromptVersion)
+            .filter(PromptVersion.body == "Auth protected prompt")
+            .one()
+        )
+        prompt_id = prompt_obj.id
+        version_id = prompt_obj.versions[-1].id
+
+    app = cast(FastAPI, client.app)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        auth_required=True,
+        auth_secret_key="test-secret-not-for-prod",
+    )
+
+    unauthenticated = client.post(
+        f"/app/author/prompts/{prompt_id}/acknowledge-drift",
+        data={
+            "ownership_scope": "personal",
+            "prompt_version_id": version_id,
+        },
+        follow_redirects=False,
+    )
+    assert unauthenticated.status_code in (302, 401)
+    with session_factory() as session:
+        assert session.query(PromptDriftAcknowledgement).count() == 0
 
 
 def test_author_ui_blocks_cross_scope_normal_edge(

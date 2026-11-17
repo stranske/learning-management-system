@@ -86,6 +86,28 @@ def test_export_import_round_trip_m5_runtime_records(tmp_path: Path, db_session:
         "MaintenancePlan",
     ]
     by_type = {record["type"]: record["record"] for record in records}
+    assert by_type["PromptVersionSourceSnapshot"] == {
+        "content_hash": "hash",
+        "created_at": by_type["PromptVersionSourceSnapshot"]["created_at"],
+        "hash_algorithm": "sha256",
+        "id": "prompt-version-snapshot-1",
+        "prompt_version_id": "prompt-version-1",
+        "source_reference_id": "source-1",
+    }
+    assert by_type["PromptDriftAcknowledgement"] == {
+        "acknowledged_at": by_type["PromptDriftAcknowledgement"]["acknowledged_at"],
+        "acknowledged_by": "author",
+        "acknowledged_source_states": {
+            "source-1": {
+                "content_hash": "hash",
+                "drift_status": "current",
+                "hash_algorithm": "sha256",
+            }
+        },
+        "id": "prompt-drift-ack-1",
+        "prompt_id": "prompt-1",
+        "prompt_version_id": "prompt-version-1",
+    }
     assert by_type["CapabilityTarget"]["target_node_ids"] == ["node-1"]
     assert by_type["CapabilityTarget"]["target_competency_ids"] == ["competency-1"]
     assert by_type["CapabilityEstimate"]["commentary"] == (
@@ -109,8 +131,30 @@ def test_export_import_round_trip_m5_runtime_records(tmp_path: Path, db_session:
         target_session.commit()
 
         assert dry_run.counts["MaintenancePlan"] == 1
+        assert dry_run.counts["PromptVersionSourceSnapshot"] == 1
+        assert dry_run.counts["PromptDriftAcknowledgement"] == 1
         assert applied.counts["RubricScore"] == 1
         assert target_session.get(MaintenancePlan, "maintenance-plan-1") is not None
+        imported_snapshot = target_session.get(
+            PromptVersionSourceSnapshot, "prompt-version-snapshot-1"
+        )
+        assert imported_snapshot is not None
+        assert imported_snapshot.source_reference_id == "source-1"
+        assert imported_snapshot.prompt_version_id == "prompt-version-1"
+        assert imported_snapshot.content_hash == "hash"
+        assert imported_snapshot.hash_algorithm == "sha256"
+        imported_ack = target_session.get(PromptDriftAcknowledgement, "prompt-drift-ack-1")
+        assert imported_ack is not None
+        assert imported_ack.prompt_id == "prompt-1"
+        assert imported_ack.prompt_version_id == "prompt-version-1"
+        assert imported_ack.acknowledged_by == "author"
+        assert imported_ack.acknowledged_source_states == {
+            "source-1": {
+                "content_hash": "hash",
+                "drift_status": "current",
+                "hash_algorithm": "sha256",
+            }
+        }
         imported_target = target_session.get(CapabilityTarget, "capability-target-1")
         assert imported_target is not None
         assert [node.id for node in imported_target.target_nodes] == ["node-1"]
@@ -215,6 +259,13 @@ def _seed_m5_runtime_records(session: Session) -> None:
         prompt_id=prompt.id,
         prompt_version_id=prompt_version.id,
         acknowledged_by="author",
+        acknowledged_source_states={
+            source.id: {
+                "content_hash": source.content_hash,
+                "hash_algorithm": "sha256",
+                "drift_status": "current",
+            }
+        },
     )
     llm_session = LLMSession(
         id="llm-1",
