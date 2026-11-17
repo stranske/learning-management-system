@@ -122,6 +122,19 @@ def test_learner_html_scopes_mastery_and_calibration(
         assert f'href="/app/learner?{query}"' in calibration.text
 
 
+def test_author_graph_shows_institutional_mastery(mixed_scope_client: TestClient) -> None:
+    response = mixed_scope_client.get(
+        "/app/author/graph", params={"learner_id": "mixed", "scope": "institutional"}
+    )
+
+    assert response.status_code == 200
+    assert 'data-node-id="personal-node"' not in response.text
+    institutional_node = response.text.split('data-node-id="institutional-node"', 1)[1].split(
+        "</article>", 1
+    )[0]
+    assert "mastery 0%, confidence " in institutional_node
+
+
 def test_all_scope_aggregations_tag_estimates_and_calibration(mixed_scope_session: Session) -> None:
     estimates, evidence = mastery_estimates_with_evidence_all_scopes(mixed_scope_session, "mixed")
     expected = {"personal-node": "personal", "institutional-node": "institutional"}
