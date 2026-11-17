@@ -108,6 +108,59 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
 
 
 @pytest.mark.parametrize(
+    ("points", "expected_normalized"),
+    [
+        (50, 0.50),
+        (84, 0.84),
+    ],
+)
+def test_rubric_partial_credit_keeps_null_correctness(
+    db_session: Session,
+    points: int,
+    expected_normalized: float,
+) -> None:
+    """Scores below feedback_threshold stay non-binary; FSRS uses normalized_score."""
+    node = create_knowledge_node(
+        db_session,
+        title="Partial credit node",
+        knowledge_type="procedural",
+        scope="personal",
+        actor_id="user:alice",
+        status="published",
+    )
+    rubric = create_rubric(
+        db_session,
+        title="Hundred-point rubric",
+        ownership_scope="personal",
+        authoring_actor="user:alice",
+        knowledge_node_id=node.id,
+        criteria=[
+            {
+                "criterion_order": 1,
+                "description": "Unassisted retrieval.",
+                "max_points": 100,
+            }
+        ],
+    )
+    attempt_id = _attempt(db_session)
+    criterion_id = rubric.criteria[0].id
+    score = score_attempt_with_rubric(
+        db_session,
+        rubric_id=rubric.id,
+        attempt_id=attempt_id,
+        scorer_type="human",
+        criterion_scores=[{"criterion_id": criterion_id, "points": points}],
+    )
+    db_session.commit()
+
+    assert score.normalized_score == pytest.approx(expected_normalized)
+    evidence = get_evidence_record(db_session, score.evidence_record_id)
+    assert evidence is not None
+    assert evidence.correctness is None
+    assert evidence.normalized_score == pytest.approx(expected_normalized)
+
+
+@pytest.mark.parametrize(
     ("feedback_threshold", "remediation_threshold", "message"),
     [
         (value, 0.5, "feedback_threshold must be a finite number between 0.0 and 1.0")

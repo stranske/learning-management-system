@@ -26,12 +26,14 @@ Command:
 python3 -m pytest tests/scheduling/test_runtime_wiring.py::test_rubric_scores_map_to_fsrs_bands -q --no-cov
 ```
 
-Observed failure (2026-11-17):
+Observed failure (2026-11-17 keepalive verification):
 
 ```text
+FAILED ...[0.49-1-partial-under-half] - assert False is None  (null-correctness assertion)
 FAILED ...[0.5-2-partial-under-mastery] - assert 1 == 2
 FAILED ...[0.84-2-partial-under-mastery] - assert 1 == 2
-2 failed, 2 passed (0.49 and 0.85 parametrizations also failed on null-correctness assertions)
+FAILED ...[0.85-3-partial-at-mastery] - assert True is None  (null-correctness assertion)
+4 failed in 0.86s
 ```
 
 The `0.50` and `0.84` cases are the scheduling regression called out in the issue:
