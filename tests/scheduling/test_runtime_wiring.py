@@ -49,6 +49,8 @@ def _seed_authenticated_rubric_attempt(
     user: User,
     *,
     tag: str,
+    confidence_rating: int = 5,
+    support_level: str = "none",
 ) -> tuple[str, str, str, str, str]:
     """Create a learner-owned attempt and hundred-point rubric for HTTP scoring."""
     with session_factory() as session:
@@ -88,8 +90,8 @@ def _seed_authenticated_rubric_attempt(
                 "observed_evidence": "Attempt submitted.",
                 "next_action": "Await rubric score.",
             },
-            confidence_rating=5,
-            support_level="none",
+            confidence_rating=confidence_rating,
+            support_level=support_level,
         )
         session.commit()
         return (
@@ -99,6 +101,55 @@ def _seed_authenticated_rubric_attempt(
             rubric.criteria[0].id,
             node.id,
         )
+
+
+@pytest.mark.parametrize(
+    ("normalized_score", "support_level", "expected_rating", "rule_id"),
+    [
+        (0.85, "none", 3, "partial-at-mastery"),
+        (0.85, "coach", 2, "supported-or-low-confidence-correct"),
+    ],
+)
+def test_rubric_scores_retain_condition_caps_with_null_correctness(
+    deployed_scheduling_api_client: tuple[TestClient, sessionmaker[Session], User],
+    normalized_score: float,
+    support_level: str,
+    expected_rating: int,
+    rule_id: str,
+) -> None:
+    """Null-correctness rubric evidence must still run FSRS condition-cap controls."""
+    client, session_factory, current_user = deployed_scheduling_api_client
+    tag = f"cap-{normalized_score:.2f}-{support_level}".replace(".", "-")
+    _learner_id, attempt_id, rubric_id, criterion_id, _node_id = _seed_authenticated_rubric_attempt(
+        session_factory,
+        current_user,
+        tag=tag,
+        support_level=support_level,
+    )
+    points = int(round(normalized_score * 100))
+    response = client.post(
+        "/rubric-scores",
+        json={
+            "rubric_id": rubric_id,
+            "attempt_id": attempt_id,
+            "scorer_type": "human",
+            "criterion_scores": [{"criterion_id": criterion_id, "points": points}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    evidence_id = response.json()["evidence_record_id"]
+
+    with session_factory() as session:
+        evidence = session.get(EvidenceRecord, evidence_id)
+        assert evidence is not None
+        assert evidence.correctness is None
+        assert evidence.support_level == support_level
+        item = session.scalar(
+            select(ReviewQueueItem).where(ReviewQueueItem.source_evidence_record_id == evidence_id)
+        )
+        assert item is not None
+        assert item.decision_log["fsrs_rating"]["value"] == expected_rating
+        assert item.decision_log["fsrs_rating"]["rule_id"] == rule_id
 
 
 @pytest.mark.parametrize(
