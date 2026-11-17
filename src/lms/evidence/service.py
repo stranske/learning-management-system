@@ -49,11 +49,15 @@ def schedule_for_evidence(
     *,
     attempt: Attempt,
     evidence_record: EvidenceRecord,
+    rubric_below_feedback_threshold: bool | None = None,
 ) -> tuple[ReviewQueueItem | None, list[ReviewQueueItem]]:
     """Advance the loop for scored evidence: next review + remediation triggers."""
     queue_item = schedule_from_attempt(session, attempt=attempt, evidence_record=evidence_record)
     remediation_items = apply_remediation_triggers(
-        session, attempt=attempt, evidence_record=evidence_record
+        session,
+        attempt=attempt,
+        evidence_record=evidence_record,
+        rubric_below_feedback_threshold=rubric_below_feedback_threshold,
     )
     return (queue_item if isinstance(queue_item, ReviewQueueItem) else None), remediation_items
 

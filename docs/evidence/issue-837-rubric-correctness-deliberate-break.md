@@ -26,7 +26,7 @@ Command:
 python3 -m pytest tests/scheduling/test_runtime_wiring.py::test_rubric_scores_map_to_fsrs_bands -q --no-cov
 ```
 
-Observed failure (2026-11-17 keepalive verification):
+Observed failure (2026-11-17 closer repair verification):
 
 ```text
 FAILED ...[0.49-1-partial-under-half] - assert False is None  (null-correctness assertion)
@@ -48,7 +48,7 @@ Restore `correctness=None` in `src/lms/feedback/scoring.py`, then rerun:
 python3 -m pytest tests/scheduling/test_runtime_wiring.py::test_rubric_scores_map_to_fsrs_bands -q --no-cov
 ```
 
-Observed restored pass (2026-11-17):
+Observed restored pass (2026-11-17 closer repair):
 
 ```text
 collected 4 items
