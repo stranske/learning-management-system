@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -16,10 +17,10 @@ from lms.feedback.models import Rubric, RubricCriterion
 from lms.graphs.models import KnowledgeNode
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.models import LearningGoal
-from lms.learners.repository import create_learner_for_user
+from lms.learners.repository import create_learner_for_user, create_learning_goal
 from lms.prompts.models import Prompt, PromptVersion
 from lms.settings import Settings, get_settings
-from lms.sources.repository import create_source_reference
+from lms.sources.repository import create_source_reference, scan_source_references
 
 
 def test_author_can_create_goal_node_edge_and_prompt_from_ui(
@@ -110,6 +111,92 @@ def test_author_can_create_goal_node_edge_and_prompt_from_ui(
             .one()
         )
         assert prompt.authoring_actor == "author-ui"
+
+
+def test_author_prompts_acknowledge_drift_action_clears_stale_status(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    tmp_path: Path,
+) -> None:
+    """Author prompts POST acknowledge-drift records review and updates the surface."""
+    client, session_factory = api_client
+    note = tmp_path / "prompt-source.md"
+    note.write_text("# Note\nstable text\n", encoding="utf-8")
+    with session_factory() as session:
+        node = create_knowledge_node(
+            session,
+            title="Drift target",
+            knowledge_type="conceptual",
+            scope="personal",
+            status="published",
+            actor_id="test-author",
+        )
+        learner = create_learner_for_user(
+            session,
+            user_id="author-drift",
+            display_name="Drift learner",
+        )
+        goal = create_learning_goal(
+            session,
+            learner_id=learner.id,
+            title="Drift goal",
+            knowledge_type="conceptual",
+            target_node_ids=[node.id],
+            ownership_scope="personal",
+        )
+        source = create_source_reference(
+            session,
+            source_type="markdown-file",
+            stable_locator=str(note),
+            passage_range="L2-L2",
+            actor_id="test-author",
+        )
+        session.commit()
+        node_id = node.id
+        goal_id = goal.id
+        source_id = source.id
+
+    create_response = client.post(
+        "/app/author/prompts",
+        data={
+            "learning_goal_id": goal_id,
+            "target_node_id": node_id,
+            "knowledge_type": "conceptual",
+            "intended_cognitive_action": "explain",
+            "demand_level": "medium",
+            "expected_answer_form": "short-text",
+            "source_reference_ids": source_id,
+            "body": "Prompt with markdown source",
+        },
+    )
+    assert create_response.status_code == 200
+    assert "drift current" in create_response.text
+
+    note.write_text("# Note\nchanged passage\n", encoding="utf-8")
+    with session_factory() as session:
+        scan_source_references(session, base_path=tmp_path, actor_id="system:test")
+        session.commit()
+
+    listing = client.get("/app/author/prompts")
+    assert listing.status_code == 200
+    assert "drift stale" in listing.text
+    assert "Acknowledge drift" in listing.text
+
+    with session_factory() as session:
+        prompt_id = (
+            session.query(Prompt)
+            .join(PromptVersion)
+            .filter(PromptVersion.body == "Prompt with markdown source")
+            .one()
+            .id
+        )
+
+    ack_response = client.post(
+        f"/app/author/prompts/{prompt_id}/acknowledge-drift",
+        data={"ownership_scope": "personal"},
+    )
+    assert ack_response.status_code == 200
+    assert "Prompt drift acknowledged." in ack_response.text
+    assert "drift current" in client.get("/app/author/prompts").text
 
 
 def test_author_ui_blocks_cross_scope_normal_edge(
