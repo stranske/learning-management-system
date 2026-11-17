@@ -289,7 +289,17 @@ def test_acknowledged_drift_returns_stale_when_markdown_source_unreadable(
     assert prompt_drift_status(acknowledged) == "current"
 
     note.unlink()
-    with caplog.at_level(logging.WARNING, logger="lms.prompts.repository"):
-        after_missing = _reload_prompt(db_session, prompt.id)
-        assert prompt_drift_status(after_missing) == "stale"
+    repository_logger = logging.getLogger("lms.prompts.repository")
+    previous_disabled = repository_logger.disabled
+    previous_global_disable = logging.root.manager.disable
+    repository_logger.disabled = False
+    logging.disable(logging.NOTSET)
+    try:
+        with caplog.at_level(logging.WARNING, logger="lms.prompts.repository"):
+            after_missing = _reload_prompt(db_session, prompt.id)
+            assert prompt_drift_status(after_missing) == "stale"
+    finally:
+        repository_logger.disabled = previous_disabled
+        logging.disable(previous_global_disable)
+
     assert ids["source_id"] in caplog.text or "unable to resolve markdown hash" in caplog.text

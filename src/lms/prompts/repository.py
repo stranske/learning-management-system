@@ -218,9 +218,11 @@ def prompt_drift_status(prompt: Prompt) -> str:
         snapshot.source_reference_id: snapshot for snapshot in latest_version.source_snapshots
     }
     per_source = [
-        "current"
-        if _is_source_drift_acknowledged(reference, acknowledgement)
-        else _source_drift_for_reference(reference, snapshots.get(reference.id))
+        (
+            "current"
+            if _is_source_drift_acknowledged(reference, acknowledgement)
+            else _source_drift_for_reference(reference, snapshots.get(reference.id))
+        )
         for reference in prompt.source_references
     ]
     return max(per_source, key=lambda status: _PROMPT_DRIFT_RANK[status])
@@ -403,10 +405,7 @@ def _is_source_drift_acknowledged(
         return False
     if reference.drift_status == "stale" and "resolved_content_hash" in state:
         current_resolved_hash = _resolved_markdown_hash(reference)
-        if (
-            current_resolved_hash is None
-            or current_resolved_hash != state["resolved_content_hash"]
-        ):
+        if current_resolved_hash is None or current_resolved_hash != state["resolved_content_hash"]:
             return False
     return True
 
