@@ -87,12 +87,12 @@ def calibration_for_learner(
     session: Session,
     learner_id: str,
     *,
-    scope: str | None = None,
+    scope: str,
     knowledge_node_id: str | None = None,
     high_confidence_min: int = DEFAULT_HIGH_CONFIDENCE_MIN,
     low_accuracy_max: float = DEFAULT_LOW_ACCURACY_MAX,
 ) -> CalibrationReport:
-    """Compute confidence-vs-accuracy calibration for one learner.
+    """Compute confidence-vs-accuracy calibration for one learner and scope.
 
     Buckets every scored, confidence-rated evidence record by its
     ``confidence_rating`` and, per bucket, reports observed accuracy (mean of
@@ -104,20 +104,21 @@ def calibration_for_learner(
     Records without a ``confidence_rating`` or without any accuracy signal are
     ignored; they cannot inform calibration.
     """
-    query = select(EvidenceRecord).where(
-        EvidenceRecord.learner_id == learner_id,
-        EvidenceRecord.confidence_rating.is_not(None),
-        or_(
-            EvidenceRecord.correctness.is_not(None),
-            EvidenceRecord.normalized_score.is_not(None),
-        ),
+    if scope not in OWNERSHIP_SCOPES:
+        raise ValueError(f"unknown ownership scope {scope!r}")
+    query = (
+        select(EvidenceRecord)
+        .join(KnowledgeNode, KnowledgeNode.id == EvidenceRecord.knowledge_node_id)
+        .where(
+            EvidenceRecord.learner_id == learner_id,
+            KnowledgeNode.ownership_scope == scope,
+            EvidenceRecord.confidence_rating.is_not(None),
+            or_(
+                EvidenceRecord.correctness.is_not(None),
+                EvidenceRecord.normalized_score.is_not(None),
+            ),
+        )
     )
-    if scope is not None:
-        if scope not in OWNERSHIP_SCOPES:
-            raise ValueError(f"unknown ownership scope {scope!r}")
-        query = query.join(
-            KnowledgeNode, KnowledgeNode.id == EvidenceRecord.knowledge_node_id
-        ).where(KnowledgeNode.ownership_scope == scope)
     if knowledge_node_id is not None:
         query = query.where(EvidenceRecord.knowledge_node_id == knowledge_node_id)
     records = list(session.scalars(query))
@@ -161,3 +162,26 @@ def calibration_for_learner(
         buckets=buckets,
         overconfident=any(bucket.overconfident for bucket in buckets),
     )
+
+
+def calibration_all_scopes(
+    session: Session,
+    learner_id: str,
+    *,
+    knowledge_node_id: str | None = None,
+    high_confidence_min: int = DEFAULT_HIGH_CONFIDENCE_MIN,
+    low_accuracy_max: float = DEFAULT_LOW_ACCURACY_MAX,
+) -> list[dict[str, Any]]:
+    """Return one scope-tagged calibration report per ownership scope."""
+    reports = []
+    for scope in OWNERSHIP_SCOPES:
+        report = calibration_for_learner(
+            session,
+            learner_id,
+            scope=scope,
+            knowledge_node_id=knowledge_node_id,
+            high_confidence_min=high_confidence_min,
+            low_accuracy_max=low_accuracy_max,
+        )
+        reports.append(report.as_dict() | {"ownership_scope": scope})
+    return reports

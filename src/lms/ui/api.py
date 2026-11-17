@@ -51,6 +51,7 @@ from lms.graphs.repository import (
     list_knowledge_edges,
     list_knowledge_nodes,
 )
+from lms.graphs.schemas import OwnershipScope
 from lms.learners.identity import (
     CurrentUserDep,
     LearnerIdDep,
@@ -110,15 +111,20 @@ def service_worker_route() -> Response:
 def learner_app_route(
     session: SessionDep,
     learner_id: LearnerIdDep,
+    ownership_scope: Annotated[OwnershipScope, Query()] = "personal",
 ) -> str:
     """Return the learner home dashboard."""
-    return _dashboard_surface(session=session, learner_id=learner_id)
+    return _dashboard_surface(session=session, learner_id=learner_id, ownership_scope=ownership_scope)
 
 
 @router.get("/app/learner/calibration", response_class=HTMLResponse)
-def learner_calibration_route(session: SessionDep, learner_id: LearnerIdDep) -> str:
+def learner_calibration_route(
+    session: SessionDep,
+    learner_id: LearnerIdDep,
+    ownership_scope: Annotated[OwnershipScope, Query()] = "personal",
+) -> str:
     """Show calibration for the learner resolved through authenticated ownership."""
-    report = calibration_for_learner(session, learner_id).as_dict()
+    report = calibration_for_learner(session, learner_id, scope=ownership_scope).as_dict()
     rows = []
     for bucket in report["buckets"]:
         timing = bucket["median_response_time_seconds"]
@@ -143,6 +149,7 @@ def learner_calibration_route(session: SessionDep, learner_id: LearnerIdDep) -> 
         )
     )
     flag = "Yes" if report["overconfident"] else "No"
+    learner_query = _learner_scope_query(learner_id, ownership_scope)
     return render_page(
         "Calibration",
         f"""
@@ -152,7 +159,7 @@ def learner_calibration_route(session: SessionDep, learner_id: LearnerIdDep) -> 
           <p>A bucket is flagged when confidence is at least 4/5 and observed accuracy
           is below 50%. Unscored or unrated records are excluded.</p>
           {table}
-          <p><a href="/app/learner?learner_id={quote_plus(learner_id)}">Back to learner home</a></p>
+          <p><a href="/app/learner?{learner_query}">Back to learner home</a></p>
         </main>
         """,
         active_path="/app/learner",
@@ -998,14 +1005,14 @@ async def create_author_case_route(request: Request, session: SessionDep) -> str
     return _author_cases_page(session, notice=notice)
 
 
-def _dashboard_surface(*, session: Session, learner_id: str) -> str:
+def _dashboard_surface(*, session: Session, learner_id: str, ownership_scope: OwnershipScope) -> str:
     """Return the learner home dashboard aggregating the learner's own state."""
     goals = list_learning_goals_for_learner(session, learner_id=learner_id)
     goal_progress = {
         goal.id: goal_progress_for_learner(session, learner_id=learner_id, goal_id=goal.id)
         for goal in goals
     }
-    mastery = mastery_estimates_for_learner(session, learner_id)
+    mastery = mastery_estimates_for_learner(session, learner_id, scope=ownership_scope)
     review = get_review_queue_overview(session, learner_id=learner_id)
     actions = list_feedback_actions(session, learner_id=learner_id, status="open")
     evidence = _recent_evidence(session, learner_id=learner_id)
@@ -1030,7 +1037,7 @@ def _dashboard_surface(*, session: Session, learner_id: str) -> str:
             informational, not scores.</p>
           </header>
           {_onboarding_panel(goals=goals, evidence=evidence, review=review)}
-          {_dashboard_quick_links(learner_id=learner_id)}
+          {_dashboard_quick_links(learner_id=learner_id, ownership_scope=ownership_scope)}
           <div class="dashboard-grid">
             {_next_actions_panel(actions, zone=zone)}
             {_reviews_panel(review, titles=titles, zone=zone)}
@@ -1072,13 +1079,21 @@ def _onboarding_panel(
     """
 
 
-def _dashboard_quick_links(*, learner_id: str) -> str:
+def _learner_scope_query(learner_id: str, ownership_scope: OwnershipScope) -> str:
+    query = f"learner_id={quote_plus(learner_id)}"
+    if ownership_scope != "personal":
+        query += f"&amp;ownership_scope={ownership_scope}"
+    return query
+
+
+def _dashboard_quick_links(*, learner_id: str, ownership_scope: OwnershipScope) -> str:
+    learner_query = _learner_scope_query(learner_id, ownership_scope)
     return (
         '<nav class="dashboard-links" aria-label="Dashboard quick links"><ul>'
         '<li><a href="/learn">Start or continue an attempt</a></li>'
         '<li><a href="/app/learner/review">Open the review queue</a></li>'
         '<li><a href="/app/learner/maintenance">Keep knowledge reachable</a></li>'
-        f'<li><a href="/app/learner/calibration?learner_id={quote_plus(learner_id)}">'
+        f'<li><a href="/app/learner/calibration?{learner_query}">'
         "Compare confidence and accuracy</a></li>"
         '<li><a href="#next-actions">See feedback actions</a></li>'
         '<li><a href="#capability">See capability targets</a></li>'

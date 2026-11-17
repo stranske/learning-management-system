@@ -14,6 +14,7 @@ from lms.capability.repository import (
 )
 from lms.evidence.repository import create_evidence_record
 from lms.feedback.repository import create_feedback_action
+from lms.graphs.models import KnowledgeNode
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.repository import create_learner_for_user
 from lms.scheduling.service import seed_new_learning_item
@@ -40,6 +41,14 @@ def test_dashboard_shows_next_actions_reviews_and_recent_evidence(
 ) -> None:
     client, session_factory = api_client
     with session_factory() as session:
+        session.add(
+            KnowledgeNode(
+                id="node-spacing",
+                title="node-spacing",
+                knowledge_type="conceptual",
+                ownership_scope="personal",
+            )
+        )
         create_feedback_action(
             session,
             learner_id="learner-1",

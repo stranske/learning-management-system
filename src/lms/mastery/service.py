@@ -18,13 +18,10 @@ def mastery_estimates_for_learner(
     session: Session,
     learner_id: str,
     *,
-    scope: str | None = None,
+    scope: str,
     policy: MasteryEstimatorPolicy | None = None,
 ) -> list[dict[str, Any]]:
-    """Compute mastery; scoped callers filter source nodes before aggregation.
-
-    Omitting scope retains the existing internal all-scope computation.
-    """
+    """Compute mastery from evidence belonging to the requested scope."""
     estimates, _ = mastery_estimates_with_evidence_for_learner(
         session,
         learner_id,
@@ -38,18 +35,18 @@ def mastery_estimates_with_evidence_for_learner(
     session: Session,
     learner_id: str,
     *,
-    scope: str | None = None,
+    scope: str,
     policy: MasteryEstimatorPolicy | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, list[EvidenceRecord]]]:
     """Compute mastery and return the grouped evidence used for the estimates."""
+    if scope not in OWNERSHIP_SCOPES:
+        raise ValueError(f"unknown ownership scope {scope!r}")
     policy = policy or MasteryEstimatorPolicy()
-    statement = select(EvidenceRecord).where(EvidenceRecord.learner_id == learner_id)
-    if scope is not None:
-        if scope not in OWNERSHIP_SCOPES:
-            raise ValueError(f"unknown ownership scope {scope!r}")
-        statement = statement.join(
-            KnowledgeNode, KnowledgeNode.id == EvidenceRecord.knowledge_node_id
-        ).where(KnowledgeNode.ownership_scope == scope)
+    statement = (
+        select(EvidenceRecord)
+        .join(KnowledgeNode, KnowledgeNode.id == EvidenceRecord.knowledge_node_id)
+        .where(EvidenceRecord.learner_id == learner_id, KnowledgeNode.ownership_scope == scope)
+    )
     records = list(
         session.scalars(
             statement.order_by(
@@ -84,3 +81,32 @@ def mastery_estimates_with_evidence_for_learner(
             }
         )
     return estimates, dict(by_node)
+
+
+def mastery_estimates_all_scopes(
+    session: Session,
+    learner_id: str,
+    *,
+    policy: MasteryEstimatorPolicy | None = None,
+) -> list[dict[str, Any]]:
+    """Return scope-tagged mastery estimates across ownership scopes."""
+    estimates, _ = mastery_estimates_with_evidence_all_scopes(session, learner_id, policy=policy)
+    return estimates
+
+
+def mastery_estimates_with_evidence_all_scopes(
+    session: Session,
+    learner_id: str,
+    *,
+    policy: MasteryEstimatorPolicy | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, list[EvidenceRecord]]]:
+    """Return scope-tagged estimates and their evidence keyed by node ID."""
+    estimates: list[dict[str, Any]] = []
+    evidence_by_node: dict[str, list[EvidenceRecord]] = {}
+    for scope in OWNERSHIP_SCOPES:
+        scoped_estimates, scoped_evidence = mastery_estimates_with_evidence_for_learner(
+            session, learner_id, scope=scope, policy=policy
+        )
+        estimates.extend(estimate | {"ownership_scope": scope} for estimate in scoped_estimates)
+        evidence_by_node.update(scoped_evidence)
+    return estimates, evidence_by_node
