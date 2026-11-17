@@ -91,7 +91,7 @@ def test_normalized_score_used_when_correctness_missing(db_session: Session) -> 
 
 def test_rubric_scoring_calibration_uses_normalized_score(db_session: Session) -> None:
     """Rubric-scored rows with null correctness contribute normalized_score to calibration."""
-    from lms.evidence.repository import create_attempt
+    from lms.evidence.repository import create_attempt, list_evidence_records
     from lms.feedback.repository import create_rubric
     from lms.feedback.scoring import score_attempt_with_rubric
     from lms.graphs.repository import create_knowledge_node
@@ -140,6 +140,13 @@ def test_rubric_scoring_calibration_uses_normalized_score(db_session: Session) -
             ],
         )
     db_session.commit()
+
+    records = list_evidence_records(db_session, learner_id="learner-rubric-cal")
+    assert len(records) == 3
+    for record in records:
+        assert record.correctness is None
+        assert record.normalized_score == pytest.approx(0.8)
+        assert record.scoring_method == "rubric-scored"
 
     report = calibration_for_learner(db_session, "learner-rubric-cal")
     bucket = next(b for b in report.buckets if b.confidence_rating == 5)
