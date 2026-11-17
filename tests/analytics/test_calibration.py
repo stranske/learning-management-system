@@ -162,7 +162,7 @@ def test_rubric_scoring_calibration_uses_normalized_score(db_session: Session) -
         assert record.normalized_score == pytest.approx(0.8)
         assert record.scoring_method == "rubric-scored"
 
-    report = calibration_for_learner(db_session, "learner-rubric-cal")
+    report = calibration_for_learner(db_session, "learner-rubric-cal", scope="personal")
     bucket = next(b for b in report.buckets if b.confidence_rating == 5)
     assert bucket.observed_accuracy == pytest.approx(0.8)
     assert bucket.count == 3

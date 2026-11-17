@@ -240,7 +240,7 @@ def test_rubric_evidence_preserves_attempt_conditions_and_prompt_version(
     assert engine_review.call_args.kwargs["rating_value"] == 2
     assert scheduled_evidence == [expected_evidence]
     assert evidence.normalized_score == 1.0
-    assert evidence.correctness is True
+    assert evidence.correctness is None
     assert evidence.prompt_version_id == version_id
     assert evidence.demand_level == "medium"
     assert evidence.knowledge_type == "procedural"
