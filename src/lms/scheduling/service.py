@@ -228,9 +228,7 @@ def _binary_incorrect_signal(
 ) -> bool:
     if evidence_record.correctness is False:
         return True
-    return (
-        evidence_record.correctness is None and rubric_below_feedback_threshold is True
-    )
+    return evidence_record.correctness is None and rubric_below_feedback_threshold is True
 
 
 def _trigger_matches(

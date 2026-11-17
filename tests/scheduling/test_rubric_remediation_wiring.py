@@ -82,15 +82,17 @@ def _queue_items_for_learner(
 ) -> list[ReviewQueueItem]:
     with session_factory() as session:
         return list(
-            session.scalars(
-                select(ReviewQueueItem).where(ReviewQueueItem.learner_id == learner_id)
-            )
+            session.scalars(select(ReviewQueueItem).where(ReviewQueueItem.learner_id == learner_id))
         )
 
 
-def _split_queue_items(items: list[ReviewQueueItem]) -> tuple[list[ReviewQueueItem], list[ReviewQueueItem]]:
+def _split_queue_items(
+    items: list[ReviewQueueItem],
+) -> tuple[list[ReviewQueueItem], list[ReviewQueueItem]]:
     fsrs_items = [
-        item for item in items if isinstance(item.decision_log, dict) and "fsrs_rating" in item.decision_log
+        item
+        for item in items
+        if isinstance(item.decision_log, dict) and "fsrs_rating" in item.decision_log
     ]
     trigger_items = [
         item
@@ -128,9 +130,7 @@ def test_rubric_high_confidence_error_missing_without_below_feedback_predicate(
         trigger_rules={"min_confidence": 4},
         ownership_scope="personal",
     )
-    items = apply_remediation_triggers(
-        db_session, attempt=attempt, evidence_record=evidence
-    )
+    items = apply_remediation_triggers(db_session, attempt=attempt, evidence_record=evidence)
     assert items == []
 
 
