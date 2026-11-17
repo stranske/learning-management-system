@@ -24,9 +24,9 @@ from lms.feedback.repository import create_rubric
 from lms.feedback.scoring import score_attempt_with_rubric
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.models import Learner
-from lms.scheduling.card_state import advance_card_state
 from lms.main import create_app
 from lms.scheduling import service as scheduling_service
+from lms.scheduling.card_state import advance_card_state
 from lms.scheduling.models import (
     ReviewCardState,
     ReviewQueueItem,
