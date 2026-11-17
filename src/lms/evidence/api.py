@@ -39,10 +39,13 @@ def create_attempt_route(
     require_learner_ownership(
         session, user=current_user, settings=settings, learner_id=payload.learner_id
     )
-    recorded = record_attempt(
-        session,
-        **payload.model_dump(),
-    )
+    try:
+        recorded = record_attempt(session, **payload.model_dump())
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
     session.commit()
     attempt = recorded.attempt
     session.refresh(attempt)

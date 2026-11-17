@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
@@ -88,7 +89,12 @@ def create_prompt(
         prompt_template_version=prompt_template_version,
         source_references=references,
     )
-    initial_version = PromptVersion(version_number=1, body=body, created_by=authoring_actor)
+    initial_version = PromptVersion(
+        version_number=1,
+        body=body,
+        created_by=authoring_actor,
+        task_context=_prompt_task_context(prompt),
+    )
     prompt.versions.append(initial_version)
     session.add(prompt)
     session.flush()
@@ -152,6 +158,7 @@ def version_prompt(
 ) -> Prompt:
     """Update prompt metadata and append a new immutable wording version."""
     before = _prompt_summary(prompt)
+    _preserve_outgoing_version_context(session, prompt)
     _apply_prompt_changes(prompt, changes)
     next_version = (
         session.scalar(
@@ -161,7 +168,12 @@ def version_prompt(
         )
         or 0
     ) + 1
-    version = PromptVersion(version_number=next_version, body=body, created_by=actor_id)
+    version = PromptVersion(
+        version_number=next_version,
+        body=body,
+        created_by=actor_id,
+        task_context=_prompt_task_context(prompt),
+    )
     prompt.versions.append(version)
     if prompt.status == "published":
         prompt.status = "in-review"
@@ -370,6 +382,37 @@ def _apply_prompt_changes(prompt: Prompt, changes: dict[str, Any]) -> None:
 def _require_choice(value: str, allowed: tuple[str, ...], label: str) -> None:
     if value not in allowed:
         raise ValueError(f"unknown {label} {value!r}; expected one of {allowed}")
+
+
+def _prompt_task_context(prompt: Prompt) -> dict[str, Any]:
+    return {
+        "target_node_id": prompt.target_node_id,
+        "learning_goal_id": prompt.learning_goal_id,
+        "knowledge_type": prompt.knowledge_type,
+        "demand_level": prompt.demand_level,
+        "intended_cognitive_action": prompt.intended_cognitive_action,
+        "expected_answer_form": prompt.expected_answer_form,
+        "source_reference_ids": [source.id for source in prompt.source_references],
+    }
+
+
+def _preserve_outgoing_version_context(session: Session, prompt: Prompt) -> None:
+    """Freeze task metadata on the current version before prompt-level edits."""
+    latest_version = session.scalar(
+        select(PromptVersion)
+        .where(PromptVersion.prompt_id == prompt.id)
+        .order_by(PromptVersion.version_number.desc())
+        .limit(1)
+    )
+    if latest_version is not None and latest_version.task_context is None:
+        latest_version.task_context = _prompt_task_context(prompt)
+
+
+def version_task_context(version: PromptVersion) -> dict[str, Any] | None:
+    """Return a copied task snapshot for a version when one was recorded."""
+    if version.task_context is None:
+        return None
+    return deepcopy(version.task_context)
 
 
 def _prompt_summary(prompt: Prompt) -> dict[str, Any]:

@@ -59,6 +59,10 @@ class Attempt(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     learner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     prompt_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    prompt_version_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("prompt_versions.id", ondelete="RESTRICT"), index=True
+    )
+    task_context: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     response_text: Mapped[str] = mapped_column(Text, nullable=False)
     response_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     confidence_rating: Mapped[int | None] = mapped_column(Integer)

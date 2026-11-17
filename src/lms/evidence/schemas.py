@@ -37,6 +37,7 @@ class AttemptCreate(BaseModel):
 
     learner_id: str = Field(min_length=1, max_length=36)
     prompt_id: str = Field(min_length=1, max_length=36)
+    prompt_version_id: str | None = Field(default=None, min_length=1, max_length=36)
     response_text: str = Field(min_length=1)
     response_metadata: dict[str, object] | None = None
     confidence_rating: int | None = Field(default=None, ge=1, le=5)
@@ -66,6 +67,8 @@ class AttemptRead(BaseModel):
     id: str
     learner_id: str
     prompt_id: str
+    prompt_version_id: str | None
+    task_context: dict[str, object] | None
     response_text: str
     response_metadata: dict[str, object] | None
     confidence_rating: int | None

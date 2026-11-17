@@ -13,6 +13,7 @@ from lms.evidence.api import list_evidence_records_route
 from lms.evidence.models import EVIDENCE_KINDS, Attempt, EvidenceRecord
 from lms.evidence.repository import create_attempt, create_evidence_record, list_evidence_records
 from lms.evidence.schemas import AttemptCreate, AttemptEvidenceCreate, EvidenceRecordRead
+from lms.prompts.models import Prompt
 from lms.settings import Settings
 
 
@@ -70,7 +71,9 @@ def _evidence_payload() -> dict[str, object]:
     }
 
 
-def test_evidence_record_roundtrip_full_schema(db_session: Session) -> None:
+def test_evidence_record_roundtrip_full_schema(
+    db_session: Session, published_prompt: Prompt
+) -> None:
     """Attempt scoring creates and reads back the verbose evidence schema."""
     payload = _attempt_payload()
     payload["evidence"] = _evidence_payload()
@@ -88,6 +91,12 @@ def test_evidence_record_roundtrip_full_schema(db_session: Session) -> None:
     assert record.attempt_id == attempt.id
     assert record.prompt_id == "prompt-1"
     assert record.prompt_version_id == "prompt-version-1"
+    assert attempt.prompt_version_id == record.prompt_version_id
+    assert record.attempt_context == {
+        "surface": "api-test",
+        "input_mode": "typed",
+        "task_context": attempt.task_context,
+    }
     assert record.timestamp.replace(tzinfo=UTC) == datetime(2026, 5, 1, 12, 30, tzinfo=UTC)
     assert record.evidence_kind == "observed"
     assert record.demand_level == "medium"

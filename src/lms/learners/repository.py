@@ -203,6 +203,7 @@ def knowledge_profile_for_learner(
     estimates, evidence_by_estimate_node = mastery_estimates_with_evidence_for_learner(
         session,
         learner_id,
+        scope=ownership_scope,
     )
     if not estimates:
         return {"learner_id": learner_id, "ownership_scope": ownership_scope, "items": []}
@@ -329,7 +330,7 @@ def goal_progress_for_learner(
     target_node_ids = [node.id for node in goal.target_nodes]
     target_count = len(target_node_ids)
 
-    estimates = mastery_estimates_for_learner(session, learner_id)
+    estimates = mastery_estimates_for_learner(session, learner_id, scope=goal.ownership_scope)
     estimate_by_node = {
         str(estimate["knowledge_node_id"]): float(estimate["current_estimate"])
         for estimate in estimates

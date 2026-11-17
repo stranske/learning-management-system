@@ -14,6 +14,7 @@ from lms.auth.login import SettingsDep
 from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
 from lms.graphs.models import KnowledgeNode
+from lms.graphs.schemas import OwnershipScope
 from lms.learners.identity import CurrentUserDep, require_learner_ownership
 from lms.mastery.service import mastery_estimates_for_learner
 from lms.scheduling.models import ReviewQueueItem, SchedulerDecision
@@ -234,6 +235,7 @@ def learner_calibration_route(
     current_user: CurrentUserDep,
     settings: SettingsDep,
     knowledge_node_id: Annotated[str | None, Query()] = None,
+    ownership_scope: Annotated[OwnershipScope, Query()] = "personal",
 ) -> dict[str, Any]:
     """Return confidence-vs-accuracy calibration for one learner.
 
@@ -243,7 +245,7 @@ def learner_calibration_route(
     """
     require_learner_ownership(session, user=current_user, settings=settings, learner_id=learner_id)
     return calibration_for_learner(
-        session, learner_id, knowledge_node_id=knowledge_node_id
+        session, learner_id, scope=ownership_scope, knowledge_node_id=knowledge_node_id
     ).as_dict()
 
 

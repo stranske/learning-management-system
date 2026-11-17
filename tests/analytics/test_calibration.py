@@ -22,7 +22,18 @@ from lms.db.base import Base
 from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
 from lms.evidence.repository import create_evidence_record
+from lms.graphs.models import KnowledgeNode
 from lms.main import create_app
+
+
+def _seed_personal_nodes(session: Session, *node_ids: str) -> None:
+    session.add_all(
+        KnowledgeNode(
+            id=node_id, title=node_id, knowledge_type="factual", ownership_scope="personal"
+        )
+        for node_id in node_ids
+    )
+    session.flush()
 
 
 def _record(session: Session, learner_id: str, *, confidence: int, correct: bool) -> None:
@@ -38,12 +49,13 @@ def _record(session: Session, learner_id: str, *, confidence: int, correct: bool
 
 def test_overconfident_learner_flagged(db_session: Session) -> None:
     """High confidence (5) paired with low accuracy (~0.2) is flagged."""
+    _seed_personal_nodes(db_session, "node-1")
     # 5 high-confidence attempts, only 1 correct -> accuracy 0.2.
     for index in range(5):
         _record(db_session, "learner-over", confidence=5, correct=index == 0)
     db_session.commit()
 
-    report = calibration_for_learner(db_session, "learner-over")
+    report = calibration_for_learner(db_session, "learner-over", scope="personal")
 
     assert report.overconfident is True
     high_bucket = next(b for b in report.buckets if b.confidence_rating == 5)
@@ -55,6 +67,7 @@ def test_overconfident_learner_flagged(db_session: Session) -> None:
 
 def test_well_calibrated_learner_not_flagged(db_session: Session) -> None:
     """High confidence matched by high accuracy is not flagged."""
+    _seed_personal_nodes(db_session, "node-1")
     for index in range(5):
         # 4 of 5 correct at confidence 5 -> accuracy 0.8.
         _record(db_session, "learner-ok", confidence=5, correct=index != 0)
@@ -63,7 +76,7 @@ def test_well_calibrated_learner_not_flagged(db_session: Session) -> None:
         _record(db_session, "learner-ok", confidence=1, correct=False)
     db_session.commit()
 
-    report = calibration_for_learner(db_session, "learner-ok")
+    report = calibration_for_learner(db_session, "learner-ok", scope="personal")
 
     assert report.overconfident is False
     assert all(not bucket.overconfident for bucket in report.buckets)
@@ -71,6 +84,7 @@ def test_well_calibrated_learner_not_flagged(db_session: Session) -> None:
 
 def test_normalized_score_used_when_correctness_missing(db_session: Session) -> None:
     """Records without a boolean correctness fall back to normalized_score."""
+    _seed_personal_nodes(db_session, "node-1")
     for _ in range(3):
         create_evidence_record(
             db_session,
@@ -82,7 +96,7 @@ def test_normalized_score_used_when_correctness_missing(db_session: Session) -> 
         )
     db_session.commit()
 
-    report = calibration_for_learner(db_session, "learner-score")
+    report = calibration_for_learner(db_session, "learner-score", scope="personal")
 
     bucket = next(b for b in report.buckets if b.confidence_rating == 5)
     assert bucket.observed_accuracy == pytest.approx(0.1)
@@ -91,6 +105,7 @@ def test_normalized_score_used_when_correctness_missing(db_session: Session) -> 
 
 def test_unrated_or_unscored_records_ignored(db_session: Session) -> None:
     """Records lacking confidence or any accuracy signal do not count."""
+    _seed_personal_nodes(db_session, "node-1")
     create_evidence_record(
         db_session,
         learner_id="learner-sparse",
@@ -108,7 +123,7 @@ def test_unrated_or_unscored_records_ignored(db_session: Session) -> None:
     )
     db_session.commit()
 
-    report = calibration_for_learner(db_session, "learner-sparse")
+    report = calibration_for_learner(db_session, "learner-sparse", scope="personal")
 
     assert report.sample_size == 0
     assert report.buckets == []
@@ -127,6 +142,7 @@ def test_nonfinite_accuracy_preserves_correctness_precedence(
 @pytest.mark.parametrize("score", [float("nan"), float("inf"), float("-inf")])
 def test_calibration_ignores_nan_normalized_score(db_session: Session, score: float) -> None:
     """Corrupt loaded scores must not contribute counts, accuracy, or timing."""
+    _seed_personal_nodes(db_session, "node-1")
     create_evidence_record(
         db_session,
         learner_id="learner-nonfinite",
@@ -152,7 +168,7 @@ def test_calibration_ignores_nan_normalized_score(db_session: Session, score: fl
     for record in corrupt_records:
         set_committed_value(record, "normalized_score", score)
 
-    report = calibration_for_learner(db_session, "learner-nonfinite")
+    report = calibration_for_learner(db_session, "learner-nonfinite", scope="personal")
 
     assert report.sample_size == 1
     assert len(report.buckets) == 1
@@ -199,6 +215,7 @@ def _client() -> Generator[tuple[TestClient, Session]]:
 
 def test_knowledge_node_filter_isolates_records(db_session: Session) -> None:
     """Passing knowledge_node_id excludes records from other nodes."""
+    _seed_personal_nodes(db_session, "node-A", "node-B")
     # Overconfident on node-A.
     for index in range(5):
         create_evidence_record(
@@ -219,7 +236,9 @@ def test_knowledge_node_filter_isolates_records(db_session: Session) -> None:
         )
     db_session.commit()
 
-    report = calibration_for_learner(db_session, "learner-filter", knowledge_node_id="node-A")
+    report = calibration_for_learner(
+        db_session, "learner-filter", scope="personal", knowledge_node_id="node-A"
+    )
 
     assert report.knowledge_node_id == "node-A"
     assert report.sample_size == 5
@@ -228,6 +247,7 @@ def test_knowledge_node_filter_isolates_records(db_session: Session) -> None:
 
 def test_calibration_endpoint_surfaces_overconfidence(db_session: Session) -> None:
     """The Inspect calibration endpoint returns the flag over a real request."""
+    _seed_personal_nodes(db_session, "node-1")
     for index in range(5):
         _record(db_session, "learner-api", confidence=5, correct=index == 0)
     corrupt_record = create_evidence_record(
@@ -270,6 +290,7 @@ def test_calibration_endpoint_surfaces_overconfidence(db_session: Session) -> No
 def test_calibration_endpoint_filters_by_knowledge_node() -> None:
     """The Inspect calibration endpoint forwards knowledge_node_id filtering."""
     with _client() as (client, session):
+        _seed_personal_nodes(session, "node-A", "node-B")
         for index in range(5):
             create_evidence_record(
                 session,
@@ -301,9 +322,14 @@ def test_calibration_endpoint_filters_by_knowledge_node() -> None:
 
 
 @pytest.mark.parametrize("scope", ["personal", "institutional"])
-def test_calibration_aggregates_only_scoped_node_evidence(db_session, scope):
-    from lms.graphs.models import KnowledgeNode
+def test_calibration_aggregates_only_scoped_node_evidence(db_session: Session, scope: str) -> None:
+    _seed_mixed_scopes(db_session)
+    report = calibration_for_learner(db_session, "mixed", scope=scope)
+    assert report.sample_size == 1
+    assert report.buckets[0].observed_accuracy == (1.0 if scope == "personal" else 0.0)
 
+
+def _seed_mixed_scopes(db_session: Session) -> None:
     for other in ("personal", "institutional"):
         db_session.add(
             KnowledgeNode(id=other, title=other, knowledge_type="factual", ownership_scope=other)
@@ -317,6 +343,26 @@ def test_calibration_aggregates_only_scoped_node_evidence(db_session, scope):
             correctness=other == "personal",
         )
     db_session.commit()
-    report = calibration_for_learner(db_session, "mixed", scope=scope)
-    assert report.sample_size == 1
-    assert report.buckets[0].observed_accuracy == (1.0 if scope == "personal" else 0.0)
+
+
+def test_inspect_calibration_endpoint_respects_scope() -> None:
+    with _client() as (client, session):
+        _seed_mixed_scopes(session)
+        path = "/inspect/learners/mixed/calibration"
+
+        personal = client.get(path)
+        assert personal.status_code == 200
+        assert personal.json()["sample_size"] == 1
+        assert personal.json()["buckets"][0]["observed_accuracy"] == 1.0
+
+        institutional = client.get(path, params={"ownership_scope": "institutional"})
+        assert institutional.status_code == 200
+        assert institutional.json()["sample_size"] == 1
+        assert institutional.json()["buckets"][0]["observed_accuracy"] == 0.0
+
+        wrong_scope = client.get(path, params={"knowledge_node_id": "institutional"})
+        assert wrong_scope.status_code == 200
+        assert wrong_scope.json()["sample_size"] == 0
+
+        invalid = client.get(path, params={"ownership_scope": "all"})
+        assert invalid.status_code == 422
