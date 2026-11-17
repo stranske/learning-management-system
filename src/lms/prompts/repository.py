@@ -202,8 +202,13 @@ def prompt_drift_status(prompt: Prompt) -> str:
     latest_version = prompt.versions[-1]
     if any(ack.prompt_version_id == latest_version.id for ack in prompt.drift_acknowledgements):
         return "current"
-    # deliberate-break (#834): source-only drift — rehash clears flags incorrectly.
-    per_source = [reference.drift_status for reference in prompt.source_references]
+    snapshots = {
+        snapshot.source_reference_id: snapshot for snapshot in latest_version.source_snapshots
+    }
+    per_source = [
+        _source_drift_for_reference(reference, snapshots.get(reference.id))
+        for reference in prompt.source_references
+    ]
     return max(per_source, key=lambda status: _PROMPT_DRIFT_RANK[status])
 
 
