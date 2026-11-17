@@ -8,6 +8,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from lms.auth.models import User, utc_now
@@ -145,6 +146,38 @@ def test_attempt_context_migration_preserves_unknown_legacy_rows_and_downgrades(
             and fk["options"]["ondelete"] == "RESTRICT"
             for fk in foreign_keys
         )
+        # Exercise the migrated constraint, beyond its introspected definition.
+        with engine.connect() as connection:
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+            connection.execute(
+                text("UPDATE attempts SET prompt_version_id = 'version-1' WHERE id = 'legacy-1'")
+            )
+            connection.commit()
+            with (
+                pytest.raises(IntegrityError, match="FOREIGN KEY constraint failed"),
+                connection.begin_nested(),
+            ):
+                connection.execute(text("DELETE FROM prompt_versions WHERE id = 'version-1'"))
+            with (
+                pytest.raises(IntegrityError, match="FOREIGN KEY constraint failed"),
+                connection.begin_nested(),
+            ):
+                connection.execute(
+                    text(
+                        "UPDATE attempts SET prompt_version_id = 'missing-version' "
+                        "WHERE id = 'legacy-1'"
+                    )
+                )
+            assert (
+                connection.execute(
+                    text("SELECT prompt_version_id FROM attempts WHERE id = 'legacy-1'")
+                ).scalar_one()
+                == "version-1"
+            )
+            # The reference remains nullable, so genuinely unknown provenance is valid.
+            connection.execute(text("UPDATE attempts SET prompt_version_id = NULL"))
+            connection.commit()
         command.downgrade(config, "20260924_0036")
         assert {"task_context", "prompt_version_id"}.isdisjoint(
             column["name"] for column in inspect(engine).get_columns("attempts")

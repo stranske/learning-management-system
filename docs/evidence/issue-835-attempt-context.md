@@ -197,3 +197,54 @@ Staging the test file failed because `.git/index.lock` cannot be created on the
 read-only filesystem. Adding `needs-human` was also rejected by the connector's
 approval policy. Delivery requires a runner with writable git metadata; PR body
 reconciliation requires permission to update PR #839.
+
+## Follow-up: migrated version reference enforcement
+
+Reviewed commits `072aceb`, `98c17c1`, and `98def5b` before continuing.
+They already contain the four requested production changes and the schema,
+legacy migration, synthetic-caller, delayed-version, and condition-preservation
+regressions. Their verified tasks should be checked in the PR body; the initial
+checklist reconciliation attempt was rejected by the connector with
+`MCP tool call requires approval, but approval policy is never`.
+
+The first additional task now has database behavior assertions in
+`tests/evidence/test_attempts_migration.py`, beyond foreign-key introspection.
+With SQLite foreign-key enforcement enabled, an attempt can reference v1;
+deleting that referenced version or replacing its ID with an unknown version
+raises `IntegrityError`. Both failed operations preserve the saved v1 reference.
+Returning the reference to null remains valid, and downgrade/re-upgrade still
+preserves the historical rows.
+
+Verification on 2026-11-17:
+
+- [x] All four production tasks verified by review and the related passing tests.
+- [x] Named rubric regression: **5 passed** after restoring both mutations.
+- [x] Omitted condition kwargs: **5 failed**, actual FSRS rating **3 instead of 2**.
+- [x] Replaced saved version with the current version: **5 failed** at the
+  saved-v1 evidence assertion. Both temporary source mutations were reverted.
+- [x] Related attempt, migration, and entire rubric scoring files: **276 passed**.
+- [x] Final migrated-constraint check after lint fixes: **3 passed**.
+- [x] UI activity-attempt file: **17 passed** with a temporary pytest plugin in
+  `/tmp/issue835_uvloop.py` selecting the installed uvloop backend. The default
+  asyncio run timed out after 40 seconds. No application behavior or assertions
+  were changed by the temporary plugin.
+- [x] Required repository-wide Black gate: **457 files unchanged**.
+  Ruff and Mypy passed for the changed migration test; `git diff --check` passed.
+
+Commands used `PYTEST_ADDOPTS='--no-cov -m "not slow"'` for the targeted behavior
+checks. The named regression command and both temporary mutations are the same
+as documented above. Fresh mutation logs are in `/tmp/issue835-conditions.log`,
+`/tmp/issue835-version.log`, and `/tmp/issue835-restored.log`.
+
+Delivery remains blocked: `git add tests/evidence/test_attempts_migration.py`
+failed to create `.git/index.lock` on the read-only filesystem. The final PR
+checklist update, blocker comment, and `needs-human` label were each rejected
+with `MCP tool call requires approval, but approval policy is never`. The two
+changed files remain uncommitted. PR #839 was verified open and ready for review
+(`draft=false`) after these attempts.
+
+Delivery remains blocked: staging the meaningful Python test change with
+`git add tests/evidence/test_attempts_migration.py` fails because
+`.git/index.lock` cannot be created on the read-only filesystem. A runner with
+writable git metadata must commit the test change, and remote write permission
+is required to reconcile the PR checkboxes and attach this verification record.
