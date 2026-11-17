@@ -114,7 +114,9 @@ def learner_app_route(
     ownership_scope: Annotated[OwnershipScope, Query()] = "personal",
 ) -> str:
     """Return the learner home dashboard."""
-    return _dashboard_surface(session=session, learner_id=learner_id, ownership_scope=ownership_scope)
+    return _dashboard_surface(
+        session=session, learner_id=learner_id, ownership_scope=ownership_scope
+    )
 
 
 @router.get("/app/learner/calibration", response_class=HTMLResponse)
@@ -1005,7 +1007,9 @@ async def create_author_case_route(request: Request, session: SessionDep) -> str
     return _author_cases_page(session, notice=notice)
 
 
-def _dashboard_surface(*, session: Session, learner_id: str, ownership_scope: OwnershipScope) -> str:
+def _dashboard_surface(
+    *, session: Session, learner_id: str, ownership_scope: OwnershipScope
+) -> str:
     """Return the learner home dashboard aggregating the learner's own state."""
     goals = list_learning_goals_for_learner(session, learner_id=learner_id)
     goal_progress = {

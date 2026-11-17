@@ -40,6 +40,13 @@ def mixed_scope_session(db_session: Session) -> Session:
             confidence_rating=5,
             correctness=scope == "personal",
         )
+        create_evidence_record(
+            db_session,
+            learner_id="other-learner",
+            knowledge_node_id=f"{scope}-node",
+            confidence_rating=5,
+            correctness=scope != "personal",
+        )
     db_session.commit()
     return db_session
 
@@ -57,6 +64,8 @@ def test_rest_mastery_defaults_to_personal_scope(mixed_scope_client: TestClient)
 
     assert response.status_code == 200
     assert [row["knowledge_node_id"] for row in response.json()] == ["personal-node"]
+    assert response.json()[0]["learner_id"] == "mixed"
+    assert response.json()[0]["evidence_count"] == 1
 
 
 def test_rest_mastery_respects_institutional_scope(mixed_scope_client: TestClient) -> None:
@@ -66,6 +75,7 @@ def test_rest_mastery_respects_institutional_scope(mixed_scope_client: TestClien
 
     assert response.status_code == 200
     assert [row["knowledge_node_id"] for row in response.json()] == ["institutional-node"]
+    assert response.json()[0]["evidence_count"] == 1
 
 
 @pytest.mark.parametrize(
@@ -73,7 +83,9 @@ def test_rest_mastery_respects_institutional_scope(mixed_scope_client: TestClien
     ["/learners/mixed/mastery-estimates", "/app/learner", "/app/learner/calibration"],
 )
 def test_learner_routes_reject_invalid_scope(mixed_scope_client: TestClient, path: str) -> None:
-    response = mixed_scope_client.get(path, params={"learner_id": "mixed", "ownership_scope": "all"})
+    response = mixed_scope_client.get(
+        path, params={"learner_id": "mixed", "ownership_scope": "all"}
+    )
 
     assert response.status_code == 422
 
@@ -134,8 +146,27 @@ def test_all_scope_aggregations_tag_estimates_and_calibration(mixed_scope_sessio
         calibration_for_learner,
     ],
 )
-def test_scoped_aggregations_reject_unknown_scope(
+def test_scoped_aggregations_require_scope_keyword(
     db_session: Session, aggregate: Callable[..., object]
 ) -> None:
+    with pytest.raises(TypeError, match="required keyword-only argument: 'scope'"):
+        aggregate(db_session, "mixed")
+
+    with pytest.raises(TypeError, match="positional"):
+        aggregate(db_session, "mixed", "personal")
+
+
+@pytest.mark.parametrize(
+    "aggregate",
+    [
+        mastery_estimates_for_learner,
+        mastery_estimates_with_evidence_for_learner,
+        calibration_for_learner,
+    ],
+)
+@pytest.mark.parametrize("scope", [None, "", "all", "Personal"])
+def test_scoped_aggregations_reject_unknown_scope(
+    db_session: Session, aggregate: Callable[..., object], scope: str | None
+) -> None:
     with pytest.raises(ValueError, match="unknown ownership scope"):
-        aggregate(db_session, "mixed", scope="all")
+        aggregate(db_session, "mixed", scope=scope)
