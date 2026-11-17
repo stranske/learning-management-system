@@ -6,8 +6,10 @@ Deliberate-break evidence (source-only drift break reverted): see
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -263,3 +265,31 @@ def test_prompt_drift_status_reloads_after_session_close(
 
     reloaded = _reload_prompt(db_session, prompt.id)
     assert prompt_drift_status(reloaded) == "stale"
+
+
+def test_acknowledged_drift_returns_stale_when_markdown_source_unreadable(
+    db_session: Session,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unreadable markdown after acknowledgement fails closed and keeps prompt drift stale."""
+    ids, note = _seed_graph_and_source(db_session, tmp_path)
+    prompt = _create_draft_prompt(db_session, ids, body="Ack then missing file")
+
+    note.write_text("# Heading\nstale passage\n", encoding="utf-8")
+    scan_source_references(db_session, base_path=tmp_path, actor_id="system:test")
+    db_session.commit()
+
+    after_scan = _reload_prompt(db_session, prompt.id)
+    assert prompt_drift_status(after_scan) == "stale"
+    acknowledge_prompt_drift(db_session, after_scan, actor_id="user:bob")
+    db_session.commit()
+
+    acknowledged = _reload_prompt(db_session, prompt.id)
+    assert prompt_drift_status(acknowledged) == "current"
+
+    note.unlink()
+    with caplog.at_level(logging.WARNING, logger="lms.prompts.repository"):
+        after_missing = _reload_prompt(db_session, prompt.id)
+        assert prompt_drift_status(after_missing) == "stale"
+    assert ids["source_id"] in caplog.text or "unable to resolve markdown hash" in caplog.text

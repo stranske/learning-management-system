@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import cast
 
@@ -193,12 +194,16 @@ def test_author_prompts_acknowledge_drift_action_clears_stale_status(
         version_id = prompt.versions[-1].id
 
     assert f"name='prompt_version_id' value='{version_id}'" in listing.text
+    digest_match = re.search(r"name='source_state_digest' value='([^']*)'", listing.text)
+    assert digest_match is not None
+    source_state_digest = digest_match.group(1)
 
     ack_response = client.post(
         f"/app/author/prompts/{prompt_id}/acknowledge-drift",
         data={
             "ownership_scope": "personal",
             "prompt_version_id": version_id,
+            "source_state_digest": source_state_digest,
         },
     )
     assert ack_response.status_code == 200
@@ -299,6 +304,99 @@ def test_author_prompts_acknowledge_drift_rejects_stale_version_submission(
     )
     assert stale_submit.status_code == 200
     assert "Prompt version changed before drift was acknowledged" in stale_submit.text
+    assert "Prompt drift acknowledged." not in stale_submit.text
+    with session_factory() as session:
+        assert session.query(PromptDriftAcknowledgement).count() == 0
+
+
+def test_author_prompts_acknowledge_drift_rejects_stale_source_state_digest(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+    tmp_path: Path,
+) -> None:
+    """POST acknowledge-drift with an outdated source_state_digest is rejected."""
+    client, session_factory = api_client
+    note = tmp_path / "prompt-source-digest.md"
+    note.write_text("# Note\nstable text\n", encoding="utf-8")
+    with session_factory() as session:
+        node = create_knowledge_node(
+            session,
+            title="Digest drift target",
+            knowledge_type="conceptual",
+            scope="personal",
+            status="published",
+            actor_id="test-author",
+        )
+        learner = create_learner_for_user(
+            session,
+            user_id="author-digest-drift",
+            display_name="Digest drift learner",
+        )
+        goal = create_learning_goal(
+            session,
+            learner_id=learner.id,
+            title="Digest drift goal",
+            knowledge_type="conceptual",
+            target_node_ids=[node.id],
+            ownership_scope="personal",
+        )
+        source = create_source_reference(
+            session,
+            source_type="markdown-file",
+            stable_locator=str(note),
+            passage_range="L2-L2",
+            actor_id="test-author",
+        )
+        session.commit()
+        node_id = node.id
+        goal_id = goal.id
+        source_id = source.id
+
+    client.post(
+        "/app/author/prompts",
+        data={
+            "learning_goal_id": goal_id,
+            "target_node_id": node_id,
+            "knowledge_type": "conceptual",
+            "intended_cognitive_action": "explain",
+            "demand_level": "medium",
+            "expected_answer_form": "short-text",
+            "source_reference_ids": source_id,
+            "body": "Prompt for digest race",
+        },
+    )
+    note.write_text("# Note\nchanged passage\n", encoding="utf-8")
+    with session_factory() as session:
+        scan_source_references(session, base_path=tmp_path, actor_id="system:test")
+        session.commit()
+        prompt_obj = (
+            session.query(Prompt)
+            .join(PromptVersion)
+            .filter(PromptVersion.body == "Prompt for digest race")
+            .one()
+        )
+        prompt_id = prompt_obj.id
+
+    listing = client.get("/app/author/prompts")
+    version_match = re.search(r"name='prompt_version_id' value='([^']*)'", listing.text)
+    digest_match = re.search(r"name='source_state_digest' value='([^']*)'", listing.text)
+    assert version_match is not None and digest_match is not None
+    stale_digest = digest_match.group(1)
+
+    note.write_text("# Note\nchanged again before ack\n", encoding="utf-8")
+    with session_factory() as session:
+        scan_source_references(session, base_path=tmp_path, actor_id="system:test")
+        session.commit()
+
+    stale_submit = client.post(
+        f"/app/author/prompts/{prompt_id}/acknowledge-drift",
+        data={
+            "ownership_scope": "personal",
+            "prompt_version_id": version_match.group(1),
+            "source_state_digest": stale_digest,
+        },
+    )
+    assert stale_submit.status_code == 200
+    assert "Source state changed before drift was acknowledged" in stale_submit.text
     assert "Prompt drift acknowledged." not in stale_submit.text
     with session_factory() as session:
         assert session.query(PromptDriftAcknowledgement).count() == 0

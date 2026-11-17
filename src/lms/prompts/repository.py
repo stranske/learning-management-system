@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 from collections.abc import Sequence
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -28,6 +31,8 @@ from lms.prompts.models import (
 )
 from lms.sources.models import SourceReference
 from lms.sources.repository import compute_source_hash_for_reference
+
+logger = logging.getLogger(__name__)
 
 _PROMPT_DRIFT_RANK = {status: index for index, status in enumerate(PROMPT_DRIFT_STATUSES)}
 
@@ -344,7 +349,13 @@ def _resolved_markdown_hash(reference: SourceReference) -> str | None:
             content=None,
             hash_algorithm=reference.hash_algorithm,
         )
-    except (FileNotFoundError, OSError, ValueError):
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        logger.warning(
+            "unable to resolve markdown hash for source reference %s at %s: %s",
+            reference.id,
+            reference.stable_locator,
+            exc,
+        )
         return None
 
 
@@ -366,6 +377,14 @@ def _capture_acknowledged_source_states(
     return states
 
 
+def prompt_source_state_digest(prompt: Prompt) -> str:
+    """Return a stable digest of the source state shown for drift acknowledgement."""
+    payload = _capture_acknowledged_source_states(prompt.source_references)
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _is_source_drift_acknowledged(
     reference: SourceReference,
     acknowledgement: PromptDriftAcknowledgement | None,
@@ -385,8 +404,8 @@ def _is_source_drift_acknowledged(
     if reference.drift_status == "stale" and "resolved_content_hash" in state:
         current_resolved_hash = _resolved_markdown_hash(reference)
         if (
-            current_resolved_hash is not None
-            and current_resolved_hash != state["resolved_content_hash"]
+            current_resolved_hash is None
+            or current_resolved_hash != state["resolved_content_hash"]
         ):
             return False
     return True

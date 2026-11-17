@@ -73,6 +73,7 @@ from lms.prompts.repository import (
     get_prompt,
     list_prompts,
     prompt_drift_status,
+    prompt_source_state_digest,
 )
 from lms.scheduling.models import ReviewPolicy, ReviewQueueItem, ReviewSchedule, SchedulerDecision
 from lms.scheduling.repository import (
@@ -898,6 +899,14 @@ async def acknowledge_author_prompt_drift_route(
             ownership_scope=ownership_scope,
             message=None,
             error="Prompt version changed before drift was acknowledged; review the latest version.",
+        )
+    submitted_source_digest = _optional_text(form.get("source_state_digest"))
+    if submitted_source_digest != prompt_source_state_digest(prompt):
+        return _author_prompts_surface(
+            session=session,
+            ownership_scope=ownership_scope,
+            message=None,
+            error="Source state changed before drift was acknowledged; review the latest source state.",
         )
     try:
         acknowledge_prompt_drift(
@@ -1736,6 +1745,8 @@ def _author_prompts_surface(
                 f"/acknowledge-drift'>"
                 f"<input type='hidden' name='ownership_scope' value='{escape(ownership_scope)}'>"
                 f"<input type='hidden' name='prompt_version_id' value='{escape(latest_version_id)}'>"
+                f"<input type='hidden' name='source_state_digest' "
+                f"value='{escape(prompt_source_state_digest(prompt))}'>"
                 "<button type='submit'>Acknowledge drift</button></form>"
             )
         prompt_items.append(
