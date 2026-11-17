@@ -248,3 +248,53 @@ Delivery remains blocked: staging the meaningful Python test change with
 `.git/index.lock` cannot be created on the read-only filesystem. A runner with
 writable git metadata must commit the test change, and remote write permission
 is required to reconcile the PR checkboxes and attach this verification record.
+
+## Follow-up: evidence at the scheduling boundary
+
+The four production tasks are already implemented at `f5bc245`. This round
+strengthens the named rubric regression without replacing its existing cases:
+each assistance/confidence case now runs with submission both before and after
+v2 publication. Scoring reloads the attempt from the database, and a wrapper
+copies the evidence fields as they enter the real scheduling service. Assertions
+check the complete, independently specified v1 snapshot, saved response metadata,
+all observed conditions, persisted evidence, and actual FSRS Hard (2).
+
+Verified on 2026-11-17:
+
+- [x] Nullable attempt models, schemas, and legacy migration fixtures pass.
+- [x] Shared attempt creation and synthetic prompt callers pass.
+- [x] UI presented-version validation and delayed self-grading pass.
+- [x] Rubric evidence contains saved context and conditions before scheduling.
+- [x] Expanded named regression: **10 passed**.
+- [x] Omitted rubric condition kwargs: **10 failed**, actual FSRS **3 instead of 2**.
+- [x] Replaced the saved version with the current version: **10 failed** because
+  the scheduling input contains v2 instead of `prompt-version-1`.
+- [x] Both temporary production mutations reverted; named regression: **10 passed**.
+- [x] Related attempt, migration, evidence, and entire rubric scoring files:
+  **336 passed**, including all **210** rubric scoring tests.
+- [x] Activity-attempt UI and prompt API files: **26 passed**.
+- [x] Required repository-wide Black check: **458 files unchanged**; Ruff and
+  `git diff --check` pass. Black added the missing final newline to the existing
+  task-context migration; its behavior is unchanged.
+
+The named command and both mutations are the same as recorded above, with
+`PYTEST_ADDOPTS='--no-cov -m "not slow"'`. Fresh logs are in
+`/tmp/issue835-current-conditions.log`, `/tmp/issue835-current-version.log`, and
+`/tmp/issue835-current-restored.log`. The larger passing run used:
+
+```sh
+PYTEST_ADDOPTS='--no-cov -m "not slow"' python3 -m pytest tests/evidence/test_attempts.py tests/evidence/test_attempts_migration.py tests/evidence/test_evidence_records.py tests/feedback/test_rubric_scoring.py -q
+```
+
+The default asyncio TestClient stalled: the UI run reached a 40-second timeout,
+and a combined run was interrupted after the model-level tests when it stalled
+in the prompt API file. The UI and prompt API replacement run passed with the
+installed uvloop backend selected by a temporary plugin in
+`/tmp/issue835_uvloop.py`. No repository fixtures or assertions were disabled.
+
+Delivery remains blocked: `git add` for the prepared test, migration formatting,
+and evidence record failed to create `.git/index.lock` on the read-only
+filesystem. The PR checklist update, verification/blocker comment, and
+`needs-human` label were each rejected with `MCP tool call requires approval,
+but approval policy is never`. These changes remain uncommitted; remote
+checkboxes are unchanged. PR #839 was verified open and ready (`draft=false`).

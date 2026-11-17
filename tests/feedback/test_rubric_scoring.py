@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from copy import deepcopy
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -11,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from lms.evidence.models import Attempt, EvidenceRecord
 from lms.evidence.repository import create_attempt, get_evidence_record
+from lms.evidence.service import schedule_for_evidence
 from lms.feedback.models import FeedbackAction, FeedbackRecord, RubricScore
 from lms.feedback.repository import create_rubric, get_feedback_record, list_feedback_actions
 from lms.feedback.scoring import (
@@ -113,6 +116,11 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
 
 
 @pytest.mark.parametrize(
+    "submit_after_publish",
+    [False, True],
+    ids=["submitted-before-v2", "submitted-after-v2"],
+)
+@pytest.mark.parametrize(
     ("confidence", "reference", "hint", "support"),
     [
         (1, True, True, "coach"),
@@ -131,22 +139,28 @@ def test_rubric_evidence_preserves_attempt_conditions_and_prompt_version(
     reference: bool,
     hint: bool,
     support: str,
+    submit_after_publish: bool,
 ) -> None:
     """Delayed full-credit scoring retains v1 evidence and sends Hard to the real engine."""
     rubric_id, criterion_ids = _rubric(db_session)
     version_id = published_prompt.versions[0].id
-    version_prompt(
-        db_session,
-        published_prompt,
-        body="A different task in v2.",
-        actor_id="author-1",
-        demand_level="high",
-        knowledge_type="conceptual",
-        expected_answer_form="long-text",
-    )
-    publish_prompt(db_session, published_prompt, reviewing_actor="reviewer-1")
-    db_session.commit()
-    assert published_prompt.versions[-1].id != version_id
+
+    def publish_v2() -> None:
+        version_prompt(
+            db_session,
+            published_prompt,
+            body="A different task in v2.",
+            actor_id="author-1",
+            demand_level="high",
+            knowledge_type="conceptual",
+            expected_answer_form="long-text",
+        )
+        publish_prompt(db_session, published_prompt, reviewing_actor="reviewer-1")
+        db_session.commit()
+        assert published_prompt.versions[-1].id != version_id
+
+    if submit_after_publish:
+        publish_v2()
     attempt = create_attempt(
         db_session,
         learner_id="learner-1",
@@ -162,14 +176,54 @@ def test_rubric_evidence_preserves_attempt_conditions_and_prompt_version(
         feedback={"goal": "Explain algebra", "next_action": "Await scoring"},
     )
     db_session.commit()
-    snapshot = dict(attempt.task_context or {})
+    attempt_id = attempt.id
+    snapshot = {
+        "target_node_id": "node-1",
+        "learning_goal_id": "goal-1",
+        "knowledge_type": "procedural",
+        "intended_cognitive_action": "explain",
+        "demand_level": "medium",
+        "expected_answer_form": "short-text",
+        "source_reference_ids": ["source-1"],
+    }
+    assert attempt.task_context == snapshot
+    if not submit_after_publish:
+        publish_v2()
+    # Delayed scoring must work after reloading the saved attempt, too.
+    db_session.expunge_all()
+    expected_evidence = {
+        "prompt_version_id": version_id,
+        "demand_level": "medium",
+        "knowledge_type": "procedural",
+        "confidence_rating": confidence,
+        "reference_accessed": reference,
+        "hint_used": hint,
+        "support_level": support,
+        "response_time_seconds": 42,
+        "attempt_context": {
+            "attempt_number": 1,
+            "client": {"surface": "activity"},
+            "task_context": snapshot,
+        },
+    }
+    scheduled_evidence: list[dict[str, Any]] = []
+
+    def capture_scheduling_evidence(
+        session: Session, *, attempt: Attempt, evidence_record: EvidenceRecord
+    ) -> tuple[ReviewQueueItem | None, list[ReviewQueueItem]]:
+        scheduled_evidence.append(
+            {field: deepcopy(getattr(evidence_record, field)) for field in expected_evidence}
+        )
+        return schedule_for_evidence(session, attempt=attempt, evidence_record=evidence_record)
+
+    monkeypatch.setattr("lms.feedback.scoring.schedule_for_evidence", capture_scheduling_evidence)
     engine_review = Mock(wraps=fsrs_engine.review)
     monkeypatch.setattr(fsrs_engine, "review", engine_review)
 
     score = score_attempt_with_rubric(
         db_session,
         rubric_id=rubric_id,
-        attempt_id=attempt.id,
+        attempt_id=attempt_id,
         scorer_type="human",
         criterion_scores=[
             {"criterion_id": criterion_ids[0], "points": 2},
@@ -183,6 +237,7 @@ def test_rubric_evidence_preserves_attempt_conditions_and_prompt_version(
     engine_review.assert_called_once()
     # Check the engine's actual input as well as the persisted adapter decision.
     assert engine_review.call_args.kwargs["rating_value"] == 2
+    assert scheduled_evidence == [expected_evidence]
     assert evidence.normalized_score == 1.0
     assert evidence.correctness is True
     assert evidence.prompt_version_id == version_id
