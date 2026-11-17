@@ -144,6 +144,7 @@ def score_attempt_with_rubric(
         knowledge_node_id=knowledge_node_id,
         attempt_id=attempt.id,
         prompt_id=attempt.prompt_id,
+        # Partial-credit rubrics are not binary; FSRS bands use normalized_score.
         correctness=None,
         raw_score=raw_score,
         normalized_score=normalized_score,
