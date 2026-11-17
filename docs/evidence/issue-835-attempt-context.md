@@ -160,3 +160,40 @@ The GitHub connector also rejected commit-tree creation, the blocker comment,
 and the `needs-human` label with `MCP tool call requires approval, but approval
 policy is never`. These follow-up changes remain uncommitted in the working
 tree. PR #839 was verified open and ready for review (`draft=false`).
+
+## Follow-up: shared attempt boundary verification
+
+Reviewed commits `072aceb` and `98c17c1`; both contain the earlier implementation
+and verification changes described above. The PR body still has unchecked
+duplicates of implemented tasks. Updating the first verified model/schema task
+in the PR body was rejected with `MCP tool call requires approval, but approval
+policy is never`, so remote checklist reconciliation remains blocked.
+
+- [x] Verify repository, service, and API creation with multiple prompt versions:
+  omitted versions select the latest; explicit versions at either the attempt
+  or evidence boundary retain the supplied older version, even without scoring.
+- [x] Verify scored and unscored attempts preserve nested caller metadata and
+  saved task metadata after the caller changes its input and the prompt's
+  metadata, wording, and source references change.
+- [x] Verify invalid evidence-level versions fail before creating attempts or
+  evidence, and a valid attempt can subsequently commit without a rollback.
+
+A temporary mutation replaced `response_metadata=deepcopy(response_metadata)`
+with `response_metadata=response_metadata` at attempt creation. Both new
+snapshot cases failed at the in-memory assertion: the stored object's nested
+surface became `changed` instead of remaining `activity`. The production file
+was restored before validation; only the test changes and this record remain.
+
+```sh
+PYTEST_ADDOPTS='--no-cov -m "not slow"' python3 -m pytest tests/evidence/test_attempts.py tests/evidence/test_evidence_records.py tests/evidence/test_attempts_migration.py tests/feedback/test_rubric_scoring.py -q
+```
+
+Result: **331 passed**, including all five named rubric regression cases and
+the entire rubric scoring file. The required Black check passed for **457
+files**, with `BLACK_NUM_WORKERS=1`. Ruff and Mypy passed for the changed test
+file, and `git diff --check` passed.
+
+Staging the test file failed because `.git/index.lock` cannot be created on the
+read-only filesystem. Adding `needs-human` was also rejected by the connector's
+approval policy. Delivery requires a runner with writable git metadata; PR body
+reconciliation requires permission to update PR #839.

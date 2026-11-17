@@ -349,13 +349,23 @@ def test_post_attempt_with_evidence_without_scoring_does_not_create_record(
 
 
 @pytest.mark.parametrize("entry_point", ["repository", "service", "api"])
+@pytest.mark.parametrize("version_location", ["latest", "attempt", "evidence"])
 def test_attempt_entry_points_save_version_and_task_context(
-    db_session: Session, published_prompt: Prompt, entry_point: str
+    db_session: Session, published_prompt: Prompt, entry_point: str, version_location: str
 ) -> None:
     """Every ingestion path shares version capture, even without scoring evidence."""
     from lms.evidence.service import record_attempt
 
-    payload = AttemptCreate.model_validate(_attempt_payload())
+    presented_id = published_prompt.versions[0].id
+    version_prompt(db_session, published_prompt, body="Revised wording", actor_id="author-1")
+    latest_id = published_prompt.versions[-1].id
+    db_session.commit()
+    data = _attempt_payload()
+    if version_location == "attempt":
+        data["prompt_version_id"] = presented_id
+    elif version_location == "evidence":
+        data["evidence"] = {"knowledge_node_id": "node-1", "prompt_version_id": presented_id}
+    payload = AttemptCreate.model_validate(data)
     if entry_point == "repository":
         attempt = create_attempt(db_session, **payload.model_dump())
     elif entry_point == "service":
@@ -369,7 +379,7 @@ def test_attempt_entry_points_save_version_and_task_context(
     db_session.commit()
     db_session.refresh(attempt)
     read = AttemptRead.model_validate(attempt)
-    assert read.prompt_version_id == published_prompt.versions[0].id
+    assert read.prompt_version_id == (latest_id if version_location == "latest" else presented_id)
     assert read.task_context == {
         "target_node_id": "node-1",
         "learning_goal_id": "goal-1",
@@ -379,6 +389,64 @@ def test_attempt_entry_points_save_version_and_task_context(
         "expected_answer_form": "short-text",
         "source_reference_ids": ["source-1"],
     }
+
+
+@pytest.mark.parametrize("scored", [False, True], ids=["unscored", "scored"])
+def test_attempt_snapshot_survives_caller_and_prompt_changes(
+    db_session: Session, published_prompt: Prompt, scored: bool
+) -> None:
+    """Saved attempt and immediate evidence retain the original nested metadata and task."""
+    payload: dict[str, Any] = dict(_attempt_payload())
+    metadata = {"client": {"surface": "activity"}}
+    payload["response_metadata"] = metadata
+    if scored:
+        payload["evidence"] = {"knowledge_node_id": "node-1", "correctness": True}
+    attempt = create_attempt(db_session, **payload)
+    attempt_id = attempt.id
+    version_id = published_prompt.versions[0].id
+    expected_context = {
+        "target_node_id": "node-1",
+        "learning_goal_id": "goal-1",
+        "knowledge_type": "procedural",
+        "intended_cognitive_action": "explain",
+        "demand_level": "medium",
+        "expected_answer_form": "short-text",
+        "source_reference_ids": ["source-1"],
+    }
+
+    # Callers can reuse their input dict before the transaction commits.
+    metadata["client"]["surface"] = "changed"
+    assert attempt.response_metadata == {"client": {"surface": "activity"}}
+    version_prompt(
+        db_session,
+        published_prompt,
+        body="A new task",
+        actor_id="author-1",
+        demand_level="high",
+        knowledge_type="conceptual",
+        expected_answer_form="long-text",
+    )
+    published_prompt.source_references.clear()
+    db_session.commit()
+    db_session.expire_all()
+
+    saved = get_attempt(db_session, attempt_id)
+    assert saved is not None
+    assert saved.prompt_version_id == version_id
+    assert saved.task_context == expected_context
+    assert saved.response_metadata == {"client": {"surface": "activity"}}
+    records = list_evidence_records(db_session, learner_id="learner-1")
+    if scored:
+        assert len(records) == 1
+        assert records[0].prompt_version_id == version_id
+        assert records[0].demand_level == "medium"
+        assert records[0].knowledge_type == "procedural"
+        assert records[0].attempt_context == {
+            "client": {"surface": "activity"},
+            "task_context": expected_context,
+        }
+    else:
+        assert records == []
 
 
 @pytest.mark.parametrize("version_location", ["attempt", "evidence"])
@@ -401,8 +469,9 @@ def test_attempt_keeps_explicit_presented_version(
 
 
 @pytest.mark.parametrize("invalid_version", ["", "missing", "other-version"])
+@pytest.mark.parametrize("version_location", ["attempt", "evidence"])
 def test_attempt_rejects_unknown_or_unrelated_version_before_writes(
-    db_session: Session, published_prompt: Prompt, invalid_version: str
+    db_session: Session, published_prompt: Prompt, invalid_version: str, version_location: str
 ) -> None:
     other = PromptVersion(
         id="other-version",
@@ -414,11 +483,26 @@ def test_attempt_rejects_unknown_or_unrelated_version_before_writes(
     db_session.add(other)
     db_session.commit()
     payload: dict[str, Any] = dict(_attempt_payload())
-    payload["prompt_version_id"] = invalid_version
+    if version_location == "attempt":
+        payload["prompt_version_id"] = invalid_version
+    else:
+        payload["evidence"] = {
+            "knowledge_node_id": "node-1",
+            "prompt_version_id": invalid_version,
+            "correctness": True,
+        }
     with pytest.raises(ValueError, match="version of this prompt"):
         create_attempt(db_session, **payload)
     assert db_session.query(Attempt).count() == 0
+    assert list_evidence_records(db_session, learner_id="learner-1") == []
     assert db_session.is_active
+
+    # Version rejection must leave the transaction usable without a rollback.
+    created = create_attempt(
+        db_session, **AttemptCreate.model_validate(_attempt_payload()).model_dump()
+    )
+    db_session.commit()
+    assert get_attempt(db_session, created.id) is created
 
 
 def test_attempt_rejects_conflicting_version_sources(
