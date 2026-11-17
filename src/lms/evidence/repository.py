@@ -8,7 +8,7 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from lms.evidence.models import (
@@ -24,6 +24,7 @@ from lms.evidence.scoring import resolved_normalized_score
 from lms.graphs.models import KNOWLEDGE_TYPES
 from lms.learners.models import Learner
 from lms.prompts.models import Prompt, PromptVersion
+from lms.prompts.repository import _prompt_task_context, get_prompt, version_task_context
 
 
 def _attempt_prompt_context(
@@ -41,23 +42,21 @@ def _attempt_prompt_context(
             .order_by(PromptVersion.version_number.desc())
             .limit(1)
         )
-    prompt = session.get(Prompt, prompt_id)
-    if prompt is None:
-        # Synthetic callers can supply a prompt id without a persisted Prompt.
+    if version is None:
         return None, None
-    context = {
-        key: getattr(prompt, key)
-        for key in (
-            "target_node_id",
-            "learning_goal_id",
-            "knowledge_type",
-            "demand_level",
-            "intended_cognitive_action",
-            "expected_answer_form",
+    saved_version_id = version.id
+    task_context = version_task_context(version)
+    if task_context is None:
+        latest_number = session.scalar(
+            select(func.max(PromptVersion.version_number)).where(
+                PromptVersion.prompt_id == prompt_id
+            )
         )
-    }
-    context["source_reference_ids"] = [source.id for source in prompt.source_references]
-    return version.id if version is not None else None, context
+        if latest_number is not None and version.version_number == latest_number:
+            prompt = get_prompt(session, prompt_id)
+            if prompt is not None:
+                task_context = _prompt_task_context(prompt)
+    return saved_version_id, task_context
 
 
 def attempt_evidence_context(attempt: Attempt) -> dict[str, Any] | None:

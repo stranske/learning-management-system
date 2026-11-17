@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     Column,
     DateTime,
@@ -182,5 +183,6 @@ class PromptVersion(Base):
         server_default=func.now(),
         nullable=False,
     )
+    task_context: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
     prompt: Mapped[Prompt] = relationship("Prompt", back_populates="versions")

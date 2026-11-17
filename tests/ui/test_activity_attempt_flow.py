@@ -138,7 +138,14 @@ def test_presented_version_survives_submission_and_delayed_self_grade(
     with factory() as session:
         prompt = session.get(Prompt, "prompt-1")
         assert prompt is not None
-        version_prompt(session, prompt, body="Version two wording", actor_id="author-1")
+        version_prompt(
+            session,
+            prompt,
+            body="Version two wording",
+            actor_id="author-1",
+            demand_level="high",
+            knowledge_type="factual",
+        )
         publish_prompt(session, prompt, reviewing_actor="reviewer-1")
         session.commit()
     submitted = client.post(
@@ -157,20 +164,22 @@ def test_presented_version_survives_submission_and_delayed_self_grade(
     with factory() as session:
         attempt = session.scalars(select(Attempt)).one()
         assert attempt.prompt_version_id == presented_id
+        assert attempt.task_context == {
+            "target_node_id": "node-1",
+            "learning_goal_id": "goal-1",
+            "knowledge_type": "conceptual",
+            "intended_cognitive_action": "explain",
+            "demand_level": "medium",
+            "expected_answer_form": "short-text",
+            "source_reference_ids": ["source-1"],
+        }
         attempt_id = attempt.id
         snapshot = dict(attempt.task_context or {})
         # Response metadata is also copied, including nested values.
         attempt.response_metadata = {"client": {"surface": "activity"}}
         prompt = session.get(Prompt, "prompt-1")
         assert prompt is not None
-        version_prompt(
-            session,
-            prompt,
-            body="Version three wording",
-            actor_id="author-1",
-            demand_level="high",
-            knowledge_type="factual",
-        )
+        version_prompt(session, prompt, body="Version three wording", actor_id="author-1")
         publish_prompt(session, prompt, reviewing_actor="reviewer-1")
         session.commit()
     graded = client.post(

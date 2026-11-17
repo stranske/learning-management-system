@@ -135,6 +135,18 @@ def test_rubric_evidence_preserves_attempt_conditions_and_prompt_version(
     """Delayed full-credit scoring retains v1 evidence and sends Hard to the real engine."""
     rubric_id, criterion_ids = _rubric(db_session)
     version_id = published_prompt.versions[0].id
+    version_prompt(
+        db_session,
+        published_prompt,
+        body="A different task in v2.",
+        actor_id="author-1",
+        demand_level="high",
+        knowledge_type="conceptual",
+        expected_answer_form="long-text",
+    )
+    publish_prompt(db_session, published_prompt, reviewing_actor="reviewer-1")
+    db_session.commit()
+    assert published_prompt.versions[-1].id != version_id
     attempt = create_attempt(
         db_session,
         learner_id="learner-1",
@@ -151,18 +163,6 @@ def test_rubric_evidence_preserves_attempt_conditions_and_prompt_version(
     )
     db_session.commit()
     snapshot = dict(attempt.task_context or {})
-    version_prompt(
-        db_session,
-        published_prompt,
-        body="A different task in v2.",
-        actor_id="author-1",
-        demand_level="high",
-        knowledge_type="conceptual",
-        expected_answer_form="long-text",
-    )
-    publish_prompt(db_session, published_prompt, reviewing_actor="reviewer-1")
-    db_session.commit()
-    assert published_prompt.versions[-1].id != version_id
     engine_review = Mock(wraps=fsrs_engine.review)
     monkeypatch.setattr(fsrs_engine, "review", engine_review)
 
