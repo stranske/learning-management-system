@@ -169,8 +169,14 @@ def score_attempt_with_rubric(
         scoring_method="rubric-scored",
         attempt_context=attempt_evidence_context(attempt),
     )
+    rubric_below_feedback_threshold = normalized_score < feedback_threshold
     try:
-        schedule_for_evidence(session, attempt=attempt, evidence_record=evidence)
+        schedule_for_evidence(
+            session,
+            attempt=attempt,
+            evidence_record=evidence,
+            rubric_below_feedback_threshold=rubric_below_feedback_threshold,
+        )
     except Exception as exc:
         # Do not inspect ORM attributes here: a database error may have left
         # the session unusable until the caller rolls it back.

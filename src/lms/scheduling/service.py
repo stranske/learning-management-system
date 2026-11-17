@@ -108,6 +108,7 @@ def apply_remediation_triggers(
     attempt: Attempt,
     evidence_record: EvidenceRecord,
     now: datetime | None = None,
+    rubric_below_feedback_threshold: bool | None = None,
 ) -> list[ReviewQueueItem]:
     """Apply active remediation triggers that match an attempt/evidence signal."""
     decision_now = now or utc_now()
@@ -118,7 +119,11 @@ def apply_remediation_triggers(
     )
     for trigger in triggers:
         if not _trigger_matches(
-            trigger.trigger_type, trigger.trigger_rules, attempt, evidence_record
+            trigger.trigger_type,
+            trigger.trigger_rules,
+            attempt,
+            evidence_record,
+            rubric_below_feedback_threshold=rubric_below_feedback_threshold,
         ):
             continue
         policy = get_or_create_review_policy(
@@ -216,14 +221,31 @@ def create_failed_prerequisite_trigger(
     )
 
 
+def _binary_incorrect_signal(
+    evidence_record: EvidenceRecord,
+    *,
+    rubric_below_feedback_threshold: bool | None,
+) -> bool:
+    if evidence_record.correctness is False:
+        return True
+    return (
+        evidence_record.correctness is None and rubric_below_feedback_threshold is True
+    )
+
+
 def _trigger_matches(
     trigger_type: str,
     trigger_rules: dict[str, Any],
     attempt: Attempt,
     evidence_record: EvidenceRecord,
+    *,
+    rubric_below_feedback_threshold: bool | None = None,
 ) -> bool:
     if trigger_type == "failed-prerequisite":
-        if evidence_record.correctness is not False:
+        if not _binary_incorrect_signal(
+            evidence_record,
+            rubric_below_feedback_threshold=rubric_below_feedback_threshold,
+        ):
             return False
         prerequisite_node_id = trigger_rules.get("prerequisite_node_id")
         if prerequisite_node_id is None:
@@ -238,7 +260,13 @@ def _trigger_matches(
     if trigger_type == "high-confidence-error":
         minimum_confidence = int(trigger_rules.get("min_confidence", 4))
         confidence = evidence_record.confidence_rating or attempt.confidence_rating or 0
-        return evidence_record.correctness is False and confidence >= minimum_confidence
+        return (
+            _binary_incorrect_signal(
+                evidence_record,
+                rubric_below_feedback_threshold=rubric_below_feedback_threshold,
+            )
+            and confidence >= minimum_confidence
+        )
     if trigger_type == "hint-dependence":
         return (
             evidence_record.hint_used

@@ -210,12 +210,21 @@ def test_rubric_evidence_preserves_attempt_conditions_and_prompt_version(
     scheduled_evidence: list[dict[str, Any]] = []
 
     def capture_scheduling_evidence(
-        session: Session, *, attempt: Attempt, evidence_record: EvidenceRecord
+        session: Session,
+        *,
+        attempt: Attempt,
+        evidence_record: EvidenceRecord,
+        rubric_below_feedback_threshold: bool | None = None,
     ) -> tuple[ReviewQueueItem | None, list[ReviewQueueItem]]:
         scheduled_evidence.append(
             {field: deepcopy(getattr(evidence_record, field)) for field in expected_evidence}
         )
-        return schedule_for_evidence(session, attempt=attempt, evidence_record=evidence_record)
+        return schedule_for_evidence(
+            session,
+            attempt=attempt,
+            evidence_record=evidence_record,
+            rubric_below_feedback_threshold=rubric_below_feedback_threshold,
+        )
 
     monkeypatch.setattr("lms.feedback.scoring.schedule_for_evidence", capture_scheduling_evidence)
     engine_review = Mock(wraps=fsrs_engine.review)
