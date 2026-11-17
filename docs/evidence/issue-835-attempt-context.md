@@ -1,5 +1,45 @@
 # Issue #835: saved attempt context and delayed scoring
 
+## Current reconciliation: 2026-11-17
+
+Reviewed the seven PR commits through `2e854a2`, including `f5bc245`'s
+prompt-version snapshots. The implementation tasks and existing test updates
+are verified: the evidence, migration, and rubric suites pass **281 tests**,
+including all **10** named regression cases. The activity-flow suite passes
+**17 tests** with the same temporary uvloop plugin described below; the
+default asyncio run timed out after 45 seconds without completing a test.
+
+This round strengthens the migration tests to verify nullable prompt-version
+snapshots, unknown context on both historical prompt versions, and preservation
+of an already captured attempt version/context when upgrading from revision
+`20261117_0037` to head. Downgrading also removes the prompt-version snapshot
+column. The saved attempt intentionally has different demand metadata from the
+current prompt so a destructive backfill cannot silently pass.
+
+Repeated both required mutations against the current named regression using
+`PYTEST_ADDOPTS='--no-cov -m "not slow"'`:
+
+- Removing the five rubric condition kwargs: exit **1**, **10 failed** at the
+  real engine input assertion (`assert 3 == 2`).
+- Restoring conditions, then substituting the latest prompt version for the
+  saved version: exit **1**, **10 failed** because scheduling evidence contains
+  v2 instead of `prompt-version-1`.
+- Restoring both mutations: exit **0**, **281 passed** across the evidence,
+  migration, and entire rubric scoring files. The scoring source has no diff
+  against HEAD after restoration.
+
+The PR checklist update was attempted through the GitHub connector and rejected
+with `MCP tool call requires approval, but approval policy is never`. The remote
+checkboxes remain unchanged; all implementation and acceptance checkboxes in
+this record are locally verified. Posting the mutation record as a PR comment
+and adding `needs-human` were rejected by the same permission policy.
+
+The final focused migration/named-regression run passed **13 tests**. Black's
+required repository-wide check passed (**458 files unchanged**), and Ruff and
+Mypy passed for the changed migration test. The local commit was attempted but
+staging failed: `.git/index.lock` cannot be created on the read-only filesystem.
+The migration-test changes and this verification record remain uncommitted.
+
 Verified locally on 2026-11-17 with Python 3.14.10. New attempts capture the
 validated prompt version and task metadata at creation. Scoring copies that
 snapshot, response metadata, confidence, reference access, hint use, support

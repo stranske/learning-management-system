@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -37,6 +38,10 @@ def test_alembic_upgrade_head_creates_attempts_table(
         columns = {column["name"]: column for column in inspect(engine).get_columns("attempts")}
         assert columns["prompt_version_id"]["nullable"] is True
         assert columns["task_context"]["nullable"] is True
+        version_columns = {
+            column["name"]: column for column in inspect(engine).get_columns("prompt_versions")
+        }
+        assert version_columns["task_context"]["nullable"] is True
     finally:
         engine.dispose()
 
@@ -136,6 +141,14 @@ def test_attempt_context_migration_preserves_unknown_legacy_rows_and_downgrades(
             (None, None, "Old answer"),
             (None, None, "Old answer"),
         ]
+        with Session(engine) as session:
+            versions = session.scalars(
+                select(PromptVersion).order_by(PromptVersion.version_number)
+            ).all()
+            assert [(version.id, version.task_context) for version in versions] == [
+                ("version-1", None),
+                ("version-2", None),
+            ]
         indexes = inspect(engine).get_indexes("attempts")
         assert any(index["column_names"] == ["prompt_version_id"] for index in indexes)
         foreign_keys = inspect(engine).get_foreign_keys("attempts")
@@ -178,6 +191,38 @@ def test_attempt_context_migration_preserves_unknown_legacy_rows_and_downgrades(
             # The reference remains nullable, so genuinely unknown provenance is valid.
             connection.execute(text("UPDATE attempts SET prompt_version_id = NULL"))
             connection.commit()
+
+        # The later prompt-version migration must also preserve snapshots that
+        # attempts captured while revision 0037 was deployed. It cannot reconstruct
+        # historical version context from today's prompt metadata.
+        command.downgrade(config, "20261117_0037")
+        assert "task_context" not in {
+            column["name"] for column in inspect(engine).get_columns("prompt_versions")
+        }
+        saved_context = {"demand_level": "low", "knowledge_type": "procedural"}
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE attempts SET prompt_version_id = 'version-1', "
+                    "task_context = :context WHERE id = 'legacy-1'"
+                ),
+                {"context": json.dumps(saved_context)},
+            )
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            saved = connection.execute(
+                text("SELECT prompt_version_id, task_context FROM attempts WHERE id = 'legacy-1'")
+            ).one()
+            assert saved.prompt_version_id == "version-1"
+            assert json.loads(saved.task_context) == saved_context
+            version_rows = connection.execute(
+                text("SELECT id, task_context FROM prompt_versions ORDER BY version_number")
+            ).all()
+            assert [tuple(row) for row in version_rows] == [
+                ("version-1", None),
+                ("version-2", None),
+            ]
+
         command.downgrade(config, "20260924_0036")
         assert {"task_context", "prompt_version_id"}.isdisjoint(
             column["name"] for column in inspect(engine).get_columns("attempts")
