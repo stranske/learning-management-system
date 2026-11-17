@@ -143,10 +143,25 @@ def test_rubric_scores_map_to_fsrs_bands(
     assert response.status_code == 201, response.text
     body = response.json()
     evidence_id = body["evidence_record_id"]
+    rubric_score_id = body["id"]
+    assert body["scorer_type"] == "human"
+    assert body["scorer_id"] == "teacher-band"
+    assert body["scorer_version"] == "band-v1"
+    assert body["normalized_score"] == pytest.approx(normalized_score)
+    assert body["raw_score"] == pytest.approx(points)
     advance.assert_called_once()
     assert advance.call_args.kwargs["rating_value"] == expected_rating
 
     with session_factory() as session:
+        rubric_score = session.get(RubricScore, rubric_score_id)
+        assert rubric_score is not None
+        assert rubric_score.attempt_id == attempt_id
+        assert rubric_score.rubric_id == rubric_id
+        assert rubric_score.scorer_type == "human"
+        assert rubric_score.scorer_id == "teacher-band"
+        assert rubric_score.scorer_version == "band-v1"
+        assert rubric_score.normalized_score == pytest.approx(normalized_score)
+        assert rubric_score.evidence_record_id == evidence_id
         evidence = session.get(EvidenceRecord, evidence_id)
         assert evidence is not None
         assert evidence.correctness is None
