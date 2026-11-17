@@ -393,7 +393,7 @@ def test_author_goal_node_prompt_rubric_and_learner_completion_path(
     assert "Revise the attempt using rubric feedback" in dashboard.text
     assert "Explain retrieval spacing with evidence" in dashboard.text
     assert "Maintenance plan" in dashboard.text
-    assert "Deterministic placeholder policy inspired by FSRS 4.5" in dashboard.text
+    assert "exponential retention decay (30-day half-life)" in dashboard.text
 
     assert review_queue.status_code == 200
     assert "due-review" in review_queue.text

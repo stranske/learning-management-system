@@ -76,7 +76,7 @@ def test_dashboard_shows_next_actions_reviews_and_recent_evidence(
     assert "Recent evidence" in html
     assert "node-spacing" in html
     # Mastery shows model attribution and evidence count
-    assert "Deterministic placeholder policy inspired by FSRS 4.5" in html
+    assert "exponential retention decay (30-day half-life)" in html
     assert "evidence count 1" in html
     # Links into attempt flow and review queue
     assert 'href="/learn"' in html
