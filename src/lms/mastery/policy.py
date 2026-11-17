@@ -21,7 +21,7 @@ def _retention_decay_factor(*, latest_observed_at: datetime, as_of: datetime) ->
     elapsed_days = (_to_utc(as_of) - _to_utc(latest_observed_at)).total_seconds() / 86_400.0
     if elapsed_days <= 0.0:
         return 1.0
-    return 0.5 ** (elapsed_days / _RETENTION_HALF_LIFE_DAYS)
+    return float(0.5 ** (elapsed_days / _RETENTION_HALF_LIFE_DAYS))
 
 
 @dataclass(frozen=True)
