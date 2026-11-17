@@ -405,6 +405,12 @@ def test_authenticated_user_cannot_read_another_learners_mastery_estimates() -> 
         owner_learner_id = client.owner_learner_id  # type: ignore[attr-defined]
         other_learner_id = client.other_learner_id  # type: ignore[attr-defined]
         session.add_all(
+            KnowledgeNode(
+                id=node_id, title=node_id, knowledge_type="factual", ownership_scope="personal"
+            )
+            for node_id in ("owner-mastery-node", "foreign-mastery-node")
+        )
+        session.add_all(
             [
                 EvidenceRecord(
                     learner_id=owner_learner_id,
@@ -493,6 +499,12 @@ def test_authenticated_user_cannot_read_another_learners_inspect_calibration() -
     try:
         owner_id = client.owner_learner_id  # type: ignore[attr-defined]
         foreign_id = client.other_learner_id  # type: ignore[attr-defined]
+        session.add_all(
+            KnowledgeNode(
+                id=node_id, title=node_id, knowledge_type="factual", ownership_scope="personal"
+            )
+            for node_id in ("owner-calibration-node", "foreign-calibration-node")
+        )
         session.add_all(
             [
                 EvidenceRecord(

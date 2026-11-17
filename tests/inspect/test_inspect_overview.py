@@ -54,6 +54,48 @@ def _client() -> Generator[tuple[TestClient, Session]]:
         engine.dispose()
 
 
+def test_overview_mastery_uses_exponential_retention_estimator() -> None:
+    with _client() as (client, session):
+        session.add(
+            KnowledgeNode(
+                id="node-mastery",
+                title="Mastery node",
+                knowledge_type="factual",
+                ownership_scope="personal",
+            )
+        )
+        session.flush()
+        from lms.evidence.repository import create_evidence_record
+
+        create_evidence_record(
+            session,
+            learner_id="learner-mastery",
+            knowledge_node_id="node-mastery",
+            prompt_id="prompt-1",
+            demand_level="low",
+            knowledge_type="factual",
+            correctness=True,
+        )
+        session.commit()
+
+        response = client.get("/inspect/learners/learner-mastery/overview")
+
+    assert response.status_code == 200
+    mastery = response.json()["mastery"]
+    assert len(mastery) == 1
+    assert mastery[0]["estimator_version"] == "exponential-retention-v1"
+    assert mastery[0]["confidence"] > 0.0
+    assert mastery[0]["knowledge_node_id"] == "node-mastery"
+
+
+def test_overview_mastery_empty_when_no_evidence() -> None:
+    with _client() as (client, _session):
+        response = client.get("/inspect/learners/learner-empty/overview")
+
+    assert response.status_code == 200
+    assert response.json()["mastery"] == []
+
+
 def test_scheduler_panel_returns_real_data() -> None:
     due_at = datetime(2026, 5, 31, 15, 0, tzinfo=UTC)
     with _client() as (client, session):

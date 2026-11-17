@@ -195,7 +195,7 @@ def recompute_capability_estimate(
     profile = knowledge_profile_for_learner(
         session,
         learner_id=target.learner_id,
-        ownership_scope="personal",
+        ownership_scope=target.ownership_scope,
     )
     raw_profile_items = profile.get("items", [])
     profile_item_values = raw_profile_items if isinstance(raw_profile_items, list) else []
@@ -206,7 +206,9 @@ def recompute_capability_estimate(
     }
     mastery_by_node = {
         str(estimate["knowledge_node_id"]): estimate
-        for estimate in mastery_estimates_for_learner(session, target.learner_id)
+        for estimate in mastery_estimates_for_learner(
+            session, target.learner_id, scope=target.ownership_scope
+        )
     }
     target_node_ids = [node.id for node in target.target_nodes]
     node_rows = [

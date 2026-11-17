@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta, timezone
 from math import isfinite
 
 import pytest
@@ -44,6 +45,38 @@ def test_record_score_defaults_to_midpoint_when_no_signal() -> None:
 def test_estimate_returns_zeroes_when_no_records() -> None:
     policy = MasteryEstimatorPolicy()
     assert policy.estimate([]) == (0.0, 0.0)
+    as_of = datetime(2026, 6, 1, tzinfo=UTC)
+    assert policy.estimate([], as_of=as_of) == (0.0, 0.0)
+
+
+def test_current_estimate_decays_with_elapsed_time() -> None:
+    policy = MasteryEstimatorPolicy()
+    anchor = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    records = [_record(correctness=True, observed_at=anchor) for _ in range(6)]
+    timestamps_before = [record.observed_at for record in records]
+    mastery_at_anchor, _ = policy.estimate(records, as_of=anchor)
+    assert [record.observed_at for record in records] == timestamps_before
+    mastery_after_gap, _ = policy.estimate(records, as_of=anchor + timedelta(days=90))
+    assert [record.observed_at for record in records] == timestamps_before
+    assert mastery_after_gap < mastery_at_anchor
+
+
+def test_estimate_decay_uses_latest_utc_instant_with_mixed_timestamps() -> None:
+    policy = MasteryEstimatorPolicy()
+    naive_earlier = datetime(2026, 6, 1, 17, 0)
+    aware_latest = datetime(2026, 6, 1, 12, 0, tzinfo=timezone(timedelta(hours=-6)))
+    records = [
+        _record(correctness=True, observed_at=naive_earlier),
+        _record(correctness=True, observed_at=aware_latest),
+    ]
+    as_of_at_latest = datetime(2026, 6, 1, 18, 0, tzinfo=UTC)
+    as_of_after = as_of_at_latest + timedelta(days=90)
+    mastery_at_latest, _ = policy.estimate(records, as_of=as_of_at_latest)
+    mastery_after, _ = policy.estimate(records, as_of=as_of_after)
+    assert mastery_after < mastery_at_latest
+    only_latest = [_record(correctness=True, observed_at=aware_latest)]
+    expected_after, _ = policy.estimate(only_latest, as_of=as_of_after)
+    assert mastery_after == expected_after
 
 
 def test_estimate_confidence_reflects_performance_history() -> None:

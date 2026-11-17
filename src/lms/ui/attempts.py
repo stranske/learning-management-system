@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from lms.auth.login import SettingsDep
 from lms.db.session import get_session
 from lms.evidence.models import Attempt
-from lms.evidence.repository import create_evidence_record
+from lms.evidence.repository import attempt_evidence_context, create_evidence_record
 from lms.evidence.schemas import AttemptCreate, StructuredFeedback
 from lms.evidence.service import (
     evidence_record_for_attempt,
@@ -91,6 +91,7 @@ async def submit_attempt_route(
         payload = AttemptCreate(
             learner_id=learner_id,
             prompt_id=prompt_id,
+            prompt_version_id=form.get("prompt_version_id") or None,
             response_text=form.get("response_text", ""),
             confidence_rating=optional_int(form.get("confidence_rating")),
             reference_accessed=form.get("reference_accessed") == "true",
@@ -118,7 +119,13 @@ async def submit_attempt_route(
             response_text=form.get("response_text", ""),
         )
 
-    recorded = record_attempt(session, **payload.model_dump())
+    try:
+        recorded = record_attempt(session, **payload.model_dump())
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
     session.commit()
     attempt = recorded.attempt
     session.refresh(attempt)
@@ -163,21 +170,28 @@ async def self_grade_attempt_route(
                 attempt_id=attempt.id,
                 just_submitted=False,
             )
-        prompt = session.get(Prompt, attempt.prompt_id)
-        if prompt is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Prompt for this attempt no longer exists.",
-            )
+        knowledge_node_id = (attempt.task_context or {}).get("target_node_id")
+        if knowledge_node_id is None:
+            prompt = session.get(Prompt, attempt.prompt_id)
+            if prompt is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Prompt for this attempt no longer exists.",
+                )
+            knowledge_node_id = prompt.target_node_id
         normalized = float(grade["normalized_score"])  # type: ignore[arg-type]
         correctness = grade["correctness"]
         assert correctness is None or isinstance(correctness, bool)
         evidence = create_evidence_record(
             session,
             learner_id=learner_id,
-            knowledge_node_id=prompt.target_node_id,
+            knowledge_node_id=knowledge_node_id,
             attempt_id=attempt.id,
             prompt_id=attempt.prompt_id,
+            prompt_version_id=attempt.prompt_version_id,
+            demand_level=(attempt.task_context or {}).get("demand_level"),
+            knowledge_type=(attempt.task_context or {}).get("knowledge_type"),
+            attempt_context=attempt_evidence_context(attempt),
             correctness=correctness,
             raw_score=normalized,
             normalized_score=normalized,
@@ -249,6 +263,7 @@ def _attempt_start_surface(
         )
 
     latest = _latest_attempt(session, learner_id=learner_id, prompt_id=prompt.id)
+    presented_version = prompt.versions[-1] if prompt.versions else None
     already_submitted = (
         ""
         if latest is None
@@ -280,6 +295,7 @@ def _attempt_start_surface(
         <form class="attempt-form" method="post" action="{ATTEMPTS_PATH}" data-started-at="">
           <input type="hidden" name="learner_id" value="{escape(learner_id)}">
           <input type="hidden" name="prompt_id" value="{escape(prompt.id)}">
+          <input type="hidden" name="prompt_version_id" value="{escape(presented_version.id) if presented_version else ''}">
           <input type="hidden" id="elapsed_seconds" name="elapsed_seconds" value="">
           <label for="response_text">Your response</label>
           <textarea id="response_text" name="response_text" rows="6" required>{escape(response_text)}</textarea>

@@ -183,7 +183,7 @@ def _graph_surface(
     edges = list_knowledge_edges(session, scope=scope, limit=200)
     proposals = _list_graph_proposals(session, scope=scope)
     evidence_counts = _evidence_counts(session)
-    mastery_by_node = _mastery_by_node(session, learner_id=learner_id)
+    mastery_by_node = _mastery_by_node(session, learner_id=learner_id, scope=scope)
     node_options = "".join(
         f'<option value="{escape(node.id)}">{escape(node.title)}</option>' for node in nodes
     )
@@ -375,12 +375,13 @@ def _mastery_by_node(
     session: Session,
     *,
     learner_id: str | None,
+    scope: str,
 ) -> dict[str, dict[str, object]]:
     if learner_id is None:
         return {}
     return {
         str(item["knowledge_node_id"]): item
-        for item in mastery_estimates_for_learner(session, learner_id)
+        for item in mastery_estimates_for_learner(session, learner_id, scope=scope)
     }
 
 

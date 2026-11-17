@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from lms.auth.models import User
 from lms.auth.passwords import hash_password
 from lms.evidence.repository import create_evidence_record
+from lms.graphs.models import KnowledgeNode
 from lms.learners.models import Learner
 from lms.settings import Settings, get_settings
 
@@ -54,6 +55,11 @@ def test_learner_calibration_page_shows_bucket_accuracy(
     client, factory = api_client
     own_id, foreign_id = calibration_learners
     with factory() as session:
+        session.add(
+            KnowledgeNode(
+                id="node-1", title="Topic", knowledge_type="factual", ownership_scope="personal"
+            )
+        )
         for index in range(5):
             create_evidence_record(
                 session,
