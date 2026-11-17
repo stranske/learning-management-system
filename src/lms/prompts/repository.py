@@ -18,11 +18,16 @@ from lms.prompts.models import (
     AUTHORING_METHODS,
     COGNITIVE_ACTIONS,
     DEMAND_LEVELS,
+    PROMPT_DRIFT_STATUSES,
     PROMPT_STATUSES,
     Prompt,
+    PromptDriftAcknowledgement,
     PromptVersion,
+    PromptVersionSourceSnapshot,
 )
 from lms.sources.models import SourceReference
+
+_PROMPT_DRIFT_RANK = {status: index for index, status in enumerate(PROMPT_DRIFT_STATUSES)}
 
 
 def create_prompt(
@@ -83,8 +88,11 @@ def create_prompt(
         prompt_template_version=prompt_template_version,
         source_references=references,
     )
-    prompt.versions.append(PromptVersion(version_number=1, body=body, created_by=authoring_actor))
+    initial_version = PromptVersion(version_number=1, body=body, created_by=authoring_actor)
+    prompt.versions.append(initial_version)
     session.add(prompt)
+    session.flush()
+    _capture_version_source_snapshots(initial_version, references)
     session.flush()
     record_audit_event(
         session,
@@ -102,7 +110,11 @@ def get_prompt(session: Session, prompt_id: str) -> Prompt | None:
     """Return a prompt by stable id."""
     return session.scalar(
         select(Prompt)
-        .options(selectinload(Prompt.source_references), selectinload(Prompt.versions))
+        .options(
+            selectinload(Prompt.source_references),
+            selectinload(Prompt.drift_acknowledgements),
+            selectinload(Prompt.versions).selectinload(PromptVersion.source_snapshots),
+        )
         .where(Prompt.id == prompt_id)
     )
 
@@ -117,7 +129,8 @@ def list_prompts(
     """List prompts with optional publication or goal filters."""
     statement = select(Prompt).options(
         selectinload(Prompt.source_references),
-        selectinload(Prompt.versions),
+        selectinload(Prompt.drift_acknowledgements),
+        selectinload(Prompt.versions).selectinload(PromptVersion.source_snapshots),
     )
     if status is not None:
         _require_choice(status, PROMPT_STATUSES, "prompt status")
@@ -148,13 +161,14 @@ def version_prompt(
         )
         or 0
     ) + 1
-    prompt.versions.append(
-        PromptVersion(version_number=next_version, body=body, created_by=actor_id)
-    )
+    version = PromptVersion(version_number=next_version, body=body, created_by=actor_id)
+    prompt.versions.append(version)
     if prompt.status == "published":
         prompt.status = "in-review"
         prompt.reviewing_actor = None
         prompt.approval_timestamp = None
+    session.flush()
+    _capture_version_source_snapshots(version, prompt.source_references)
     session.flush()
     record_audit_event(
         session,
@@ -167,6 +181,66 @@ def version_prompt(
         after_summary=_prompt_summary(prompt),
     )
     return prompt
+
+
+def prompt_drift_status(prompt: Prompt) -> str:
+    """Return prompt-level drift from version snapshots and source scan state."""
+    if not prompt.versions or not prompt.source_references:
+        return "current"
+    latest_version = prompt.versions[-1]
+    if any(ack.prompt_version_id == latest_version.id for ack in prompt.drift_acknowledgements):
+        return "current"
+    snapshots = {
+        snapshot.source_reference_id: snapshot for snapshot in latest_version.source_snapshots
+    }
+    per_source = [
+        _source_drift_for_reference(reference, snapshots.get(reference.id))
+        for reference in prompt.source_references
+    ]
+    return max(per_source, key=lambda status: _PROMPT_DRIFT_RANK[status])
+
+
+def acknowledge_prompt_drift(
+    session: Session,
+    prompt: Prompt,
+    *,
+    actor_id: str,
+    prompt_version_id: str | None = None,
+    source_subsystem: str = "api",
+) -> PromptDriftAcknowledgement:
+    """Record that an author reviewed prompt-level source drift for one version."""
+    if not prompt.versions:
+        raise ValueError("prompt has no versions to acknowledge")
+    version_id = prompt_version_id or prompt.versions[-1].id
+    if not any(version.id == version_id for version in prompt.versions):
+        raise ValueError("prompt_version_id does not belong to prompt")
+    existing = next(
+        (ack for ack in prompt.drift_acknowledgements if ack.prompt_version_id == version_id),
+        None,
+    )
+    if existing is not None:
+        return existing
+    acknowledgement = PromptDriftAcknowledgement(
+        prompt_id=prompt.id,
+        prompt_version_id=version_id,
+        acknowledged_by=actor_id,
+    )
+    prompt.drift_acknowledgements.append(acknowledgement)
+    session.flush()
+    record_audit_event(
+        session,
+        actor_id=actor_id,
+        action="acknowledge-drift",
+        entity_type="Prompt",
+        entity_id=prompt.id,
+        source_subsystem=source_subsystem,
+        after_summary={
+            "prompt_id": prompt.id,
+            "prompt_version_id": version_id,
+            "acknowledged_by": actor_id,
+        },
+    )
+    return acknowledgement
 
 
 def require_publishable_prompt(prompt: Prompt) -> Prompt:
@@ -214,6 +288,39 @@ def publish_prompt(
         after_summary=_prompt_summary(prompt),
     )
     return prompt
+
+
+def _capture_version_source_snapshots(
+    version: PromptVersion,
+    references: Sequence[SourceReference],
+) -> None:
+    """Persist immutable source hashes for one prompt version."""
+    for reference in references:
+        version.source_snapshots.append(
+            PromptVersionSourceSnapshot(
+                source_reference_id=reference.id,
+                content_hash=reference.content_hash,
+                hash_algorithm=reference.hash_algorithm,
+            )
+        )
+
+
+def _source_drift_for_reference(
+    reference: SourceReference,
+    snapshot: PromptVersionSourceSnapshot | None,
+) -> str:
+    if reference.drift_status == "missing":
+        return "missing"
+    if reference.drift_status == "stale":
+        return "stale"
+    if snapshot is None:
+        return "unknown"
+    if (
+        snapshot.content_hash != reference.content_hash
+        or snapshot.hash_algorithm != reference.hash_algorithm
+    ):
+        return "stale"
+    return "current"
 
 
 def _get_goal(session: Session, learning_goal_id: str) -> LearningGoal:

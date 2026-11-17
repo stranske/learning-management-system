@@ -49,6 +49,7 @@ PROMPT_STATUSES: tuple[str, ...] = ("draft", "in-review", "published", "archived
 AUTHORING_METHODS: tuple[str, ...] = ("human-authored", "llm-generated", "imported")
 UNKNOWN_SOURCE_HASH = "unknown"
 UNKNOWN_HASH_ALGORITHM = "unknown"
+PROMPT_DRIFT_STATUSES: tuple[str, ...] = ("current", "stale", "missing", "unknown")
 
 prompt_source_references = Table(
     "prompt_source_references",
