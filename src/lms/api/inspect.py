@@ -20,10 +20,13 @@ from lms.scheduling.models import ReviewQueueItem, SchedulerDecision
 from lms.sources.models import SourceReference
 
 try:  # Prompt support is present after the prompt-provenance opener branch lands.
-    from lms.prompts.models import Prompt, prompt_source_references
+    from lms.prompts.models import Prompt, PromptVersion, prompt_source_references
+    from lms.prompts.repository import prompt_drift_status
 except ImportError:  # pragma: no cover
     Prompt = None  # type: ignore[assignment,misc]
+    PromptVersion = None  # type: ignore[assignment,misc]
     prompt_source_references = None  # type: ignore[assignment]
+    prompt_drift_status = None  # type: ignore[assignment]
 
 router = APIRouter(prefix="/inspect", tags=["inspect"])
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -139,7 +142,11 @@ def learner_overview_route(
         prompt_rows = list(
             session.scalars(
                 select(Prompt)
-                .options(selectinload(Prompt.versions))
+                .options(
+                    selectinload(Prompt.source_references),
+                    selectinload(Prompt.drift_acknowledgements),
+                    selectinload(Prompt.versions).selectinload(PromptVersion.source_snapshots),
+                )
                 .join(KnowledgeNode, KnowledgeNode.id == Prompt.target_node_id)
                 .where(KnowledgeNode.ownership_scope == ownership_scope)
                 .order_by(Prompt.updated_at.desc(), Prompt.id)
@@ -194,6 +201,9 @@ def learner_overview_route(
                 "version": (prompt.versions[-1].version_number if prompt.versions else None),
                 "authoring_method": prompt.authoring_method,
                 "reviewing_actor": prompt.reviewing_actor,
+                "drift_status": (
+                    prompt_drift_status(prompt) if prompt_drift_status is not None else "current"
+                ),
             }
             for prompt in prompt_rows
         ],

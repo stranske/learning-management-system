@@ -66,7 +66,13 @@ from lms.learners.repository import (
 )
 from lms.mastery.service import mastery_estimates_for_learner
 from lms.prompts.models import ANSWER_FORMS, COGNITIVE_ACTIONS, DEMAND_LEVELS, Prompt
-from lms.prompts.repository import create_prompt, list_prompts
+from lms.prompts.repository import (
+    acknowledge_prompt_drift,
+    create_prompt,
+    get_prompt,
+    list_prompts,
+    prompt_drift_status,
+)
 from lms.scheduling.models import ReviewPolicy, ReviewQueueItem, ReviewSchedule, SchedulerDecision
 from lms.scheduling.repository import (
     clear_remediation_queue_item,
@@ -855,6 +861,42 @@ async def create_author_prompt_route(request: Request, session: SessionDep) -> s
         session=session,
         ownership_scope=ownership_scope,
         message="Prompt saved as draft.",
+        error=None,
+    )
+
+
+@router.post("/app/author/prompts/{prompt_id}/acknowledge-drift", response_class=HTMLResponse)
+async def acknowledge_author_prompt_drift_route(
+    prompt_id: str,
+    request: Request,
+    session: SessionDep,
+) -> str:
+    """Record author review of prompt-level source drift for the latest version."""
+    form = await _read_form(request)
+    ownership_scope = form.get("ownership_scope", "personal")
+    prompt = get_prompt(session, prompt_id)
+    if prompt is None:
+        return _author_prompts_surface(
+            session=session,
+            ownership_scope=ownership_scope,
+            message=None,
+            error="Prompt not found.",
+        )
+    try:
+        acknowledge_prompt_drift(session, prompt, actor_id="author-ui")
+        session.commit()
+    except ValueError as exc:
+        session.rollback()
+        return _author_prompts_surface(
+            session=session,
+            ownership_scope=ownership_scope,
+            message=None,
+            error=str(exc),
+        )
+    return _author_prompts_surface(
+        session=session,
+        ownership_scope=ownership_scope,
+        message="Prompt drift acknowledged.",
         error=None,
     )
 
@@ -1650,17 +1692,29 @@ def _author_prompts_surface(
     nodes = list_knowledge_nodes(session, scope=ownership_scope, status="published")
     sources = list_source_references(session)
     prompts = list_prompts(session)
-    prompt_items = [
-        (
+    prompt_items: list[str] = []
+    for prompt in prompts:
+        drift_status = prompt_drift_status(prompt)
+        acknowledge_form = ""
+        if drift_status != "current":
+            acknowledge_form = (
+                f"<form method='post' action='/app/author/prompts/{escape(prompt.id)}"
+                f"/acknowledge-drift'>"
+                f"<input type='hidden' name='ownership_scope' value='{escape(ownership_scope)}'>"
+                "<button type='submit'>Acknowledge drift</button></form>"
+            )
+        prompt_items.append(
             "<li>"
             f"<strong>{escape(_prompt_body(prompt))}</strong>"
             f"<span>{escape(prompt.status)}; {escape(prompt.demand_level)}; "
             f"{escape(prompt.intended_cognitive_action)}; "
-            f"provenance {escape(_prompt_provenance(prompt))}</span>"
+            f"provenance {escape(_prompt_provenance(prompt))}; "
+            f"drift {escape(drift_status)}</span>"
+            f"{acknowledge_form}"
             "</li>"
         )
-        for prompt in prompts
-    ] or ["<li class='empty'>No prompts yet.</li>"]
+    if not prompt_items:
+        prompt_items = ["<li class='empty'>No prompts yet.</li>"]
 
     return render_page(
         "Author Prompts",
