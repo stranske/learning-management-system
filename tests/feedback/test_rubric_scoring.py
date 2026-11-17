@@ -102,6 +102,7 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
     assert evidence.scorer_type == "human"
     assert evidence.scorer_id == "teacher-1"
     assert evidence.scorer_version == "rubric-v1"
+    assert evidence.correctness is None
     assert evidence.partial_credit_dimensions["rubric_id"] == rubric_id
     assert evidence.partial_credit_dimensions["criterion_scores"][1]["points"] == 2
 
@@ -228,7 +229,7 @@ def test_rubric_scoring_rejects_invalid_thresholds_without_writes(
     assert score.evidence_record_id is not None
     evidence = get_evidence_record(db_session, score.evidence_record_id)
     assert evidence is not None
-    assert evidence.correctness is True
+    assert evidence.correctness is None
 
 
 @pytest.mark.parametrize(
@@ -393,7 +394,7 @@ def test_rubric_scoring_accepts_threshold_boundaries(
     points: tuple[int, int],
     expected_level: str | None,
 ) -> None:
-    """Inclusive and equal thresholds preserve correctness and feedback boundaries."""
+    """Inclusive and equal thresholds preserve nullable correctness and feedback boundaries."""
     attempt_id = _attempt(db_session)
     rubric_id, criterion_ids = _rubric(db_session)
     score = score_attempt_with_rubric(
@@ -412,7 +413,7 @@ def test_rubric_scoring_accepts_threshold_boundaries(
     assert score.evidence_record_id is not None
     evidence = get_evidence_record(db_session, score.evidence_record_id)
     assert evidence is not None
-    assert evidence.correctness is (expected_level is None)
+    assert evidence.correctness is None
     if expected_level is None:
         assert score.feedback_record_id is None
     else:

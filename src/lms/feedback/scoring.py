@@ -144,7 +144,7 @@ def score_attempt_with_rubric(
         knowledge_node_id=knowledge_node_id,
         attempt_id=attempt.id,
         prompt_id=attempt.prompt_id,
-        correctness=normalized_score >= feedback_threshold,
+        correctness=None,
         raw_score=raw_score,
         normalized_score=normalized_score,
         max_score=max_score,
@@ -158,6 +158,11 @@ def score_attempt_with_rubric(
         scorer_id=scorer_id,
         scorer_version=scorer_version,
         scoring_method="rubric-scored",
+        confidence_rating=attempt.confidence_rating,
+        reference_accessed=attempt.reference_accessed,
+        hint_used=attempt.hint_used,
+        support_level=attempt.support_level,
+        response_time_seconds=attempt.elapsed_seconds,
         attempt_context=attempt.response_metadata,
     )
     try:
