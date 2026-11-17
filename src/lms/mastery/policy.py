@@ -57,7 +57,7 @@ class MasteryEstimatorPolicy:
             total_weight += weight
         mastery = weighted_score / total_weight
         if as_of is not None and all(record.observed_at is not None for record in records):
-            latest_observed_at = max(record.observed_at for record in records)
+            latest_observed_at = max(_to_utc(record.observed_at) for record in records)
             mastery *= _retention_decay_factor(latest_observed_at=latest_observed_at, as_of=as_of)
         volume = min(1.0, 0.35 + len(records) * 0.12)
         confidence = volume * (0.5 + 0.5 * mastery)
