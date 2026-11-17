@@ -40,7 +40,12 @@ from lms.feedback.models import (
 from lms.graphs.models import KnowledgeNode
 from lms.learners.models import Learner, LearningGoal
 from lms.llm.models import LLMSession
-from lms.prompts.models import Prompt, PromptVersion
+from lms.prompts.models import (
+    Prompt,
+    PromptDriftAcknowledgement,
+    PromptVersion,
+    PromptVersionSourceSnapshot,
+)
 from lms.scheduling.models import (
     RemediationTrigger,
     ReviewPolicy,
@@ -197,6 +202,19 @@ def _seed_m5_runtime_records(session: Session) -> None:
         version_number=1,
         body="Explain the node.",
         created_by="author",
+    )
+    prompt_version_snapshot = PromptVersionSourceSnapshot(
+        id="prompt-version-snapshot-1",
+        prompt_version_id=prompt_version.id,
+        source_reference_id=source.id,
+        content_hash=source.content_hash,
+        hash_algorithm="sha256",
+    )
+    prompt_drift_acknowledgement = PromptDriftAcknowledgement(
+        id="prompt-drift-ack-1",
+        prompt_id=prompt.id,
+        prompt_version_id=prompt_version.id,
+        acknowledged_by="author",
     )
     llm_session = LLMSession(
         id="llm-1",
@@ -432,6 +450,8 @@ def _seed_m5_runtime_records(session: Session) -> None:
             goal,
             prompt,
             prompt_version,
+            prompt_version_snapshot,
+            prompt_drift_acknowledgement,
             llm_session,
             attempt,
             evidence,

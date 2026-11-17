@@ -13,12 +13,12 @@ import lms.prompts.models  # noqa: F401
 import lms.sources.models  # noqa: F401
 from lms.db.base import Base
 from lms.prompts.models import (
+    UNKNOWN_HASH_ALGORITHM,
+    UNKNOWN_SOURCE_HASH,
     Prompt,
     PromptDriftAcknowledgement,
     PromptVersion,
     PromptVersionSourceSnapshot,
-    UNKNOWN_HASH_ALGORITHM,
-    UNKNOWN_SOURCE_HASH,
 )
 from lms.sources.models import SourceReference
 
