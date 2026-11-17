@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
-
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -87,6 +86,8 @@ def test_overview_includes_mastery_evidence_prompt_and_source_status() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["mastery"][0]["model_attribution"]
+    assert body["mastery"][0]["estimator_version"] == "exponential-retention-v1"
+    assert body["mastery"][0]["confidence"] > 0.0
     assert body["recent_evidence"][0]["knowledge_node_id"] == "node-1"
     assert body["source_drift"][0]["drift_status"] == "current"
     assert "prompt_provenance" in body

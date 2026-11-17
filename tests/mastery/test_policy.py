@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from math import isfinite
 
 import pytest
@@ -44,6 +45,17 @@ def test_record_score_defaults_to_midpoint_when_no_signal() -> None:
 def test_estimate_returns_zeroes_when_no_records() -> None:
     policy = MasteryEstimatorPolicy()
     assert policy.estimate([]) == (0.0, 0.0)
+    as_of = datetime(2026, 6, 1, tzinfo=UTC)
+    assert policy.estimate([], as_of=as_of) == (0.0, 0.0)
+
+
+def test_current_estimate_decays_with_elapsed_time() -> None:
+    policy = MasteryEstimatorPolicy()
+    anchor = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    records = [_record(correctness=True, observed_at=anchor) for _ in range(6)]
+    mastery_at_anchor, _ = policy.estimate(records, as_of=anchor)
+    mastery_after_gap, _ = policy.estimate(records, as_of=anchor + timedelta(days=90))
+    assert mastery_after_gap < mastery_at_anchor
 
 
 def test_estimate_confidence_reflects_performance_history() -> None:

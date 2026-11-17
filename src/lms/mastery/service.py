@@ -20,6 +20,7 @@ def mastery_estimates_for_learner(
     *,
     scope: str | None = None,
     policy: MasteryEstimatorPolicy | None = None,
+    as_of: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Compute mastery; scoped callers filter source nodes before aggregation.
 
@@ -30,6 +31,7 @@ def mastery_estimates_for_learner(
         learner_id,
         scope=scope,
         policy=policy,
+        as_of=as_of,
     )
     return estimates
 
@@ -40,6 +42,7 @@ def mastery_estimates_with_evidence_for_learner(
     *,
     scope: str | None = None,
     policy: MasteryEstimatorPolicy | None = None,
+    as_of: datetime | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, list[EvidenceRecord]]]:
     """Compute mastery and return the grouped evidence used for the estimates."""
     policy = policy or MasteryEstimatorPolicy()
@@ -64,10 +67,10 @@ def mastery_estimates_with_evidence_for_learner(
     for record in records:
         by_node[record.knowledge_node_id].append(record)
 
-    generated_at = datetime.now(UTC)
+    evaluation_time = as_of if as_of is not None else datetime.now(UTC)
     estimates: list[dict[str, Any]] = []
     for node_id, node_records in sorted(by_node.items()):
-        mastery, confidence = policy.estimate(node_records)
+        mastery, confidence = policy.estimate(node_records, as_of=evaluation_time)
         last = node_records[-1]
         estimates.append(
             {
@@ -80,7 +83,7 @@ def mastery_estimates_with_evidence_for_learner(
                 "last_evidence_at": last.observed_at,
                 "estimator_version": policy.estimator_version,
                 "model_attribution": policy.model_attribution,
-                "generated_at": generated_at,
+                "generated_at": evaluation_time,
             }
         )
     return estimates, dict(by_node)
