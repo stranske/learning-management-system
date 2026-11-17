@@ -8,8 +8,15 @@ from sqlalchemy.orm import Session
 
 from lms.graphs.repository import create_knowledge_node
 from lms.learners.repository import create_learner_for_user, create_learning_goal
-from lms.prompts.repository import create_prompt, get_prompt, prompt_drift_status
-from lms.sources.repository import create_source_reference
+from lms.prompts.models import Prompt
+from lms.prompts.repository import (
+    acknowledge_prompt_drift,
+    create_prompt,
+    get_prompt,
+    prompt_drift_status,
+    prompt_source_state_digest,
+)
+from lms.sources.repository import create_source_reference, scan_source_references
 
 
 def _seed_graph_and_source(session: Session, tmp_path: Path) -> dict[str, str]:
@@ -72,3 +79,23 @@ def test_create_prompt_captures_source_snapshots(db_session: Session, tmp_path: 
     assert snapshot.source_reference_id == ids["source_id"]
     assert snapshot.content_hash == loaded.source_references[0].content_hash
     assert prompt_drift_status(loaded) == "current"
+
+
+def test_relative_markdown_drift_uses_base_path(
+    db_session: Session, published_prompt: Prompt, tmp_path: Path
+) -> None:
+    reference = published_prompt.source_references[0]
+    note = tmp_path / reference.stable_locator
+    note.parent.mkdir()
+    note.write_text("# Reviewed passage\n", encoding="utf-8")
+    scan_source_references(db_session, base_path=tmp_path)
+    assert prompt_drift_status(published_prompt, base_path=tmp_path) == "stale"
+    reviewed_digest = prompt_source_state_digest(published_prompt, base_path=tmp_path)
+    acknowledge_prompt_drift(
+        db_session, published_prompt, actor_id="user:alice", base_path=tmp_path
+    )
+    assert prompt_drift_status(published_prompt, base_path=tmp_path) == "current"
+
+    note.write_text("# Unreviewed passage\n", encoding="utf-8")
+    assert prompt_source_state_digest(published_prompt, base_path=tmp_path) != reviewed_digest
+    assert prompt_drift_status(published_prompt, base_path=tmp_path) == "stale"

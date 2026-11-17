@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
@@ -201,7 +202,7 @@ def version_prompt(
     return prompt
 
 
-def prompt_drift_status(prompt: Prompt) -> str:
+def prompt_drift_status(prompt: Prompt, *, base_path: str | Path | None = None) -> str:
     """Return prompt-level drift from version snapshots and source scan state."""
     if not prompt.versions or not prompt.source_references:
         return "current"
@@ -220,7 +221,7 @@ def prompt_drift_status(prompt: Prompt) -> str:
     per_source = [
         (
             "current"
-            if _is_source_drift_acknowledged(reference, acknowledgement)
+            if _is_source_drift_acknowledged(reference, acknowledgement, base_path=base_path)
             else _source_drift_for_reference(reference, snapshots.get(reference.id))
         )
         for reference in prompt.source_references
@@ -235,6 +236,8 @@ def acknowledge_prompt_drift(
     actor_id: str,
     prompt_version_id: str | None = None,
     source_subsystem: str = "api",
+    reviewed_source_states: dict[str, dict[str, Any]] | None = None,
+    base_path: str | Path | None = None,
 ) -> PromptDriftAcknowledgement:
     """Record that an author reviewed prompt-level source drift for one version."""
     if not prompt.versions:
@@ -242,7 +245,11 @@ def acknowledge_prompt_drift(
     version_id = prompt_version_id or prompt.versions[-1].id
     if not any(version.id == version_id for version in prompt.versions):
         raise ValueError("prompt_version_id does not belong to prompt")
-    reviewed_states = _capture_acknowledged_source_states(prompt.source_references)
+    reviewed_states = (
+        capture_prompt_source_states(prompt, base_path=base_path)
+        if reviewed_source_states is None
+        else deepcopy(reviewed_source_states)
+    )
     existing = next(
         (ack for ack in prompt.drift_acknowledgements if ack.prompt_version_id == version_id),
         None,
@@ -340,7 +347,9 @@ def _capture_version_source_snapshots(
         )
 
 
-def _resolved_markdown_hash(reference: SourceReference) -> str | None:
+def _resolved_markdown_hash(
+    reference: SourceReference, *, base_path: str | Path | None = None
+) -> str | None:
     if reference.source_type != "markdown-file":
         return None
     try:
@@ -350,6 +359,7 @@ def _resolved_markdown_hash(reference: SourceReference) -> str | None:
             passage_range=reference.passage_range,
             content=None,
             hash_algorithm=reference.hash_algorithm,
+            base_path=base_path,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         logger.warning(
@@ -363,6 +373,8 @@ def _resolved_markdown_hash(reference: SourceReference) -> str | None:
 
 def _capture_acknowledged_source_states(
     references: Sequence[SourceReference],
+    *,
+    base_path: str | Path | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Snapshot the reviewed state of each linked source reference."""
     states: dict[str, dict[str, Any]] = {}
@@ -372,24 +384,38 @@ def _capture_acknowledged_source_states(
             "hash_algorithm": reference.hash_algorithm,
             "drift_status": reference.drift_status,
         }
-        resolved_hash = _resolved_markdown_hash(reference)
+        resolved_hash = _resolved_markdown_hash(reference, base_path=base_path)
         if resolved_hash is not None:
             state["resolved_content_hash"] = resolved_hash
         states[reference.id] = state
     return states
 
 
-def prompt_source_state_digest(prompt: Prompt) -> str:
-    """Return a stable digest of the source state shown for drift acknowledgement."""
-    payload = _capture_acknowledged_source_states(prompt.source_references)
+def capture_prompt_source_states(
+    prompt: Prompt, *, base_path: str | Path | None = None
+) -> dict[str, dict[str, Any]]:
+    """Capture the source state shown for drift acknowledgement."""
+    return _capture_acknowledged_source_states(prompt.source_references, base_path=base_path)
+
+
+def source_state_digest(states: Mapping[str, Mapping[str, Any]]) -> str:
+    """Return a stable digest of captured source states."""
+    payload = {reference_id: dict(state) for reference_id, state in states.items()}
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
 
+def prompt_source_state_digest(prompt: Prompt, *, base_path: str | Path | None = None) -> str:
+    """Return a stable digest of the source state shown for drift acknowledgement."""
+    return source_state_digest(capture_prompt_source_states(prompt, base_path=base_path))
+
+
 def _is_source_drift_acknowledged(
     reference: SourceReference,
     acknowledgement: PromptDriftAcknowledgement | None,
+    *,
+    base_path: str | Path | None = None,
 ) -> bool:
     if acknowledgement is None:
         return False
@@ -404,7 +430,7 @@ def _is_source_drift_acknowledged(
     ):
         return False
     if reference.drift_status == "stale" and "resolved_content_hash" in state:
-        current_resolved_hash = _resolved_markdown_hash(reference)
+        current_resolved_hash = _resolved_markdown_hash(reference, base_path=base_path)
         if current_resolved_hash is None or current_resolved_hash != state["resolved_content_hash"]:
             return False
     return True

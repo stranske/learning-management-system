@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
@@ -20,9 +20,19 @@ from lms.graphs.repository import create_knowledge_node
 from lms.learners.models import LearningGoal
 from lms.learners.repository import create_learner_for_user, create_learning_goal
 from lms.prompts.models import Prompt, PromptDriftAcknowledgement, PromptVersion
-from lms.prompts.repository import get_prompt, version_prompt
+from lms.prompts.repository import (
+    acknowledge_prompt_drift,
+    get_prompt,
+    prompt_drift_status,
+    version_prompt,
+)
 from lms.settings import Settings, get_settings
-from lms.sources.repository import create_source_reference, scan_source_references
+from lms.sources.repository import (
+    compute_source_hash_for_reference,
+    create_source_reference,
+    scan_source_references,
+)
+from lms.ui import api as author_api
 
 
 def test_author_can_create_goal_node_edge_and_prompt_from_ui(
@@ -115,9 +125,12 @@ def test_author_can_create_goal_node_edge_and_prompt_from_ui(
         assert prompt.authoring_actor == "author-ui"
 
 
-def test_author_prompts_acknowledge_drift_action_clears_stale_status(
+@pytest.mark.parametrize("changes_during_save", [False, True], ids=["stable", "changes_during_save"])
+def test_author_prompts_acknowledge_drift_records_reviewed_state(
     api_client: tuple[TestClient, sessionmaker[Session]],
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    changes_during_save: bool,
 ) -> None:
     """Author prompts POST acknowledge-drift records review and updates the surface."""
     client, session_factory = api_client
@@ -192,11 +205,34 @@ def test_author_prompts_acknowledge_drift_action_clears_stale_status(
         )
         prompt_id = prompt.id
         version_id = prompt.versions[-1].id
+        reference = prompt.source_references[0]
+        expected_states = {
+            source_id: {
+                "content_hash": reference.content_hash,
+                "hash_algorithm": reference.hash_algorithm,
+                "drift_status": "stale",
+                "resolved_content_hash": compute_source_hash_for_reference(
+                    source_type=reference.source_type,
+                    stable_locator=reference.stable_locator,
+                    passage_range=reference.passage_range,
+                    content=None,
+                    hash_algorithm=reference.hash_algorithm,
+                ),
+            }
+        }
 
     assert f"name='prompt_version_id' value='{version_id}'" in listing.text
     digest_match = re.search(r"name='source_state_digest' value='([^']*)'", listing.text)
     assert digest_match is not None
     source_state_digest = digest_match.group(1)
+
+    if changes_during_save:
+
+        def change_file_then_acknowledge(*args: Any, **kwargs: Any) -> PromptDriftAcknowledgement:
+            note.write_text("# Note\nunreviewed passage\n", encoding="utf-8")
+            return acknowledge_prompt_drift(*args, **kwargs)
+
+        monkeypatch.setattr(author_api, "acknowledge_prompt_drift", change_file_then_acknowledge)
 
     ack_response = client.post(
         f"/app/author/prompts/{prompt_id}/acknowledge-drift",
@@ -208,6 +244,15 @@ def test_author_prompts_acknowledge_drift_action_clears_stale_status(
     )
     assert ack_response.status_code == 200
     assert "Prompt drift acknowledged." in ack_response.text
+    with session_factory() as session:
+        loaded = get_prompt(session, prompt_id)
+        assert loaded is not None
+        acknowledgement = session.query(PromptDriftAcknowledgement).one()
+        assert acknowledgement.acknowledged_source_states == expected_states
+        assert prompt_drift_status(loaded) == ("stale" if changes_during_save else "current")
+    if changes_during_save:
+        assert "drift stale" in ack_response.text
+        return
     assert "drift current" in client.get("/app/author/prompts").text
 
     note.write_text("# Note\nchanged passage again\n", encoding="utf-8")

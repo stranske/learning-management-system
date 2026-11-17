@@ -69,11 +69,13 @@ from lms.mastery.service import mastery_estimates_for_learner
 from lms.prompts.models import ANSWER_FORMS, COGNITIVE_ACTIONS, DEMAND_LEVELS, Prompt
 from lms.prompts.repository import (
     acknowledge_prompt_drift,
+    capture_prompt_source_states,
     create_prompt,
     get_prompt,
     list_prompts,
     prompt_drift_status,
     prompt_source_state_digest,
+    source_state_digest,
 )
 from lms.scheduling.models import ReviewPolicy, ReviewQueueItem, ReviewSchedule, SchedulerDecision
 from lms.scheduling.repository import (
@@ -901,7 +903,8 @@ async def acknowledge_author_prompt_drift_route(
             error="Prompt version changed before drift was acknowledged; review the latest version.",
         )
     submitted_source_digest = _optional_text(form.get("source_state_digest"))
-    if submitted_source_digest != prompt_source_state_digest(prompt):
+    reviewed_states = capture_prompt_source_states(prompt)
+    if submitted_source_digest != source_state_digest(reviewed_states):
         return _author_prompts_surface(
             session=session,
             ownership_scope=ownership_scope,
@@ -915,6 +918,7 @@ async def acknowledge_author_prompt_drift_route(
             actor_id="author-ui",
             prompt_version_id=submitted_version_id,
             source_subsystem="author-ui",
+            reviewed_source_states=reviewed_states,
         )
         session.commit()
     except ValueError as exc:
