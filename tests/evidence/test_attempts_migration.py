@@ -8,7 +8,12 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import Session
 
+from lms.auth.models import User, utc_now
+from lms.graphs.models import KnowledgeNode
+from lms.learners.models import Learner, LearningGoal
+from lms.prompts.models import Prompt, PromptVersion
 from lms.settings import get_settings
 
 
@@ -69,33 +74,84 @@ def test_attempt_context_migration_preserves_unknown_legacy_rows_and_downgrades(
     command.upgrade(config, "20260924_0036")
     engine = create_engine(db_url)
     try:
+        # Even a matching, currently published prompt cannot establish which
+        # version or task metadata a historical attempt originally presented.
+        with Session(engine) as session:
+            prompt = Prompt(
+                id="prompt-1",
+                target_node=KnowledgeNode(
+                    title="Algebra", knowledge_type="procedural", ownership_scope="personal"
+                ),
+                learning_goal=LearningGoal(
+                    title="Explain algebra",
+                    knowledge_type="procedural",
+                    ownership_scope="personal",
+                    learner=Learner(
+                        display_name="Learner",
+                        user=User(username="legacy-learner", display_name="Learner"),
+                    ),
+                ),
+                knowledge_type="procedural",
+                intended_cognitive_action="explain",
+                demand_level="high",
+                expected_answer_form="short-text",
+                authoring_method="human-authored",
+                authoring_actor="author-1",
+                status="published",
+                reviewing_actor="reviewer-1",
+                approval_timestamp=utc_now(),
+                versions=[
+                    PromptVersion(
+                        id=f"version-{number}",
+                        version_number=number,
+                        body=f"Wording {number}",
+                        created_by="author-1",
+                    )
+                    for number in (1, 2)
+                ],
+            )
+            session.add(prompt)
+            session.commit()
         with engine.begin() as connection:
             connection.execute(
                 text(
                     "INSERT INTO attempts (id, learner_id, prompt_id, response_text, feedback) "
-                    "VALUES ('legacy-1', 'learner-1', 'prompt-1', 'Old answer', '{}')"
-                )
+                    "VALUES (:id, 'learner-1', :prompt_id, 'Old answer', '{}')"
+                ),
+                [
+                    {"id": "legacy-1", "prompt_id": "prompt-1"},
+                    {"id": "legacy-2", "prompt_id": "synthetic-prompt"},
+                ],
             )
         command.upgrade(config, "head")
         with engine.connect() as connection:
-            row = connection.execute(
+            rows = connection.execute(
                 text(
                     "SELECT prompt_version_id, task_context, response_text FROM attempts "
-                    "WHERE id = 'legacy-1'"
+                    "ORDER BY id"
                 )
-            ).one()
-        assert row == (None, None, "Old answer")
+            ).all()
+        assert [tuple(row) for row in rows] == [
+            (None, None, "Old answer"),
+            (None, None, "Old answer"),
+        ]
         indexes = inspect(engine).get_indexes("attempts")
         assert any(index["column_names"] == ["prompt_version_id"] for index in indexes)
         foreign_keys = inspect(engine).get_foreign_keys("attempts")
-        assert any(fk["referred_table"] == "prompt_versions" for fk in foreign_keys)
+        assert any(
+            fk["constrained_columns"] == ["prompt_version_id"]
+            and fk["referred_table"] == "prompt_versions"
+            and fk["referred_columns"] == ["id"]
+            and fk["options"]["ondelete"] == "RESTRICT"
+            for fk in foreign_keys
+        )
         command.downgrade(config, "20260924_0036")
-        assert "task_context" not in {
+        assert {"task_context", "prompt_version_id"}.isdisjoint(
             column["name"] for column in inspect(engine).get_columns("attempts")
-        }
+        )
         command.upgrade(config, "head")
         with engine.connect() as connection:
-            assert connection.execute(text("SELECT COUNT(*) FROM attempts")).scalar_one() == 1
+            assert connection.execute(text("SELECT COUNT(*) FROM attempts")).scalar_one() == 2
     finally:
         engine.dispose()
         get_settings.cache_clear()

@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from lms.auth.models import User
-from lms.evidence.api import create_attempt_route
+from lms.evidence.api import create_attempt_route, get_attempt_route
 from lms.evidence.models import SUPPORT_LEVELS, Attempt
 from lms.evidence.repository import create_attempt, get_attempt, list_evidence_records
 from lms.evidence.schemas import AttemptCreate, AttemptRead
@@ -208,6 +208,46 @@ def test_post_attempt_with_scoring_creates_evidence_record(db_session: Session) 
     assert records[0].attempt_id == created.id
     assert records[0].correctness is True
     assert records[0].normalized_score == 1.0
+
+
+@pytest.mark.parametrize("known_context", [False, True], ids=["unknown", "presented-v1"])
+def test_attempt_response_round_trips_nullable_saved_context(
+    db_session: Session, published_prompt: Prompt, known_context: bool
+) -> None:
+    """API reads serialize saved nullable fields without borrowing current prompt state."""
+    payload = _attempt_payload()
+    if known_context:
+        payload["prompt_version_id"] = published_prompt.versions[0].id
+    else:
+        payload["prompt_id"] = "synthetic-prompt"
+        payload["prompt_version_id"] = None
+    user, settings = _local_route_dependencies()
+    created = create_attempt_route(
+        AttemptCreate.model_validate(payload), db_session, user, settings
+    )
+    original = created.model_dump(mode="json")
+
+    version_prompt(
+        db_session,
+        published_prompt,
+        body="Revised wording",
+        actor_id="author-1",
+        demand_level="high",
+    )
+    db_session.commit()
+    db_session.expire_all()
+    loaded = get_attempt_route(created.id, db_session, user, settings)
+    serialized = loaded.model_dump(mode="json")
+
+    assert serialized == original
+    assert AttemptRead.model_validate_json(loaded.model_dump_json()) == loaded
+    if known_context:
+        assert serialized["prompt_version_id"] == "prompt-version-1"
+        assert serialized["task_context"]["demand_level"] == "medium"
+        assert serialized["task_context"]["source_reference_ids"] == ["source-1"]
+    else:
+        assert "prompt_version_id" in serialized and serialized["prompt_version_id"] is None
+        assert "task_context" in serialized and serialized["task_context"] is None
 
 
 def test_post_attempt_scoring_none_fields_fall_back_to_attempt_context(

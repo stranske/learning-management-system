@@ -108,7 +108,10 @@ modules and supporting evidence tests/fixtures (13 files). The broader selected
 mypy run reports eight existing errors in the rubric/UI test files; checking
 their original HEAD contents independently reproduces all eight.
 
-## Delivery blocker
+## Original delivery blocker
+
+The original implementation was subsequently delivered in commit `072aceb`.
+The following records the restriction encountered during that earlier run.
 
 Local staging failed with:
 
@@ -127,3 +130,33 @@ label were both rejected by the tool permission policy: `MCP tool call requires
 approval, but approval policy is never`. The PR checklist and labels were not
 changed. The mutation record above is available locally for the runner to include
 when delivering the patch.
+
+## Follow-up: nullable model, schema, and migration verification
+
+- [x] Verify the first additional PR task: nullable version/task-context model
+  fields, matching API read schemas, and a migration that leaves legacy rows unknown.
+
+The migration fixture now includes a real published prompt with two versions as
+well as a synthetic prompt ID. Neither historical attempt acquires a version or
+task snapshot. The test also checks the exact version foreign key and `RESTRICT`
+policy and confirms downgrade removes both added columns. API create/read JSON
+round trips cover explicit null context and an explicitly presented v1 after
+v2 changes the current prompt's demand level.
+
+A temporary migration mutation backfilled each matching legacy attempt with the
+latest prompt version. The strengthened migration test failed with exit status
+1: `('version-2', None, 'Old answer')` instead of `(None, None, 'Old answer')`.
+The migration was restored before the passing verification run:
+
+```sh
+PYTEST_ADDOPTS='--no-cov -m "not slow"' python3 -m pytest tests/evidence/test_attempts.py tests/evidence/test_attempts_migration.py tests/feedback/test_rubric_scoring.py -q
+```
+
+Result: **265 passed**, including the named rubric regression and the full rubric
+test file. Black's required repository-wide check passed for **457 files**;
+Ruff and Mypy passed for both changed Python test files. Local staging still
+fails because `.git/index.lock` cannot be created on the read-only filesystem.
+The GitHub connector also rejected commit-tree creation, the blocker comment,
+and the `needs-human` label with `MCP tool call requires approval, but approval
+policy is never`. These follow-up changes remain uncommitted in the working
+tree. PR #839 was verified open and ready for review (`draft=false`).
