@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lms.evidence.models import Attempt
-from lms.evidence.repository import create_evidence_record
+from lms.evidence.repository import attempt_evidence_context, create_evidence_record
 from lms.evidence.service import schedule_for_evidence
 from lms.feedback.models import Rubric, RubricScore
 from lms.feedback.repository import (
@@ -144,6 +144,14 @@ def score_attempt_with_rubric(
         knowledge_node_id=knowledge_node_id,
         attempt_id=attempt.id,
         prompt_id=attempt.prompt_id,
+        prompt_version_id=attempt.prompt_version_id,
+        demand_level=(attempt.task_context or {}).get("demand_level"),
+        knowledge_type=(attempt.task_context or {}).get("knowledge_type"),
+        confidence_rating=attempt.confidence_rating,
+        reference_accessed=attempt.reference_accessed,
+        hint_used=attempt.hint_used,
+        support_level=attempt.support_level,
+        response_time_seconds=attempt.elapsed_seconds,
         correctness=normalized_score >= feedback_threshold,
         raw_score=raw_score,
         normalized_score=normalized_score,
@@ -158,7 +166,7 @@ def score_attempt_with_rubric(
         scorer_id=scorer_id,
         scorer_version=scorer_version,
         scoring_method="rubric-scored",
-        attempt_context=attempt.response_metadata,
+        attempt_context=attempt_evidence_context(attempt),
     )
     try:
         schedule_for_evidence(session, attempt=attempt, evidence_record=evidence)
@@ -290,6 +298,8 @@ def _normalize_criterion_scores(
 def _knowledge_node_id_for_score(session: Session, rubric: Rubric, attempt: Attempt) -> str:
     if rubric.knowledge_node_id is not None:
         return rubric.knowledge_node_id
+    if attempt.task_context is not None:
+        return str(attempt.task_context["target_node_id"])
     prompt_id = rubric.prompt_id or attempt.prompt_id
     prompt = session.get(Prompt, prompt_id)
     if prompt is not None:

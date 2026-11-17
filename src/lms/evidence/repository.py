@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from lms.evidence.models import (
@@ -22,6 +23,49 @@ from lms.evidence.models import (
 from lms.evidence.scoring import resolved_normalized_score
 from lms.graphs.models import KNOWLEDGE_TYPES
 from lms.learners.models import Learner
+from lms.prompts.models import PromptVersion
+from lms.prompts.repository import _prompt_task_context, get_prompt, version_task_context
+
+
+def _attempt_prompt_context(
+    session: Session, *, prompt_id: str, prompt_version_id: str | None
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Capture context only for new attempts; never infer it when reading legacy rows."""
+    if prompt_version_id is not None:
+        version = session.get(PromptVersion, prompt_version_id)
+        if version is None or version.prompt_id != prompt_id:
+            raise ValueError("prompt_version_id must reference a version of this prompt")
+    else:
+        version = session.scalar(
+            select(PromptVersion)
+            .where(PromptVersion.prompt_id == prompt_id)
+            .order_by(PromptVersion.version_number.desc())
+            .limit(1)
+        )
+    if version is None:
+        return None, None
+    saved_version_id = version.id
+    task_context = version_task_context(version)
+    if task_context is None:
+        latest_number = session.scalar(
+            select(func.max(PromptVersion.version_number)).where(
+                PromptVersion.prompt_id == prompt_id
+            )
+        )
+        if latest_number is not None and version.version_number == latest_number:
+            prompt = get_prompt(session, prompt_id)
+            if prompt is not None:
+                task_context = _prompt_task_context(prompt)
+    return saved_version_id, task_context
+
+
+def attempt_evidence_context(attempt: Attempt) -> dict[str, Any] | None:
+    """Copy response metadata and the saved task snapshot into scoring evidence."""
+    context = deepcopy(attempt.response_metadata)
+    if attempt.task_context is not None:
+        context = context or {}
+        context["task_context"] = deepcopy(attempt.task_context)
+    return context
 
 
 def _has_scoring_signal(evidence: dict[str, Any]) -> bool:
@@ -136,6 +180,7 @@ def create_attempt(
     prompt_id: str,
     response_text: str,
     feedback: dict[str, Any],
+    prompt_version_id: str | None = None,
     response_metadata: dict[str, Any] | None = None,
     confidence_rating: int | None = None,
     reference_accessed: bool = False,
@@ -163,6 +208,21 @@ def create_attempt(
     if elapsed_seconds is not None and elapsed_seconds < 0:
         raise ValueError("elapsed_seconds must be non-negative")
 
+    evidence_version_id = evidence.get("prompt_version_id") if evidence is not None else None
+    if (
+        prompt_version_id is not None
+        and evidence_version_id is not None
+        and prompt_version_id != evidence_version_id
+    ):
+        raise ValueError("attempt and evidence prompt_version_id must match")
+    saved_version_id, task_context = _attempt_prompt_context(
+        session,
+        prompt_id=prompt_id,
+        prompt_version_id=(
+            prompt_version_id if prompt_version_id is not None else evidence_version_id
+        ),
+    )
+
     if evidence is not None and _has_scoring_signal(evidence):
         _validate_evidence_metadata(
             evidence_kind=evidence.get("evidence_kind", "observed"),
@@ -184,8 +244,10 @@ def create_attempt(
     attempt = Attempt(
         learner_id=learner_id,
         prompt_id=prompt_id,
+        prompt_version_id=saved_version_id,
+        task_context=task_context,
         response_text=response_text,
-        response_metadata=response_metadata,
+        response_metadata=deepcopy(response_metadata),
         confidence_rating=confidence_rating,
         reference_accessed=reference_accessed,
         hint_used=hint_used,
@@ -204,11 +266,13 @@ def create_attempt(
             knowledge_node_id=evidence["knowledge_node_id"],
             attempt_id=attempt.id,
             prompt_id=prompt_id,
-            prompt_version_id=evidence.get("prompt_version_id"),
+            prompt_version_id=attempt.prompt_version_id,
             timestamp=evidence.get("timestamp"),
             evidence_kind=evidence.get("evidence_kind", "observed"),
-            demand_level=evidence.get("demand_level"),
-            knowledge_type=evidence.get("knowledge_type"),
+            demand_level=(task_context or {}).get("demand_level", evidence.get("demand_level")),
+            knowledge_type=(task_context or {}).get(
+                "knowledge_type", evidence.get("knowledge_type")
+            ),
             time_since_last_attempt_seconds=evidence.get("time_since_last_attempt_seconds"),
             response_time_seconds=_value_or_default(
                 evidence.get("response_time_seconds"), elapsed_seconds
@@ -231,7 +295,11 @@ def create_attempt(
             max_score=evidence.get("max_score"),
             partial_credit_dimensions=evidence.get("partial_credit_dimensions"),
             item_difficulty_estimate=evidence.get("item_difficulty_estimate"),
-            attempt_context=_value_or_default(evidence.get("attempt_context"), response_metadata),
+            attempt_context={
+                **deepcopy(evidence.get("attempt_context") or {}),
+                **(attempt_evidence_context(attempt) or {}),
+            }
+            or None,
             validity_scope=evidence.get("validity_scope"),
             answer_artifact_ref=evidence.get("answer_artifact_ref"),
         )
