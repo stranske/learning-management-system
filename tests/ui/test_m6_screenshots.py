@@ -12,9 +12,12 @@ trade-off rationale.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import importlib.util
 import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 
@@ -40,6 +43,20 @@ from lms.prompts.models import Prompt, PromptVersion
 from lms.sources.models import SourceReference
 
 SCREENSHOT_DIR = Path(__file__).resolve().parents[2] / "docs" / "screenshots"
+
+
+@contextlib.contextmanager
+def _screenshot_dir_lock() -> Iterator[None]:
+    """Serialize snapshot writes/reads across pytest-xdist workers."""
+    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    lock_path = SCREENSHOT_DIR / ".pytest-screenshot.lock"
+    with lock_path.open("w", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
 
 # Static M6 surfaces keyed by snapshot slug. Each renders without a seeded path
 # parameter; the feedback-detail surface is appended at runtime once a feedback
@@ -274,14 +291,14 @@ def _render_surfaces(client: TestClient, session_factory: sessionmaker[Session])
         (FEEDBACK_DETAIL_SLUG, f"/app/learner/feedback/{feedback_record_id}")
     ]
 
-    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
     rendered: dict[str, str] = {}
-    for slug, path in surfaces:
-        response = client.get(path)
-        assert response.status_code == 200, f"{slug} ({path}) returned {response.status_code}"
-        html = _snapshot_html(response.text)
-        (SCREENSHOT_DIR / f"m6-{slug}.html").write_text(html, encoding="utf-8")
-        rendered[slug] = html
+    with _screenshot_dir_lock():
+        for slug, path in surfaces:
+            response = client.get(path)
+            assert response.status_code == 200, f"{slug} ({path}) returned {response.status_code}"
+            html = _snapshot_html(response.text)
+            (SCREENSHOT_DIR / f"m6-{slug}.html").write_text(html, encoding="utf-8")
+            rendered[slug] = html
     return rendered
 
 
@@ -297,10 +314,11 @@ def test_m6_surface_html_snapshot_artifacts_exist(
     client, session_factory = api_client
     _render_surfaces(client, session_factory)
 
-    for slug in EXPECTED_SLUGS:
-        artifact = SCREENSHOT_DIR / f"m6-{slug}.html"
-        assert artifact.is_file(), f"missing HTML snapshot artifact for {slug}"
-        assert artifact.read_text(encoding="utf-8").lstrip().startswith("<!doctype html>")
+    with _screenshot_dir_lock():
+        for slug in EXPECTED_SLUGS:
+            artifact = SCREENSHOT_DIR / f"m6-{slug}.html"
+            assert artifact.is_file(), f"missing HTML snapshot artifact for {slug}"
+            assert artifact.read_text(encoding="utf-8").lstrip().startswith("<!doctype html>")
 
 
 @pytest.mark.parametrize("api_client", [True], indirect=True)

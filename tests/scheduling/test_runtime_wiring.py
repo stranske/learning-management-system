@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,7 +26,13 @@ from lms.graphs.repository import create_knowledge_node
 from lms.learners.models import Learner
 from lms.main import create_app
 from lms.scheduling import service as scheduling_service
-from lms.scheduling.models import ReviewQueueItem, ReviewSchedule, SchedulerDecision
+from lms.scheduling.card_state import advance_card_state
+from lms.scheduling.models import (
+    ReviewCardState,
+    ReviewQueueItem,
+    ReviewSchedule,
+    SchedulerDecision,
+)
 from lms.scheduling.repository import complete_review_queue_item, create_review_queue_item
 from lms.scheduling.service import schedule_from_attempt
 from lms.settings import Settings, get_settings
@@ -35,6 +42,205 @@ from tests.scheduling.test_review_queue import _make_attempt
 def _aware(value: datetime) -> datetime:
     """SQLite hands back naive datetimes; normalize to UTC for arithmetic."""
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _seed_authenticated_rubric_attempt(
+    session_factory: sessionmaker[Session],
+    user: User,
+    *,
+    tag: str,
+    confidence_rating: int = 5,
+    support_level: str = "none",
+) -> tuple[str, str, str, str, str]:
+    """Create a learner-owned attempt and hundred-point rubric for HTTP scoring."""
+    with session_factory() as session:
+        if session.get(User, user.id) is None:
+            session.add(user)
+        learner_id = f"learner-band-{tag}"
+        session.add(Learner(id=learner_id, user_id=user.id, display_name=learner_id))
+        node = create_knowledge_node(
+            session,
+            title=f"Band test node {tag}",
+            knowledge_type="conceptual",
+            scope="personal",
+            actor_id=user.id,
+            status="published",
+        )
+        rubric = create_rubric(
+            session,
+            title=f"Band rubric {tag}",
+            ownership_scope="personal",
+            authoring_actor=user.id,
+            knowledge_node_id=node.id,
+            criteria=[
+                {
+                    "criterion_order": 1,
+                    "description": "Unassisted retrieval quality.",
+                    "max_points": 100,
+                }
+            ],
+        )
+        attempt = create_attempt(
+            session,
+            learner_id=learner_id,
+            prompt_id=f"prompt-band-{tag}",
+            response_text="Unassisted rubric response.",
+            feedback={
+                "goal": "Demonstrate mastery.",
+                "observed_evidence": "Attempt submitted.",
+                "next_action": "Await rubric score.",
+            },
+            confidence_rating=confidence_rating,
+            support_level=support_level,
+        )
+        session.commit()
+        return (
+            learner_id,
+            attempt.id,
+            rubric.id,
+            rubric.criteria[0].id,
+            node.id,
+        )
+
+
+@pytest.mark.parametrize(
+    ("normalized_score", "support_level", "expected_rating", "rule_id"),
+    [
+        (0.85, "none", 3, "partial-at-mastery"),
+        (0.85, "coach", 2, "supported-or-low-confidence-correct"),
+    ],
+)
+def test_rubric_scores_retain_condition_caps_with_null_correctness(
+    deployed_scheduling_api_client: tuple[TestClient, sessionmaker[Session], User],
+    normalized_score: float,
+    support_level: str,
+    expected_rating: int,
+    rule_id: str,
+) -> None:
+    """Null-correctness rubric evidence must still run FSRS condition-cap controls."""
+    client, session_factory, current_user = deployed_scheduling_api_client
+    tag = f"cap-{normalized_score:.2f}-{support_level}".replace(".", "-")
+    _learner_id, attempt_id, rubric_id, criterion_id, _node_id = _seed_authenticated_rubric_attempt(
+        session_factory,
+        current_user,
+        tag=tag,
+        support_level=support_level,
+    )
+    points = int(round(normalized_score * 100))
+    response = client.post(
+        "/rubric-scores",
+        json={
+            "rubric_id": rubric_id,
+            "attempt_id": attempt_id,
+            "scorer_type": "human",
+            "criterion_scores": [{"criterion_id": criterion_id, "points": points}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    evidence_id = response.json()["evidence_record_id"]
+
+    with session_factory() as session:
+        evidence = session.get(EvidenceRecord, evidence_id)
+        assert evidence is not None
+        assert evidence.correctness is None
+        assert evidence.support_level == support_level
+        item = session.scalar(
+            select(ReviewQueueItem).where(ReviewQueueItem.source_evidence_record_id == evidence_id)
+        )
+        assert item is not None
+        assert item.decision_log["fsrs_rating"]["value"] == expected_rating
+        assert item.decision_log["fsrs_rating"]["rule_id"] == rule_id
+
+
+@pytest.mark.parametrize(
+    ("normalized_score", "expected_rating", "rule_id"),
+    [
+        (0.49, 1, "partial-under-half"),
+        (0.50, 2, "partial-under-mastery"),
+        (0.84, 2, "partial-under-mastery"),
+        (0.85, 3, "partial-at-mastery"),
+    ],
+)
+def test_rubric_scores_map_to_fsrs_bands(
+    deployed_scheduling_api_client: tuple[TestClient, sessionmaker[Session], User],
+    monkeypatch: pytest.MonkeyPatch,
+    normalized_score: float,
+    expected_rating: int,
+    rule_id: str,
+) -> None:
+    """Authenticated rubric HTTP scores feed FSRS from normalized_score, not correctness."""
+    client, session_factory, current_user = deployed_scheduling_api_client
+    tag = f"{normalized_score:.2f}".replace(".", "-")
+    learner_id, attempt_id, rubric_id, criterion_id, node_id = _seed_authenticated_rubric_attempt(
+        session_factory,
+        current_user,
+        tag=tag,
+    )
+    points = int(round(normalized_score * 100))
+    advance = Mock(wraps=advance_card_state)
+    monkeypatch.setattr(scheduling_service, "advance_card_state", advance)
+
+    response = client.post(
+        "/rubric-scores",
+        json={
+            "rubric_id": rubric_id,
+            "attempt_id": attempt_id,
+            "scorer_type": "human",
+            "scorer_id": "teacher-band",
+            "scorer_version": "band-v1",
+            "criterion_scores": [{"criterion_id": criterion_id, "points": points}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    evidence_id = body["evidence_record_id"]
+    rubric_score_id = body["id"]
+    assert body["scorer_type"] == "human"
+    assert body["scorer_id"] == "teacher-band"
+    assert body["scorer_version"] == "band-v1"
+    assert body["normalized_score"] == pytest.approx(normalized_score)
+    assert body["raw_score"] == pytest.approx(points)
+    advance.assert_called_once()
+    assert advance.call_args.kwargs["rating_value"] == expected_rating
+
+    with session_factory() as session:
+        rubric_score = session.get(RubricScore, rubric_score_id)
+        assert rubric_score is not None
+        assert rubric_score.attempt_id == attempt_id
+        assert rubric_score.rubric_id == rubric_id
+        assert rubric_score.scorer_type == "human"
+        assert rubric_score.scorer_id == "teacher-band"
+        assert rubric_score.scorer_version == "band-v1"
+        assert rubric_score.normalized_score == pytest.approx(normalized_score)
+        assert rubric_score.evidence_record_id == evidence_id
+        evidence = session.get(EvidenceRecord, evidence_id)
+        assert evidence is not None
+        assert evidence.correctness is None
+        assert evidence.normalized_score == pytest.approx(normalized_score)
+        assert evidence.scoring_method == "rubric-scored"
+        assert evidence.scorer_type == "human"
+        assert evidence.scorer_id == "teacher-band"
+        assert evidence.scorer_version == "band-v1"
+        assert evidence.knowledge_node_id == node_id
+        item = session.scalar(
+            select(ReviewQueueItem).where(ReviewQueueItem.source_evidence_record_id == evidence_id)
+        )
+        assert item is not None
+        assert item.learner_id == learner_id
+        assert item.decision_log["fsrs_rating"]["value"] == expected_rating
+        assert item.decision_log["fsrs_rating"]["rule_id"] == rule_id
+        card = session.scalar(
+            select(ReviewCardState).where(
+                ReviewCardState.learner_id == learner_id,
+                ReviewCardState.subject_id == node_id,
+            )
+        )
+        assert card is not None
+        decision = session.scalar(
+            select(SchedulerDecision).where(SchedulerDecision.learner_id == learner_id)
+        )
+        assert decision is not None
+        assert decision.decision_log["fsrs_rating"]["value"] == expected_rating
 
 
 def test_rubric_scoring_runtime_advances_success_ramp(

@@ -152,7 +152,8 @@ def score_attempt_with_rubric(
         hint_used=attempt.hint_used,
         support_level=attempt.support_level,
         response_time_seconds=attempt.elapsed_seconds,
-        correctness=normalized_score >= feedback_threshold,
+        # Partial-credit rubrics are not binary; FSRS bands use normalized_score.
+        correctness=None,
         raw_score=raw_score,
         normalized_score=normalized_score,
         max_score=max_score,

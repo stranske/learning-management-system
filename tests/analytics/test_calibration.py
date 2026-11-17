@@ -103,6 +103,71 @@ def test_normalized_score_used_when_correctness_missing(db_session: Session) -> 
     assert report.overconfident is True
 
 
+def test_rubric_scoring_calibration_uses_normalized_score(db_session: Session) -> None:
+    """Rubric-scored rows with null correctness contribute normalized_score to calibration."""
+    from lms.evidence.repository import create_attempt, list_evidence_records
+    from lms.feedback.repository import create_rubric
+    from lms.feedback.scoring import score_attempt_with_rubric
+    from lms.graphs.repository import create_knowledge_node
+
+    node = create_knowledge_node(
+        db_session,
+        title="Calibration rubric node",
+        knowledge_type="procedural",
+        scope="personal",
+        actor_id="user:calibration",
+        status="published",
+    )
+    rubric = create_rubric(
+        db_session,
+        title="Calibration rubric",
+        ownership_scope="personal",
+        authoring_actor="user:calibration",
+        knowledge_node_id=node.id,
+        criteria=[
+            {"criterion_order": 1, "description": "Step one.", "max_points": 2},
+            {"criterion_order": 2, "description": "Step two.", "max_points": 3},
+        ],
+    )
+    criterion_ids = [criterion.id for criterion in rubric.criteria]
+    for index in range(3):
+        attempt = create_attempt(
+            db_session,
+            learner_id="learner-rubric-cal",
+            prompt_id=f"prompt-cal-{index}",
+            response_text="Partial reasoning.",
+            feedback={
+                "goal": "Practice",
+                "observed_evidence": "Attempt.",
+                "next_action": "Review.",
+            },
+            confidence_rating=5,
+        )
+        score_attempt_with_rubric(
+            db_session,
+            rubric_id=rubric.id,
+            attempt_id=attempt.id,
+            scorer_type="human",
+            criterion_scores=[
+                {"criterion_id": criterion_ids[0], "points": 2},
+                {"criterion_id": criterion_ids[1], "points": 2},
+            ],
+        )
+    db_session.commit()
+
+    records = list_evidence_records(db_session, learner_id="learner-rubric-cal")
+    assert len(records) == 3
+    for record in records:
+        assert record.correctness is None
+        assert record.normalized_score == pytest.approx(0.8)
+        assert record.scoring_method == "rubric-scored"
+
+    report = calibration_for_learner(db_session, "learner-rubric-cal", scope="personal")
+    bucket = next(b for b in report.buckets if b.confidence_rating == 5)
+    assert bucket.observed_accuracy == pytest.approx(0.8)
+    assert bucket.count == 3
+
+
 def test_unrated_or_unscored_records_ignored(db_session: Session) -> None:
     """Records lacking confidence or any accuracy signal do not count."""
     _seed_personal_nodes(db_session, "node-1")

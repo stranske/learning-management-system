@@ -45,8 +45,8 @@ def test_rubric_score_fires_configured_remediation_trigger(
         trigger = create_remediation_trigger(
             session,
             knowledge_node_id=node_id,
-            trigger_type="high-confidence-error",
-            trigger_rules={"min_confidence": 4},
+            trigger_type="hint-dependence",
+            trigger_rules={},
             ownership_scope="personal",
         )
         session.commit()
@@ -60,6 +60,7 @@ def test_rubric_score_fires_configured_remediation_trigger(
             "prompt_id": prompt_id,
             "response_text": "A confident but incorrect explanation.",
             "confidence_rating": 5,
+            "hint_used": True,
             "feedback": {
                 "goal": "Practice the reasoning",
                 "observed_evidence": "Incorrect rubric response.",
@@ -95,7 +96,7 @@ def test_rubric_score_fires_configured_remediation_trigger(
         assert evidence.learner_id == learner_id
         assert evidence.knowledge_node_id == node_id
         assert evidence.scoring_method == "rubric-scored"
-        assert evidence.correctness is False
+        assert evidence.correctness is None
         items = list(
             session.scalars(select(ReviewQueueItem).where(ReviewQueueItem.learner_id == learner_id))
         )
@@ -108,5 +109,5 @@ def test_rubric_score_fires_configured_remediation_trigger(
         assert item.knowledge_node_id == node_id
         assert item.source_attempt_id == attempt_id
         assert item.source_evidence_record_id == evidence_id
-        assert item.decision_log["rule"] == "high-confidence-error"
+        assert item.decision_log["rule"] == "hint-dependence"
         assert item.decision_log["inputs"]["trigger_id"] == trigger_id

@@ -36,6 +36,11 @@
             <label for="coaching_intensity">coaching intensity</label><select id="coaching_intensity" name="coaching_intensity"><option value="full" selected>full</option><option value="light">light</option><option value="quiet">quiet</option></select>
             <label for="user_message">Your message</label>
             <textarea id="user_message" name="user_message" rows="4" required></textarea>
+            <label for="prompt_id">Linked prompt (optional)</label>
+            <input id="prompt_id" name="prompt_id" maxlength="36"
+              aria-describedby="prompt-source-hint">
+            <small id="prompt-source-hint">Use a published prompt reference to require
+            its approved sources automatically.</small>
             <label for="source_constraints">Required source ids (comma separated)</label>
             <input id="source_constraints" name="source_constraints"
               aria-describedby="source-hint">

@@ -108,6 +108,7 @@ def test_rubric_score_writes_partial_credit_evidence(db_session: Session) -> Non
     assert evidence.scorer_type == "human"
     assert evidence.scorer_id == "teacher-1"
     assert evidence.scorer_version == "rubric-v1"
+    assert evidence.correctness is None
     assert evidence.partial_credit_dimensions["rubric_id"] == rubric_id
     assert evidence.partial_credit_dimensions["criterion_scores"][1]["points"] == 2
     assert evidence.prompt_version_id is None
@@ -239,7 +240,7 @@ def test_rubric_evidence_preserves_attempt_conditions_and_prompt_version(
     assert engine_review.call_args.kwargs["rating_value"] == 2
     assert scheduled_evidence == [expected_evidence]
     assert evidence.normalized_score == 1.0
-    assert evidence.correctness is True
+    assert evidence.correctness is None
     assert evidence.prompt_version_id == version_id
     assert evidence.demand_level == "medium"
     assert evidence.knowledge_type == "procedural"
@@ -293,6 +294,59 @@ def test_legacy_rubric_attempt_keeps_unknown_version_and_context(
     assert evidence.demand_level is None
     assert evidence.knowledge_type is None
     assert evidence.attempt_context == {"client": "legacy"}
+
+
+@pytest.mark.parametrize(
+    ("points", "expected_normalized"),
+    [
+        (50, 0.50),
+        (84, 0.84),
+    ],
+)
+def test_rubric_partial_credit_keeps_null_correctness(
+    db_session: Session,
+    points: int,
+    expected_normalized: float,
+) -> None:
+    """Scores below feedback_threshold stay non-binary; FSRS uses normalized_score."""
+    node = create_knowledge_node(
+        db_session,
+        title="Partial credit node",
+        knowledge_type="procedural",
+        scope="personal",
+        actor_id="user:alice",
+        status="published",
+    )
+    rubric = create_rubric(
+        db_session,
+        title="Hundred-point rubric",
+        ownership_scope="personal",
+        authoring_actor="user:alice",
+        knowledge_node_id=node.id,
+        criteria=[
+            {
+                "criterion_order": 1,
+                "description": "Unassisted retrieval.",
+                "max_points": 100,
+            }
+        ],
+    )
+    attempt_id = _attempt(db_session)
+    criterion_id = rubric.criteria[0].id
+    score = score_attempt_with_rubric(
+        db_session,
+        rubric_id=rubric.id,
+        attempt_id=attempt_id,
+        scorer_type="human",
+        criterion_scores=[{"criterion_id": criterion_id, "points": points}],
+    )
+    db_session.commit()
+
+    assert score.normalized_score == pytest.approx(expected_normalized)
+    evidence = get_evidence_record(db_session, score.evidence_record_id)
+    assert evidence is not None
+    assert evidence.correctness is None
+    assert evidence.normalized_score == pytest.approx(expected_normalized)
 
 
 @pytest.mark.parametrize(
@@ -417,7 +471,7 @@ def test_rubric_scoring_rejects_invalid_thresholds_without_writes(
     assert score.evidence_record_id is not None
     evidence = get_evidence_record(db_session, score.evidence_record_id)
     assert evidence is not None
-    assert evidence.correctness is True
+    assert evidence.correctness is None
 
 
 @pytest.mark.parametrize(
@@ -582,7 +636,7 @@ def test_rubric_scoring_accepts_threshold_boundaries(
     points: tuple[int, int],
     expected_level: str | None,
 ) -> None:
-    """Inclusive and equal thresholds preserve correctness and feedback boundaries."""
+    """Inclusive and equal thresholds preserve nullable correctness and feedback boundaries."""
     attempt_id = _attempt(db_session)
     rubric_id, criterion_ids = _rubric(db_session)
     score = score_attempt_with_rubric(
@@ -601,7 +655,7 @@ def test_rubric_scoring_accepts_threshold_boundaries(
     assert score.evidence_record_id is not None
     evidence = get_evidence_record(db_session, score.evidence_record_id)
     assert evidence is not None
-    assert evidence.correctness is (expected_level is None)
+    assert evidence.correctness is None
     if expected_level is None:
         assert score.feedback_record_id is None
     else:
