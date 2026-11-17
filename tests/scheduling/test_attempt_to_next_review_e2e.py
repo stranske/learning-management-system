@@ -954,7 +954,7 @@ def test_latest_rubric_failure_excludes_creation_time_timing(loop_client):
             )
         )
         assert len(rows) == 2
-        assert rows[0].correctness is True and rows[-1].correctness is False
+        assert rows[0].correctness is True and rows[-1].correctness is None
     payload = _attempt_payload(learner, node, prompt, response_text="current")
     payload.update(confidence_rating=5, elapsed_seconds=1)
     assert client.post("/attempts", json=payload).status_code == 201
