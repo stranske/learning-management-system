@@ -23,7 +23,7 @@ from lms.evidence.models import (
 from lms.evidence.scoring import resolved_normalized_score
 from lms.graphs.models import KNOWLEDGE_TYPES
 from lms.learners.models import Learner
-from lms.prompts.models import Prompt, PromptVersion
+from lms.prompts.models import PromptVersion
 from lms.prompts.repository import _prompt_task_context, get_prompt, version_task_context
 
 
