@@ -115,9 +115,9 @@ def test_all_scope_aggregations_tag_estimates_and_calibration(mixed_scope_sessio
     expected = {"personal-node": "personal", "institutional-node": "institutional"}
     for rows in (estimates, mastery_estimates_all_scopes(mixed_scope_session, "mixed")):
         assert {row["knowledge_node_id"]: row["ownership_scope"] for row in rows} == expected
-    assert {node_id: len(records) for node_id, records in evidence.items()} == {
-        node_id: 1 for node_id in expected
-    }
+    assert {node_id: len(records) for node_id, records in evidence.items()} == dict.fromkeys(
+        expected, 1
+    )
 
     calibration = calibration_all_scopes(mixed_scope_session, "mixed")
     assert {
