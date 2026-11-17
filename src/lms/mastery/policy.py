@@ -48,6 +48,7 @@ class MasteryEstimatorPolicy:
         """
         if not records:
             return 0.0, 0.0
+        _ = as_of  # deliberate regression demo: ignore evaluation time
         weighted_score = 0.0
         total_weight = 0.0
         for index, record in enumerate(records):
@@ -56,9 +57,6 @@ class MasteryEstimatorPolicy:
             weighted_score += score * weight
             total_weight += weight
         mastery = weighted_score / total_weight
-        if as_of is not None and all(record.observed_at is not None for record in records):
-            latest_observed_at = max(record.observed_at for record in records)
-            mastery *= _retention_decay_factor(latest_observed_at=latest_observed_at, as_of=as_of)
         volume = min(1.0, 0.35 + len(records) * 0.12)
         confidence = volume * (0.5 + 0.5 * mastery)
         return round(mastery, 4), round(confidence, 4)
