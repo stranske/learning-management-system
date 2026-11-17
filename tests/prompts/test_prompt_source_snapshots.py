@@ -26,9 +26,9 @@ from lms.sources.models import SourceReference
 def test_alembic_snapshot_migration_is_registered() -> None:
     """The snapshot migration chains from the knowledge-edge revision."""
     script_directory = ScriptDirectory.from_config(Config(Path("alembic.ini")))
-    revision = script_directory.get_revision("20261117_0037")
+    revision = script_directory.get_revision("20261117_0038")
     assert revision is not None
-    assert revision.down_revision == "20260924_0036"
+    assert revision.down_revision == "20261117_0037"
 
 
 def test_legacy_prompt_versions_have_no_source_snapshots(db_session: Session) -> None:
