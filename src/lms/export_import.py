@@ -440,6 +440,7 @@ DEFAULT_REDACTED_FIELDS = {
 REDACTED_FIELD_VALUES: dict[tuple[str, str], Any] = {
     ("CapabilityEstimate", "commentary"): "[redacted: inferred capability commentary]",
     ("EvidencePacket", "packet_metadata"): {},
+    ("KnowledgeNode", "description"): None,
 }
 ALL_VALUE = "all"
 
@@ -580,6 +581,8 @@ def _export_llm_session(
 ) -> bool:
     if include_llm_traces == ALL_VALUE:
         return True
+    if include_llm_traces == "none":
+        return False
     return trace_class == "evidence-grade" and external_export_allowed
 
 
@@ -608,24 +611,24 @@ def _model_to_record(
     redacted_fields = set()
     if include_source_content != ALL_VALUE:
         redacted_fields.update(DEFAULT_REDACTED_FIELDS.get(record_type, set()))
-    # Imported descriptions are source excerpts. Their existing provenance/link
-    # also covers older Markdown imports; unknown visibility fails closed.
-    redact_description = False
+    # Imported excerpts and generated descriptions inherit source visibility.
+    # Unknown visibility fails closed unless the export explicitly opts into all content.
     if (
         isinstance(row, KnowledgeNode)
-        and row.provenance == "imported"
+        and row.provenance in {"imported", "llm-proposed"}
         and include_source_content != ALL_VALUE
     ):
         if include_source_content == "none":
-            # Every imported excerpt is withheld; skip the SourceReference lookup.
-            redact_description = True
+            # Withhold source-derived descriptions without looking up their sources.
+            redacted_fields.add("description")
         else:
             source = (
                 session.get(SourceReference, row.source_reference_id)
                 if row.source_reference_id
                 else None
             )
-            redact_description = source is None or source.source_visibility != "public"
+            if source is None or source.source_visibility != "public":
+                redacted_fields.add("description")
     source_content_fields = set()
     if record_type == "SourceReference" and include_source_content != ALL_VALUE:
         source_content_fields = SOURCE_CONTENT_FIELDS
@@ -640,8 +643,6 @@ def _model_to_record(
             record[column.key] = REDACTED_FIELD_VALUES[(record_type, column.key)]
             continue
         record[column.key] = _dump_value(getattr(row, column.key))
-    if redact_description:
-        record["description"] = None
     if isinstance(row, LearningGoal):
         record["target_node_ids"] = [node.id for node in row.target_nodes]
     if isinstance(row, Prompt):

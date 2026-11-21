@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -305,6 +306,190 @@ def test_public_imported_description_obeys_none_and_preserves_authored_text(db_s
     none = "\n".join(export_jsonl(db_session, include_source_content="none"))
     assert sentinel not in none
     assert "Authored description" in none
+
+
+@pytest.mark.parametrize("write_to_file", [False, True], ids=["stdout", "file"])
+@pytest.mark.parametrize(
+    ("source_mode", "trace_mode"),
+    [
+        pytest.param(None, None, id="default"),
+        pytest.param(None, "none", id="trace-free"),
+        pytest.param("public-only", None, id="public-only"),
+        pytest.param("none", None, id="source-free"),
+        pytest.param("all", None, id="confirmed-all"),
+    ],
+)
+def test_generated_source_visibility_export(
+    db_session: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    source_mode: str | None,
+    trace_mode: str | None,
+    write_to_file: bool,
+) -> None:
+    from sqlalchemy import create_engine
+
+    from lms.__main__ import main
+    from lms.db.base import Base
+    from lms.export_import import import_jsonl
+    from lms.graphs.models import KnowledgeEdge, KnowledgeNode
+
+    source_visibilities = {"local": "local-only", "public": "public", "unavailable": "public"}
+    for source_id, visibility in source_visibilities.items():
+        db_session.add(
+            SourceReference(
+                id=source_id,
+                source_type="markdown-file",
+                stable_locator=f"notes/{source_id}.md",
+                content_hash=f"hash-{source_id}",
+                source_visibility=visibility,
+            )
+        )
+    db_session.flush()
+
+    nodes = {
+        "generated-local": ("llm-proposed", "local"),
+        "generated-public": ("llm-proposed", "public"),
+        "generated-unresolved": ("llm-proposed", "unavailable"),
+        "generated-unlinked": ("llm-proposed", None),
+        "imported-local": ("imported", "local"),
+        "imported-public": ("imported", "public"),
+        "manual": ("manual", "local"),
+    }
+    descriptions = {node_id: f"SENTINEL_850_{node_id}" for node_id in nodes}
+    for node_id, (provenance, source_id) in nodes.items():
+        db_session.add(
+            KnowledgeNode(
+                id=node_id,
+                title=node_id,
+                description=descriptions[node_id],
+                knowledge_type="factual",
+                ownership_scope="personal",
+                provenance=provenance,
+                source_reference_id=source_id,
+            )
+        )
+    db_session.flush()
+    db_session.add_all(
+        [
+            KnowledgeEdge(
+                id="edge",
+                source_node_id="generated-local",
+                target_node_id="manual",
+                source_scope="personal",
+                target_scope="personal",
+            ),
+            LLMSession(
+                id="trace",
+                mode="authoring-assist",
+                trace_class="evidence-grade",
+                provider="fake",
+                model="fake-model",
+                external_export_allowed=True,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    get_record = db_session.get
+
+    def get_with_unresolved_source(model, record_id, **kwargs):
+        # Simulate an unavailable visibility lookup with valid persisted foreign keys.
+        if model is SourceReference and record_id == "unavailable":
+            return None
+        return get_record(model, record_id, **kwargs)
+
+    bundle = tmp_path / "generated-descriptions.jsonl"
+    argv = ["lms", "export"]
+    if write_to_file:
+        argv.extend(["--out", str(bundle)])
+    if trace_mode is not None:
+        argv.extend(["--include-llm-traces", trace_mode])
+    if source_mode is not None:
+        argv.extend(["--include-source-content", source_mode])
+    if source_mode == "all":
+        argv.append("--yes-i-mean-it")
+    monkeypatch.setattr("sys.argv", argv)
+    with (
+        patch("lms.__main__.session_scope", return_value=nullcontext(db_session)),
+        patch.object(db_session, "get", side_effect=get_with_unresolved_source),
+    ):
+        main()
+    stdout = capsys.readouterr().out
+    if write_to_file:
+        assert stdout.startswith("export complete: ")
+        stream = bundle.read_text(encoding="utf-8")
+    else:
+        stream = stdout
+        bundle.write_text(stream, encoding="utf-8")
+    records = {
+        (entry["type"], entry["record"]["id"]): entry["record"]
+        for entry in map(json.loads, stream.splitlines())
+    }
+
+    assert (("LLMSession", "trace") in records) is (trace_mode != "none")
+    for source_id, visibility in source_visibilities.items():
+        source = records["SourceReference", source_id]
+        assert source["content_hash"] == f"hash-{source_id}"
+        assert source["source_visibility"] == visibility
+    edge = records["KnowledgeEdge", "edge"]
+    assert (edge["source_node_id"], edge["target_node_id"]) == ("generated-local", "manual")
+    for node_id, (provenance, source_id) in nodes.items():
+        node = records["KnowledgeNode", node_id]
+        assert node["provenance"] == provenance
+        assert node["source_reference_id"] == source_id
+
+    visible = {"manual"}
+    if source_mode == "all":
+        visible = set(nodes)
+    elif source_mode != "none":
+        visible.update({"generated-public", "imported-public"})
+    assert {node_id for node_id, text in descriptions.items() if text in stream} == visible
+    expected_descriptions = {
+        node_id: description if node_id in visible else None
+        for node_id, description in descriptions.items()
+    }
+    assert {
+        node_id: records["KnowledgeNode", node_id]["description"] for node_id in nodes
+    } == expected_descriptions
+
+    db_session.commit()
+    db_session.expunge_all()
+    assert {node.id: node.description for node in db_session.query(KnowledgeNode)} == descriptions
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            Base.metadata.create_all(connection)
+        with Session(engine) as destination:
+            import_jsonl(destination, bundle, dry_run=False)
+            destination.commit()
+            restored_nodes = destination.query(KnowledgeNode).all()
+            assert {node.id: node.description for node in restored_nodes} == expected_descriptions
+            assert {
+                node.id: (node.provenance, node.source_reference_id) for node in restored_nodes
+            } == nodes
+            assert {
+                source.id: (source.content_hash, source.source_visibility)
+                for source in destination.query(SourceReference)
+            } == {
+                source_id: (f"hash-{source_id}", visibility)
+                for source_id, visibility in source_visibilities.items()
+            }
+            restored_edge = destination.query(KnowledgeEdge).one()
+            assert (
+                restored_edge.id,
+                restored_edge.source_node_id,
+                restored_edge.target_node_id,
+            ) == (
+                "edge",
+                "generated-local",
+                "manual",
+            )
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.parametrize("visibility", ["public", "local-only"])
