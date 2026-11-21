@@ -21,6 +21,7 @@ from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
 from lms.llm.config import DEFAULT_MODE_MODELS, load_runtime_llm_config
+from lms.llm.exceptions import SourceConstraintViolation
 from lms.llm.interaction_policy import (
     InteractionContext,
     build_policy_prompt,

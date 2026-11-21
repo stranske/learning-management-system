@@ -207,13 +207,15 @@ def test_study_surface_uses_linked_prompt_sources(api_client, monkeypatch, case)
         },
     )
     assert response.status_code == 200
-    assert text in response.text
     with factory() as session:
         event = session.query(LLMFeedbackEvent).one()
         assert event.source_reference_ids == [ids["stable_locator"]]
         assert event.unverified is (case != "valid")
-    assert len(calls) == (1 if case == "valid" else 2)
+    assert len(calls) == 1
     if case != "valid":
+        assert "Review the source material and try again." in response.text
+        assert text not in response.text
         assert '<li class="flag flag-unverified">unverified</li>' in response.text
     else:
+        assert text in response.text
         assert '<p class="flags none">No flags on this turn.</p>' in response.text
