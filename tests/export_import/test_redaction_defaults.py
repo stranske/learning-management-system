@@ -308,11 +308,13 @@ def test_public_imported_description_obeys_none_and_preserves_authored_text(db_s
     assert "Authored description" in none
 
 
+@pytest.mark.parametrize("write_to_file", [False, True], ids=["stdout", "file"])
 @pytest.mark.parametrize(
     ("source_mode", "trace_mode"),
     [
         pytest.param(None, None, id="default"),
-        pytest.param("public-only", "none", id="trace-free"),
+        pytest.param(None, "none", id="trace-free"),
+        pytest.param("public-only", None, id="public-only"),
         pytest.param("none", None, id="source-free"),
         pytest.param("all", None, id="confirmed-all"),
     ],
@@ -324,6 +326,7 @@ def test_generated_source_visibility_export(
     capsys: pytest.CaptureFixture[str],
     source_mode: str | None,
     trace_mode: str | None,
+    write_to_file: bool,
 ) -> None:
     from sqlalchemy import create_engine
 
@@ -397,7 +400,10 @@ def test_generated_source_visibility_export(
             return None
         return get_record(model, record_id, **kwargs)
 
+    bundle = tmp_path / "generated-descriptions.jsonl"
     argv = ["lms", "export"]
+    if write_to_file:
+        argv.extend(["--out", str(bundle)])
     if trace_mode is not None:
         argv.extend(["--include-llm-traces", trace_mode])
     if source_mode is not None:
@@ -410,7 +416,13 @@ def test_generated_source_visibility_export(
         patch.object(db_session, "get", side_effect=get_with_unresolved_source),
     ):
         main()
-    stream = capsys.readouterr().out
+    stdout = capsys.readouterr().out
+    if write_to_file:
+        assert stdout.startswith("export complete: ")
+        stream = bundle.read_text(encoding="utf-8")
+    else:
+        stream = stdout
+        bundle.write_text(stream, encoding="utf-8")
     records = {
         (entry["type"], entry["record"]["id"]): entry["record"]
         for entry in map(json.loads, stream.splitlines())
@@ -446,8 +458,6 @@ def test_generated_source_visibility_export(
     db_session.expunge_all()
     assert {node.id: node.description for node in db_session.query(KnowledgeNode)} == descriptions
 
-    bundle = tmp_path / "generated-descriptions.jsonl"
-    bundle.write_text(stream, encoding="utf-8")
     engine = create_engine("sqlite+pysqlite:///:memory:")
     try:
         with engine.begin() as connection:
