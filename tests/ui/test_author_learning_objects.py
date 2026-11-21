@@ -125,7 +125,9 @@ def test_author_can_create_goal_node_edge_and_prompt_from_ui(
         assert prompt.authoring_actor == "author-ui"
 
 
-@pytest.mark.parametrize("changes_during_save", [False, True], ids=["stable", "changes_during_save"])
+@pytest.mark.parametrize(
+    "changes_during_save", [False, True], ids=["stable", "changes_during_save"]
+)
 def test_author_prompts_acknowledge_drift_records_reviewed_state(
     api_client: tuple[TestClient, sessionmaker[Session]],
     tmp_path: Path,
