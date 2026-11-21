@@ -307,6 +307,121 @@ def test_public_imported_description_obeys_none_and_preserves_authored_text(db_s
     assert "Authored description" in none
 
 
+@pytest.mark.parametrize(
+    ("source_mode", "trace_allowed"),
+    [
+        pytest.param(None, True, id="default"),
+        pytest.param(None, False, id="trace-free"),
+        pytest.param("none", True, id="source-free"),
+        pytest.param("all", True, id="confirmed-all"),
+    ],
+)
+def test_generated_source_visibility_export(
+    db_session: Session, source_mode: str | None, trace_allowed: bool
+) -> None:
+    from lms.graphs.models import KnowledgeEdge, KnowledgeNode
+
+    source_visibilities = {"local": "local-only", "public": "public", "unavailable": "public"}
+    for source_id, visibility in source_visibilities.items():
+        db_session.add(
+            SourceReference(
+                id=source_id,
+                source_type="markdown-file",
+                stable_locator=f"notes/{source_id}.md",
+                content_hash=f"hash-{source_id}",
+                source_visibility=visibility,
+            )
+        )
+    db_session.flush()
+
+    nodes = {
+        "generated-local": ("llm-proposed", "local"),
+        "generated-public": ("llm-proposed", "public"),
+        "generated-unresolved": ("llm-proposed", "unavailable"),
+        "generated-unlinked": ("llm-proposed", None),
+        "imported-local": ("imported", "local"),
+        "imported-public": ("imported", "public"),
+        "manual": ("manual", "local"),
+    }
+    descriptions = {node_id: f"SENTINEL_850_{node_id}" for node_id in nodes}
+    for node_id, (provenance, source_id) in nodes.items():
+        db_session.add(
+            KnowledgeNode(
+                id=node_id,
+                title=node_id,
+                description=descriptions[node_id],
+                knowledge_type="factual",
+                ownership_scope="personal",
+                provenance=provenance,
+                source_reference_id=source_id,
+            )
+        )
+    db_session.flush()
+    db_session.add_all(
+        [
+            KnowledgeEdge(
+                id="edge",
+                source_node_id="generated-local",
+                target_node_id="manual",
+                source_scope="personal",
+                target_scope="personal",
+            ),
+            LLMSession(
+                id="trace",
+                mode="authoring-assist",
+                trace_class="evidence-grade",
+                provider="fake",
+                model="fake-model",
+                external_export_allowed=trace_allowed,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    get_record = db_session.get
+
+    def get_with_unresolved_source(model, record_id, **kwargs):
+        # Simulate an unavailable visibility lookup with valid persisted foreign keys.
+        if model is SourceReference and record_id == "unavailable":
+            return None
+        return get_record(model, record_id, **kwargs)
+
+    with patch.object(db_session, "get", side_effect=get_with_unresolved_source):
+        lines = list(
+            export_jsonl(db_session)
+            if source_mode is None
+            else export_jsonl(
+                db_session, include_source_content=source_mode, confirm_all=source_mode == "all"
+            )
+        )
+    stream = "\n".join(lines)
+    records = {
+        (entry["type"], entry["record"]["id"]): entry["record"] for entry in map(json.loads, lines)
+    }
+
+    assert (("LLMSession", "trace") in records) is trace_allowed
+    for source_id, visibility in source_visibilities.items():
+        source = records["SourceReference", source_id]
+        assert source["content_hash"] == f"hash-{source_id}"
+        assert source["source_visibility"] == visibility
+    edge = records["KnowledgeEdge", "edge"]
+    assert (edge["source_node_id"], edge["target_node_id"]) == ("generated-local", "manual")
+    for node_id, (provenance, source_id) in nodes.items():
+        node = records["KnowledgeNode", node_id]
+        assert node["provenance"] == provenance
+        assert node["source_reference_id"] == source_id
+
+    visible = {"manual"}
+    if source_mode == "all":
+        visible = set(nodes)
+    elif source_mode != "none":
+        visible.update({"generated-public", "imported-public"})
+    assert {node_id for node_id, text in descriptions.items() if text in stream} == visible
+    assert {
+        node_id: records["KnowledgeNode", node_id]["description"] for node_id in nodes
+    } == {node_id: descriptions[node_id] if node_id in visible else None for node_id in nodes}
+
+
 @pytest.mark.parametrize("visibility", ["public", "local-only"])
 @pytest.mark.parametrize("content_mode", ["public-only", "none", "all"])
 def test_authored_description_citing_source_survives_excerpt_redaction(

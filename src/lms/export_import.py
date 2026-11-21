@@ -608,16 +608,16 @@ def _model_to_record(
     redacted_fields = set()
     if include_source_content != ALL_VALUE:
         redacted_fields.update(DEFAULT_REDACTED_FIELDS.get(record_type, set()))
-    # Imported descriptions are source excerpts. Their existing provenance/link
-    # also covers older Markdown imports; unknown visibility fails closed.
+    # Imported excerpts and generated descriptions inherit source visibility.
+    # Unknown visibility fails closed unless the export explicitly opts into all content.
     redact_description = False
     if (
         isinstance(row, KnowledgeNode)
-        and row.provenance == "imported"
+        and row.provenance in {"imported", "llm-proposed"}
         and include_source_content != ALL_VALUE
     ):
         if include_source_content == "none":
-            # Every imported excerpt is withheld; skip the SourceReference lookup.
+            # Withhold source-derived descriptions without looking up their sources.
             redact_description = True
         else:
             source = (
