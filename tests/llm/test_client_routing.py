@@ -726,7 +726,7 @@ def test_http_sessions_uses_configured_default_provider(
     assert stored.cost_micro_usd > 0
 
 
-def test_http_sessions_citation_fallback_keeps_same_provider(
+def test_http_sessions_citation_fallback_retains_configured_provider_receipt(
     api_client: tuple[TestClient, sessionmaker[Session]],
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
@@ -757,7 +757,7 @@ def test_http_sessions_citation_fallback_keeps_same_provider(
     )
 
     assert response.status_code == 200
-    assert calls == [("alt", "routing-model"), ("alt", "routing-model")]
+    assert calls == [("alt", "routing-model")]
     body = response.json()
     assert "unverified" in body["flags"]
     assert body["model"] == "routing-model"

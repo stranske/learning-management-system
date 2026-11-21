@@ -21,7 +21,6 @@ from lms.llm.authoring_assist import ProposalDraft, propose_authoring_drafts
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
 from lms.llm.config import DEFAULT_MODE_MODELS, load_runtime_llm_config
-from lms.llm.exceptions import SourceConstraintViolation
 from lms.llm.interaction_policy import (
     InteractionContext,
     build_policy_prompt,
@@ -656,33 +655,31 @@ def create_llm_session_route(
     decision = decide_interaction_policy(context)
     if skill is not None:
         _validate_skill_consistency(skill, mode=payload.mode, trace_class=decision.trace_class)
-    # Use the configured default provider (including citation-fallback retries).
-    # Do not force provider_name="fake" here; explicit fake / no-key modes are
-    # selected by _default_client() / LLM_DEFAULT_PROVIDER instead.
     client = _default_client()
-    prompt = build_policy_prompt(context, decision)
-    flags: tuple[str, ...] = ()
-    try:
-        response = client.complete(
-            mode=payload.mode,
-            prompt=prompt,
-            trace_class=decision.trace_class,
-            source_constraints=decision.source_constraints,
-            learner_id=payload.learner_id,
-            coaching_intensity=payload.coaching_intensity,
-            prompt_template_version="study-coach-policy-v1",
-        )
-        flags = flag_uncited_claims(response.text, decision.source_constraints)
-    except SourceConstraintViolation:
-        response = client.complete(
-            mode=payload.mode,
-            prompt=prompt,
-            trace_class=decision.trace_class,
-            learner_id=payload.learner_id,
-            coaching_intensity=payload.coaching_intensity,
-            prompt_template_version="study-coach-policy-v1",
-        )
-        flags = ("unverified",)
+    response = client.complete(
+        mode=payload.mode,
+        prompt=build_policy_prompt(context, decision),
+        trace_class=decision.trace_class,
+        source_constraints=decision.source_constraints,
+        learner_id=payload.learner_id,
+        coaching_intensity=payload.coaching_intensity,
+        prompt_template_version="study-coach-policy-v1",
+        citation_fallback=(
+            "I couldn't verify a response against the required sources. "
+            "Review the source material and try again."
+        ),
+    )
+    flags = (
+        ("unverified",)
+        if response.citation_fallback_used
+        else flag_uncited_claims(response.text, decision.source_constraints)
+    )
+    cost_summary = {
+        "input_tokens": response.session.input_tokens,
+        "output_tokens": response.session.output_tokens,
+        "provider_calls": 1,
+        "cost_micro_usd": response.session.cost_micro_usd,
+    }
     session.add(response.session)
     event = LLMFeedbackEvent(
         llm_session=response.session,
@@ -703,9 +700,7 @@ def create_llm_session_route(
         source_reference_ids=list(decision.source_constraints),
         unverified=bool(flags),
         cost_metadata={
-            "input_tokens": response.session.input_tokens,
-            "output_tokens": response.session.output_tokens,
-            "cost_micro_usd": response.session.cost_micro_usd,
+            **cost_summary,
             "mode": response.session.mode,
         },
         event_summary=decision.next_action,
@@ -723,11 +718,7 @@ def create_llm_session_route(
         coaching_intensity=response.session.coaching_intensity,
         model=response.session.model,
         cost_micro_usd=response.session.cost_micro_usd,
-        cost_summary={
-            "input_tokens": response.session.input_tokens,
-            "output_tokens": response.session.output_tokens,
-            "cost_micro_usd": response.session.cost_micro_usd,
-        },
+        cost_summary=cost_summary,
         external_export_allowed=response.session.external_export_allowed,
         trace_control_state=response.session.trace_control_state,
         response_text=response.text,

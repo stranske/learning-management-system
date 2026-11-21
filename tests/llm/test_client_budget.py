@@ -8,12 +8,14 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session, sessionmaker
 
 from lms.llm.budgets import DailyBudgetTracker
 from lms.llm.client import LLMClient
 from lms.llm.config import LLMConfig, load_llm_config_from_env
 from lms.llm.exceptions import BudgetExceeded, ProviderCallError
-from lms.llm.models import LLM_MODES
+from lms.llm.models import LLM_MODES, LLMFeedbackEvent, LLMSession
 from lms.llm.providers import AnthropicProvider, FakeProvider, ProviderResponse
 
 
@@ -64,6 +66,90 @@ def test_budget_preflight_allows_under_cap_call_and_records_actual_spend() -> No
     assert response.session.cost_micro_usd > 0
     assert client.budget.spent_micro_usd() == response.session.cost_micro_usd
     assert client.budget.spent_micro_usd("practice") == response.session.cost_micro_usd
+
+
+def test_daily_usage_reconciles_citation_fallback(
+    api_client: tuple[TestClient, sessionmaker[Session]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lms.llm import api
+
+    http, factory = api_client
+    client = _client(global_cap_micro_usd=30_000, mode_caps={"study-coach": 10_000})
+    now = [datetime.now(UTC)]
+    monkeypatch.setattr(client.budget, "_clock", lambda: now[0])
+    monkeypatch.setattr(api, "_default_client", lambda: client)
+    calls: list[ProviderResponse] = []
+    cited_text = "Consider source:algebra before explaining the step."
+
+    def complete(
+        *, model: str, prompt: str, max_tokens: int | None, timeout_seconds: float | None
+    ) -> ProviderResponse:
+        text = cited_text if prompt.startswith("Mode: practice\n") else "An uncited claim."
+        response = ProviderResponse(
+            text=text,
+            provider="fake",
+            model=model,
+            input_tokens=15,
+            output_tokens=8,
+            cost_micro_usd=47,
+        )
+        calls.append(response)
+        return response
+
+    monkeypatch.setattr(client.providers["fake"], "complete", complete)
+    fallback_text = (
+        "I couldn't verify a response against the required sources. "
+        "Review the source material and try again."
+    )
+    for mode, expected_text in [("study-coach", fallback_text), ("practice", cited_text)]:
+        calls_before = len(calls)
+        response = http.post(
+            "/llm/sessions",
+            json={
+                "learner_id": "learner-1",
+                "mode": mode,
+                "user_message": "Explain the algebra step.",
+                "source_constraints": ["source:algebra"],
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        with factory() as db:
+            stored = db.get(LLMSession, body["session_id"])
+            event = db.get(LLMFeedbackEvent, body["feedback_event_id"])
+        assert stored is not None and event is not None
+        attempts = calls[calls_before:]
+        actual_calls = len(attempts)
+        actual_cost = sum(call.cost_micro_usd for call in attempts)
+        observed = (actual_calls, client.budget.spent_micro_usd(mode), stored.cost_micro_usd)
+        assert observed == (1, 47, 47)
+        rejected = mode == "study-coach"
+        assert body["flags"] == (["unverified"] if rejected else [])
+        assert body["response_text"] == stored.response_summary == expected_text
+        assert (stored.provider, stored.model) == (attempts[0].provider, attempts[0].model)
+        assert (stored.input_tokens, stored.output_tokens) == (15, 8)
+        assert event.unverified is rejected
+        assert event.source_reference_ids == ["source:algebra"]
+        receipt = {
+            "input_tokens": 15,
+            "output_tokens": 8,
+            "provider_calls": actual_calls,
+            "cost_micro_usd": actual_cost,
+        }
+        assert body["cost_summary"] == receipt
+        assert event.cost_metadata == {**receipt, "mode": mode}
+        usage = client.budget.daily_usage()
+        assert usage.day == stored.created_at.date() == now[0].date()
+        assert usage.by_mode[mode].provider_calls == actual_calls
+        assert usage.by_mode[mode].cost_micro_usd == actual_cost == body["cost_micro_usd"]
+
+    assert set(usage.by_mode) == {"study-coach", "practice"}
+    assert sum(item.provider_calls for item in usage.by_mode.values()) == len(calls) == 2
+    assert sum(item.cost_micro_usd for item in usage.by_mode.values()) == 94
+    assert client.budget.spent_micro_usd() == 94
+    now[0] += timedelta(days=1)
+    assert client.budget.daily_usage().day == now[0].date()
+    assert client.budget.daily_usage().by_mode == {}
 
 
 def test_per_mode_cap_blocks_even_when_global_cap_has_room() -> None:
