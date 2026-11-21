@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
-from lms.llm.budgets import DailyBudgetTracker
+from lms.llm.budgets import DailyBudgetTracker, DailyUsage, ModeUsage
 from lms.llm.client import LLMClient
 from lms.llm.config import LLMConfig, load_llm_config_from_env
 from lms.llm.exceptions import BudgetExceeded, ProviderCallError
@@ -150,6 +150,57 @@ def test_daily_usage_reconciles_citation_fallback(
     now[0] += timedelta(days=1)
     assert client.budget.daily_usage().day == now[0].date()
     assert client.budget.daily_usage().by_mode == {}
+
+
+def test_citation_fallback_receipt_uses_provider_completion_day(
+    api_client: tuple[TestClient, sessionmaker[Session]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lms.llm import api
+
+    http, factory = api_client
+    midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    provider_completed_at = midnight - timedelta(seconds=1)
+    now = provider_completed_at
+    client = _client(global_cap_micro_usd=30_000)
+    client.budget = DailyBudgetTracker({}, 30_000, _clock=lambda: now)
+    client.providers["fake"] = FakeProvider(responder=lambda _model, _prompt: "An uncited claim.")
+    monkeypatch.setattr(api, "_default_client", lambda: client)
+
+    snapshots: list[DailyUsage] = []
+
+    def cross_midnight(_session: LLMSession, _text: str) -> None:
+        nonlocal now
+        snapshots.append(client.budget.daily_usage())
+        now = midnight
+
+    # Trace export runs after provider settlement and before the route persists the receipt.
+    client.trace_exporter = cross_midnight
+    response = http.post(
+        "/llm/sessions",
+        json={
+            "learner_id": "learner-1",
+            "mode": "study-coach",
+            "user_message": "Explain the algebra step.",
+            "source_constraints": ["source:algebra"],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["flags"] == ["unverified"]
+    with factory() as db:
+        stored = db.get(LLMSession, body["session_id"])
+    assert stored is not None
+    assert stored.created_at.date() == provider_completed_at.date()
+    assert snapshots == [
+        DailyUsage(
+            day=stored.created_at.date(),
+            by_mode={
+                "study-coach": ModeUsage(provider_calls=1, cost_micro_usd=stored.cost_micro_usd)
+            },
+        )
+    ]
+    assert client.budget.daily_usage() == DailyUsage(day=midnight.date(), by_mode={})
 
 
 def test_per_mode_cap_blocks_even_when_global_cap_has_room() -> None:

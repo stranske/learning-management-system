@@ -144,14 +144,15 @@ class DailyBudgetTracker:
         actual_cost_micro_usd: int,
         *,
         provider_called: bool = False,
-    ) -> None:
-        """Reconcile the reservation and record provider usage when supplied."""
+    ) -> datetime:
+        """Reconcile spend and return the UTC timestamp used for daily accounting."""
         if actual_cost_micro_usd < 0:
             raise ValueError("actual_cost_micro_usd must be non-negative")
         with self._lock:
-            self._roll_period_locked(self._utc_today())
+            settled_at = self._clock().astimezone(UTC)
+            self._roll_period_locked(settled_at.date())
             if reservation.settled:
-                return
+                return settled_at
             if reservation.period_generation == self._period_generation:
                 delta = actual_cost_micro_usd - reservation.projected_cost_micro_usd
                 self._add_spend_locked(reservation.mode, delta)
@@ -162,6 +163,7 @@ class DailyBudgetTracker:
                     cost_micro_usd=usage.cost_micro_usd + actual_cost_micro_usd,
                 )
             reservation.settled = True
+            return settled_at
 
     def release(self, reservation: BudgetReservation, *, provider_called: bool = False) -> None:
         """Refund a reservation in full when no cost was reported."""

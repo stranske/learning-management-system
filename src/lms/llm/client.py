@@ -130,7 +130,9 @@ class LLMClient:
             self.budget.release(reservation, provider_called=True)
             raise
         # Reconcile the optimistic reservation down (or up) to actual cost.
-        self.budget.commit(reservation, provider_response.cost_micro_usd, provider_called=True)
+        settled_at = self.budget.commit(
+            reservation, provider_response.cost_micro_usd, provider_called=True
+        )
 
         text = provider_response.text
         structured_output: Any | None = None
@@ -143,7 +145,9 @@ class LLMClient:
                 ) from exc
 
         missing = [
-            citation for citation in source_constraints or () if not citation_present(text, citation)
+            citation
+            for citation in source_constraints or ()
+            if not citation_present(text, citation)
         ]
         if missing:
             if citation_fallback is None or structured_output_schema is not None:
@@ -176,6 +180,8 @@ class LLMClient:
             external_export_allowed=external_export_allowed,
             response_summary=_summarize(redaction.text),
             is_replay=False,
+            # Keep the receipt on the usage day even if persistence crosses midnight.
+            created_at=settled_at,
         )
 
         if external_export_allowed and self.trace_exporter is not None:
