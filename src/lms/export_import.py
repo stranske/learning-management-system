@@ -581,6 +581,8 @@ def _export_llm_session(
 ) -> bool:
     if include_llm_traces == ALL_VALUE:
         return True
+    if include_llm_traces == "none":
+        return False
     return trace_class == "evidence-grade" and external_export_allowed
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -308,19 +309,25 @@ def test_public_imported_description_obeys_none_and_preserves_authored_text(db_s
 
 
 @pytest.mark.parametrize(
-    ("source_mode", "trace_allowed"),
+    ("source_mode", "trace_mode"),
     [
-        pytest.param(None, True, id="default"),
-        pytest.param(None, False, id="trace-free"),
-        pytest.param("none", True, id="source-free"),
-        pytest.param("all", True, id="confirmed-all"),
+        pytest.param(None, None, id="default"),
+        pytest.param("public-only", "none", id="trace-free"),
+        pytest.param("none", None, id="source-free"),
+        pytest.param("all", None, id="confirmed-all"),
     ],
 )
 def test_generated_source_visibility_export(
-    db_session: Session, tmp_path: Path, source_mode: str | None, trace_allowed: bool
+    db_session: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    source_mode: str | None,
+    trace_mode: str | None,
 ) -> None:
     from sqlalchemy import create_engine
 
+    from lms.__main__ import main
     from lms.db.base import Base
     from lms.export_import import import_jsonl
     from lms.graphs.models import KnowledgeEdge, KnowledgeNode
@@ -376,7 +383,7 @@ def test_generated_source_visibility_export(
                 trace_class="evidence-grade",
                 provider="fake",
                 model="fake-model",
-                external_export_allowed=trace_allowed,
+                external_export_allowed=True,
             ),
         ]
     )
@@ -390,20 +397,26 @@ def test_generated_source_visibility_export(
             return None
         return get_record(model, record_id, **kwargs)
 
-    with patch.object(db_session, "get", side_effect=get_with_unresolved_source):
-        lines = list(
-            export_jsonl(db_session)
-            if source_mode is None
-            else export_jsonl(
-                db_session, include_source_content=source_mode, confirm_all=source_mode == "all"
-            )
-        )
-    stream = "\n".join(lines)
+    argv = ["lms", "export"]
+    if trace_mode is not None:
+        argv.extend(["--include-llm-traces", trace_mode])
+    if source_mode is not None:
+        argv.extend(["--include-source-content", source_mode])
+    if source_mode == "all":
+        argv.append("--yes-i-mean-it")
+    monkeypatch.setattr("sys.argv", argv)
+    with (
+        patch("lms.__main__.session_scope", return_value=nullcontext(db_session)),
+        patch.object(db_session, "get", side_effect=get_with_unresolved_source),
+    ):
+        main()
+    stream = capsys.readouterr().out
     records = {
-        (entry["type"], entry["record"]["id"]): entry["record"] for entry in map(json.loads, lines)
+        (entry["type"], entry["record"]["id"]): entry["record"]
+        for entry in map(json.loads, stream.splitlines())
     }
 
-    assert (("LLMSession", "trace") in records) is trace_allowed
+    assert (("LLMSession", "trace") in records) is (trace_mode != "none")
     for source_id, visibility in source_visibilities.items():
         source = records["SourceReference", source_id]
         assert source["content_hash"] == f"hash-{source_id}"
@@ -434,7 +447,7 @@ def test_generated_source_visibility_export(
     assert {node.id: node.description for node in db_session.query(KnowledgeNode)} == descriptions
 
     bundle = tmp_path / "generated-descriptions.jsonl"
-    bundle.write_text(stream + "\n", encoding="utf-8")
+    bundle.write_text(stream, encoding="utf-8")
     engine = create_engine("sqlite+pysqlite:///:memory:")
     try:
         with engine.begin() as connection:

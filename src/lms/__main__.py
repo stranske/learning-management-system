@@ -236,15 +236,15 @@ def main() -> None:
     )
     export_parser.add_argument(
         "--include-llm-traces",
-        choices=("evidence-grade-only", "all"),
+        choices=("evidence-grade-only", "none", "all"),
         default="evidence-grade-only",
         help="which LLM session records to include",
     )
     export_parser.add_argument(
         "--include-source-content",
-        choices=("public-only", "all"),
+        choices=("public-only", "none", "all"),
         default="public-only",
-        help="source body inclusion policy; local-only content is omitted by default",
+        help="source content inclusion policy, including source-derived node descriptions",
     )
     export_parser.add_argument(
         "--include-pii",
