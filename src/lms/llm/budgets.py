@@ -19,6 +19,18 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+@dataclass(frozen=True)
+class ModeUsage:
+    provider_calls: int = 0
+    cost_micro_usd: int = 0
+
+
+@dataclass(frozen=True)
+class DailyUsage:
+    day: date
+    by_mode: Mapping[str, ModeUsage]
+
+
 @dataclass
 class BudgetReservation:
     """Handle for spend reserved by :meth:`DailyBudgetTracker.reserve`.
@@ -56,6 +68,7 @@ class DailyBudgetTracker:
     _clock: Callable[[], datetime] = field(default=_utc_now, repr=False)
     _period_start: date = field(init=False)
     _period_generation: int = field(default=0, init=False)
+    _mode_usage: dict[str, ModeUsage] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         self._period_start = self._utc_today()
@@ -68,6 +81,7 @@ class DailyBudgetTracker:
         if today > self._period_start:
             self._global_spend = 0
             self._mode_spend.clear()
+            self._mode_usage.clear()
             self._period_start = today
             self._period_generation += 1
 
@@ -124,28 +138,36 @@ class DailyBudgetTracker:
                 period_generation=self._period_generation,
             )
 
-    def commit(self, reservation: BudgetReservation, actual_cost_micro_usd: int) -> None:
-        """Reconcile a reservation to the call's actual cost."""
+    def commit(
+        self,
+        reservation: BudgetReservation,
+        actual_cost_micro_usd: int,
+        *,
+        provider_called: bool = False,
+    ) -> datetime:
+        """Reconcile spend and return the UTC timestamp used for daily accounting."""
         if actual_cost_micro_usd < 0:
             raise ValueError("actual_cost_micro_usd must be non-negative")
         with self._lock:
-            self._roll_period_locked(self._utc_today())
+            settled_at = self._clock().astimezone(UTC)
+            self._roll_period_locked(settled_at.date())
             if reservation.settled:
-                return
+                return settled_at
             if reservation.period_generation == self._period_generation:
                 delta = actual_cost_micro_usd - reservation.projected_cost_micro_usd
                 self._add_spend_locked(reservation.mode, delta)
+            if provider_called:
+                usage = self._mode_usage.get(reservation.mode, ModeUsage())
+                self._mode_usage[reservation.mode] = ModeUsage(
+                    provider_calls=usage.provider_calls + 1,
+                    cost_micro_usd=usage.cost_micro_usd + actual_cost_micro_usd,
+                )
             reservation.settled = True
+            return settled_at
 
-    def release(self, reservation: BudgetReservation) -> None:
-        """Refund a reservation in full (call failed; no spend occurred)."""
-        with self._lock:
-            self._roll_period_locked(self._utc_today())
-            if reservation.settled:
-                return
-            if reservation.period_generation == self._period_generation:
-                self._add_spend_locked(reservation.mode, -reservation.projected_cost_micro_usd)
-            reservation.settled = True
+    def release(self, reservation: BudgetReservation, *, provider_called: bool = False) -> None:
+        """Refund a reservation in full when no cost was reported."""
+        self.commit(reservation, 0, provider_called=provider_called)
 
     def preflight(self, mode: str, projected_cost_micro_usd: int) -> None:
         """Raise :class:`BudgetExceeded` if a call would breach a cap.
@@ -174,6 +196,16 @@ class DailyBudgetTracker:
             if mode is None:
                 return self._global_spend
             return self._mode_spend.get(mode, 0)
+
+    def daily_usage(self) -> DailyUsage:
+        """Return settled adapter calls and reported costs for today's UTC completion day.
+
+        This process-local snapshot excludes in-flight reservations. A failed
+        adapter call counts as a call with zero reported cost.
+        """
+        with self._lock:
+            self._roll_period_locked(self._utc_today())
+            return DailyUsage(day=self._period_start, by_mode=self._mode_usage.copy())
 
     def remaining_micro_usd(self, mode: str | None = None) -> int:
         """Return current UTC day's global or tighter per-mode headroom."""

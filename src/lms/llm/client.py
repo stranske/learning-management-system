@@ -59,6 +59,7 @@ class LLMResponse:
     provider_response: ProviderResponse
     structured_output: Any | None = None
     redaction: RedactionResult | None = None
+    citation_fallback_used: bool = False
 
 
 @dataclass
@@ -84,6 +85,7 @@ class LLMClient:
         coaching_intensity: CoachingIntensity = "full",
         prompt_template_version: str | None = None,
         provider_name: str | None = None,
+        citation_fallback: str | None = None,
     ) -> LLMResponse:
         """Issue a completion call with full enforcement pre/post.
 
@@ -95,10 +97,11 @@ class LLMClient:
            before issuing the provider request.
         4. Provider call.
         5. Token/cost normalization and accounting.
-        6. Local PII redaction on the trace payload.
-        7. Trace-class demotion if redaction loses too much signal.
-        8. Structured-output validation.
-        9. Source-constraint enforcement.
+        6. Structured-output validation.
+        7. Source-constraint enforcement, with an optional local plain-text
+           fallback for callers that can respond without source claims.
+        8. Local PII redaction on the trace payload.
+        9. Trace-class demotion if redaction loses too much signal.
         10. Optional external trace export (skipped when the trace is held
             locally as ``ephemeral`` or when ``external_export_allowed`` is
             false).
@@ -122,42 +125,44 @@ class LLMClient:
                 timeout_seconds=self.config.default_timeout_seconds,
             )
         except BaseException:
-            # The call never produced billable usage; refund the reservation so
-            # a failed/timed-out call does not permanently consume the cap.
-            self.budget.release(reservation)
+            # The adapter reported no charge. Count the attempt and refund the
+            # reservation so the failure does not consume the cap.
+            self.budget.release(reservation, provider_called=True)
             raise
         # Reconcile the optimistic reservation down (or up) to actual cost.
-        self.budget.commit(reservation, provider_response.cost_micro_usd)
+        settled_at = self.budget.commit(
+            reservation, provider_response.cost_micro_usd, provider_called=True
+        )
 
-        redaction = self.redactor(provider_response.text)
-        external_export_allowed = trace_class != "ephemeral"
-        effective_trace_class = trace_class
-        if redaction.applied and redaction.signal_loss_ratio >= _EPHEMERAL_DEMOTION_THRESHOLD:
-            effective_trace_class = "ephemeral"
-            external_export_allowed = False
-
+        text = provider_response.text
         structured_output: Any | None = None
         if structured_output_schema is not None:
             try:
-                structured_output = structured_output_schema.model_validate_json(
-                    provider_response.text
-                )
+                structured_output = structured_output_schema.model_validate_json(text)
             except Exception as exc:  # noqa: BLE001 - re-raised as wrapper error
                 raise StructuredOutputValidationError(
                     f"structured output for mode '{mode}' failed validation: {exc}"
                 ) from exc
 
-        if source_constraints:
-            missing = [
-                citation
-                for citation in source_constraints
-                if not citation_present(provider_response.text, citation)
-            ]
-            if missing:
+        missing = [
+            citation
+            for citation in source_constraints or ()
+            if not citation_present(text, citation)
+        ]
+        if missing:
+            if citation_fallback is None or structured_output_schema is not None:
                 raise SourceConstraintViolation(
-                    f"mode '{mode}' requires citations {list(source_constraints)}; "
+                    f"mode '{mode}' requires citations {list(source_constraints or ())}; "
                     f"missing: {missing}"
                 )
+            text = citation_fallback
+
+        redaction = self.redactor(text)
+        external_export_allowed = trace_class != "ephemeral"
+        effective_trace_class = trace_class
+        if redaction.applied and redaction.signal_loss_ratio >= _EPHEMERAL_DEMOTION_THRESHOLD:
+            effective_trace_class = "ephemeral"
+            external_export_allowed = False
 
         session = LLMSession(
             mode=mode,
@@ -175,17 +180,20 @@ class LLMClient:
             external_export_allowed=external_export_allowed,
             response_summary=_summarize(redaction.text),
             is_replay=False,
+            # Keep the receipt on the usage day even if persistence crosses midnight.
+            created_at=settled_at,
         )
 
         if external_export_allowed and self.trace_exporter is not None:
             self.trace_exporter(session, redaction.text)
 
         return LLMResponse(
-            text=provider_response.text,
+            text=text,
             session=session,
             provider_response=provider_response,
             structured_output=structured_output,
             redaction=redaction,
+            citation_fallback_used=bool(missing),
         )
 
     def replay(

@@ -81,6 +81,5 @@ def test_linked_prompt_sources_reach_client_enforcement(api_client, monkeypatch,
     )
     assert response.status_code == 200
     assert response.json()["flags"] == ([] if cited else ["unverified"])
-    # Existing client rejects the uncited constrained call; route's existing
-    # unverified fallback is a second call. Valid canonical citation needs one.
-    assert len(calls) == (1 if cited else 2)
+    # The route uses a local fallback after rejecting an uncited response.
+    assert len(calls) == 1
