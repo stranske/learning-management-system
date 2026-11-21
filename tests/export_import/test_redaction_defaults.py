@@ -317,8 +317,12 @@ def test_public_imported_description_obeys_none_and_preserves_authored_text(db_s
     ],
 )
 def test_generated_source_visibility_export(
-    db_session: Session, source_mode: str | None, trace_allowed: bool
+    db_session: Session, tmp_path: Path, source_mode: str | None, trace_allowed: bool
 ) -> None:
+    from sqlalchemy import create_engine
+
+    from lms.db.base import Base
+    from lms.export_import import import_jsonl
     from lms.graphs.models import KnowledgeEdge, KnowledgeNode
 
     source_visibilities = {"local": "local-only", "public": "public", "unavailable": "public"}
@@ -417,9 +421,52 @@ def test_generated_source_visibility_export(
     elif source_mode != "none":
         visible.update({"generated-public", "imported-public"})
     assert {node_id for node_id, text in descriptions.items() if text in stream} == visible
+    expected_descriptions = {
+        node_id: description if node_id in visible else None
+        for node_id, description in descriptions.items()
+    }
     assert {
         node_id: records["KnowledgeNode", node_id]["description"] for node_id in nodes
-    } == {node_id: descriptions[node_id] if node_id in visible else None for node_id in nodes}
+    } == expected_descriptions
+
+    db_session.commit()
+    db_session.expunge_all()
+    assert {node.id: node.description for node in db_session.query(KnowledgeNode)} == descriptions
+
+    bundle = tmp_path / "generated-descriptions.jsonl"
+    bundle.write_text(stream + "\n", encoding="utf-8")
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            Base.metadata.create_all(connection)
+        with Session(engine) as destination:
+            import_jsonl(destination, bundle, dry_run=False)
+            destination.commit()
+            restored_nodes = destination.query(KnowledgeNode).all()
+            assert {node.id: node.description for node in restored_nodes} == expected_descriptions
+            assert {
+                node.id: (node.provenance, node.source_reference_id) for node in restored_nodes
+            } == nodes
+            assert {
+                source.id: (source.content_hash, source.source_visibility)
+                for source in destination.query(SourceReference)
+            } == {
+                source_id: (f"hash-{source_id}", visibility)
+                for source_id, visibility in source_visibilities.items()
+            }
+            restored_edge = destination.query(KnowledgeEdge).one()
+            assert (
+                restored_edge.id,
+                restored_edge.source_node_id,
+                restored_edge.target_node_id,
+            ) == (
+                "edge",
+                "generated-local",
+                "manual",
+            )
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.parametrize("visibility", ["public", "local-only"])
