@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from html import escape
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
@@ -15,7 +16,8 @@ from lms.db.session import get_session
 from lms.evidence.models import EvidenceRecord
 from lms.graphs.models import KnowledgeNode
 from lms.graphs.schemas import OwnershipScope
-from lms.learners.identity import CurrentUserDep, require_learner_ownership
+from lms.learners.identity import CurrentUserDep, require_learner_ownership, resolve_learner_id
+from lms.learners.repository import get_or_create_learner_for_user, list_learners_for_user
 from lms.mastery.service import mastery_estimates_for_learner
 from lms.scheduling.models import ReviewQueueItem, SchedulerDecision
 from lms.sources.models import SourceReference
@@ -249,13 +251,145 @@ def learner_calibration_route(
     ).as_dict()
 
 
-@router.get("", response_class=HTMLResponse)
-def inspect_shell_route() -> str:
-    """Return a minimal mobile-friendly Inspect shell."""
+def _inspect_panel_summary(overview: dict[str, Any]) -> dict[str, str]:
+    """Return one-line summaries for each Inspect panel from overview JSON."""
+    evidence = overview.get("recent_evidence") or []
+    mastery = overview.get("mastery") or []
+    prompts = overview.get("prompt_provenance") or []
+    sources = overview.get("source_drift") or []
+    scheduler = overview.get("scheduler") or {}
+    scheduler_events = scheduler.get("events") or []
+    scheduler_decisions = scheduler.get("decisions") or []
+
+    if evidence:
+        latest = evidence[0]
+        evidence_text = (
+            f"{len(evidence)} record(s); latest node {latest.get('knowledge_node_id')} "
+            f"score {latest.get('normalized_score')}"
+        )
+    else:
+        evidence_text = "No recent evidence."
+
+    if mastery:
+        top = max(mastery, key=lambda item: float(item.get("confidence") or 0.0))
+        evidence_text_mastery = (
+            f"{len(mastery)} estimate(s); top confidence {top.get('confidence')} "
+            f"on {top.get('knowledge_node_id')}"
+        )
+    else:
+        evidence_text_mastery = "No mastery estimates."
+
+    if prompts:
+        latest_prompt = prompts[0]
+        prompt_text = (
+            f"{len(prompts)} prompt(s); latest {latest_prompt.get('id')} "
+            f"status {latest_prompt.get('status')}"
+        )
+    else:
+        prompt_text = "No prompt provenance."
+
+    if sources:
+        latest_source = sources[0]
+        source_text = f"{len(sources)} source(s); latest drift {latest_source.get('drift_status')}"
+    else:
+        source_text = "No source drift rows."
+
+    scheduler_text = (
+        f"Status {scheduler.get('status', 'unknown')}; "
+        f"{len(scheduler_events)} queue event(s), {len(scheduler_decisions)} decision(s)"
+    )
+    return {
+        "evidence": evidence_text,
+        "mastery": evidence_text_mastery,
+        "prompts": prompt_text,
+        "sources": source_text,
+        "scheduler": scheduler_text,
+    }
+
+
+def _render_inspect_shell(
+    *,
+    learners: list[Any],
+    selected_learner_id: str,
+    overview: dict[str, Any],
+    ownership_scope: str,
+) -> str:
+    """Render the mobile-friendly Inspect HTML shell."""
+    summaries = _inspect_panel_summary(overview)
+    scope_qs = escape(ownership_scope)
+    overview_href = (
+        f"/inspect/learners/{escape(selected_learner_id)}/overview" f"?ownership_scope={scope_qs}"
+    )
+    learner_links = []
+    for learner in learners:
+        label = escape(getattr(learner, "display_name", None) or learner.id)
+        learner_id = escape(learner.id)
+        selected_attr = ' aria-current="page"' if learner.id == selected_learner_id else ""
+        learner_links.append(
+            f"<a href='/inspect?learner_id={learner_id}&ownership_scope={scope_qs}'"
+            f"{selected_attr}>{label}</a>"
+        )
+    if not learner_links:
+        learner_links.append(f"<span>{escape(selected_learner_id)}</span>")
+
+    sections = "".join(
+        f"<section id='{panel}'><h2>{escape(panel.title())}</h2>"
+        f"<p>{escape(summaries[panel])}</p></section>"
+        for panel in ("evidence", "mastery", "prompts", "sources", "scheduler")
+    )
     return (
         "<!doctype html><meta name='viewport' content='width=device-width, initial-scale=1'>"
         "<title>LMS Inspect</title><style>body{font-family:system-ui;margin:1rem;}"
         "nav{display:flex;gap:.5rem;flex-wrap:wrap}section{margin-block:1rem}</style>"
-        "<h1>Inspect</h1><nav><a>Evidence</a><a>Mastery</a><a>Prompts</a>"
-        "<a>Sources</a><a>Scheduler</a></nav><section>Use the JSON overview endpoint for data.</section>"
+        "<h1>Inspect</h1>"
+        f"<nav aria-label='Learners'>{''.join(learner_links)}</nav>"
+        "<nav aria-label='Panels'>"
+        "<a href='#evidence'>Evidence</a><a href='#mastery'>Mastery</a>"
+        "<a href='#prompts'>Prompts</a><a href='#sources'>Sources</a>"
+        f"<a href='#scheduler'>Scheduler</a>"
+        f"<a href='{overview_href}'>Overview JSON</a></nav>"
+        f"{sections}"
+    )
+
+
+@router.get("", response_class=HTMLResponse)
+def inspect_shell_route(
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
+    learner_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
+    ownership_scope: Annotated[str, Query(pattern="^(personal|institutional)$")] = "personal",
+) -> str:
+    """Return a minimal mobile-friendly Inspect shell."""
+    learners = list_learners_for_user(session, user_id=current_user.id)
+    if not learners:
+        learner, created = get_or_create_learner_for_user(
+            session,
+            user_id=current_user.id,
+            display_name=current_user.display_name or current_user.username,
+        )
+        if created:
+            session.commit()
+        learners = [learner]
+    selected_learner_id = resolve_learner_id(
+        session,
+        user=current_user,
+        settings=settings,
+        requested=learner_id or learners[0].id,
+    )
+    require_learner_ownership(
+        session, user=current_user, settings=settings, learner_id=selected_learner_id
+    )
+    overview = learner_overview_route(
+        selected_learner_id,
+        session,
+        current_user,
+        settings,
+        ownership_scope,
+    )
+    return _render_inspect_shell(
+        learners=learners,
+        selected_learner_id=selected_learner_id,
+        overview=overview,
+        ownership_scope=ownership_scope,
     )
