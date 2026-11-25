@@ -174,3 +174,55 @@ def test_inspect_shell_is_mobile_friendly() -> None:
     html = response.text
     assert "width=device-width" in html, "Missing viewport meta — mobile scaling broken"
     assert "flex-wrap" in html, "Nav must wrap on narrow screens (flex-wrap required)"
+
+
+def test_inspect_shell_preserves_json_overview_routes_and_ownership_scope() -> None:
+    """The HTML shell must stay aligned with the JSON overview contract."""
+    with _client() as (client, session):
+        user = get_or_create_local_dev_user(session)
+        session.add(
+            Learner(
+                id="learner-1",
+                user_id=user.id,
+                display_name="Inspect Learner",
+            )
+        )
+        session.add(
+            KnowledgeNode(
+                id="node-1",
+                title="Known node",
+                knowledge_type="factual",
+                ownership_scope="personal",
+            )
+        )
+        session.flush()
+        create_evidence_record(
+            session,
+            learner_id="learner-1",
+            knowledge_node_id="node-1",
+            prompt_id="prompt-1",
+            demand_level="low",
+            knowledge_type="factual",
+            normalized_score=0.75,
+        )
+        session.commit()
+
+        json_response = client.get(
+            "/inspect/learners/learner-1/overview",
+            params={"ownership_scope": "institutional"},
+        )
+        shell_response = client.get(
+            "/inspect",
+            params={"learner_id": "learner-1", "ownership_scope": "institutional"},
+        )
+
+    assert json_response.status_code == 200
+    json_body = json_response.json()
+    assert json_body["ownership_scope"] == "institutional"
+    assert json_body["recent_evidence"] == []
+
+    assert shell_response.status_code == 200
+    shell_html = shell_response.text
+    assert "/inspect/learners/learner-1/overview" in shell_html
+    assert "No recent evidence." in shell_html
+    assert "0.75" not in shell_html
