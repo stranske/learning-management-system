@@ -312,17 +312,22 @@ def _render_inspect_shell(
     learners: list[Any],
     selected_learner_id: str,
     overview: dict[str, Any],
+    ownership_scope: str,
 ) -> str:
     """Render the mobile-friendly Inspect HTML shell."""
     summaries = _inspect_panel_summary(overview)
-    overview_href = f"/inspect/learners/{escape(selected_learner_id)}/overview"
+    scope_qs = escape(ownership_scope)
+    overview_href = (
+        f"/inspect/learners/{escape(selected_learner_id)}/overview" f"?ownership_scope={scope_qs}"
+    )
     learner_links = []
     for learner in learners:
         label = escape(getattr(learner, "display_name", None) or learner.id)
         learner_id = escape(learner.id)
         selected_attr = ' aria-current="page"' if learner.id == selected_learner_id else ""
         learner_links.append(
-            f"<a href='/inspect?learner_id={learner_id}'{selected_attr}>{label}</a>"
+            f"<a href='/inspect?learner_id={learner_id}&ownership_scope={scope_qs}'"
+            f"{selected_attr}>{label}</a>"
         )
     if not learner_links:
         learner_links.append(f"<span>{escape(selected_learner_id)}</span>")
@@ -386,4 +391,5 @@ def inspect_shell_route(
         learners=learners,
         selected_learner_id=selected_learner_id,
         overview=overview,
+        ownership_scope=ownership_scope,
     )

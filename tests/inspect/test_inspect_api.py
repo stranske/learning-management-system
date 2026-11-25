@@ -223,6 +223,7 @@ def test_inspect_shell_preserves_json_overview_routes_and_ownership_scope() -> N
 
     assert shell_response.status_code == 200
     shell_html = shell_response.text
-    assert "/inspect/learners/learner-1/overview" in shell_html
+    assert "/inspect/learners/learner-1/overview?ownership_scope=institutional" in shell_html
+    assert "/inspect?learner_id=learner-1&ownership_scope=institutional" in shell_html
     assert "No recent evidence." in shell_html
     assert "0.75" not in shell_html
