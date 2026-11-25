@@ -23,6 +23,7 @@ from lms.evidence.repository import create_evidence_record
 from lms.graphs.models import KnowledgeNode
 from lms.learners.models import Learner
 from lms.main import create_app
+from lms.settings import Settings, get_settings
 from lms.sources.repository import create_source_reference
 
 
@@ -55,6 +56,65 @@ def _client() -> Generator[tuple[TestClient, Session]]:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+@contextmanager
+def _auth_required_client() -> Generator[TestClient]:
+    """Real app factory with auth_required=True (mirrors deployed gate wiring)."""
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def override_get_session() -> Generator[Session]:
+        request_session = session_factory()
+        try:
+            yield request_session
+        finally:
+            request_session.close()
+
+    app = create_app(enable_local_identity_routes=False)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        auth_required=True, auth_secret_key="test-secret-not-for-prod"
+    )
+    app.dependency_overrides[get_session] = override_get_session
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+def test_inspect_json_routes_require_authentication_when_auth_enabled() -> None:
+    """Shell work must not bypass the same gate as the JSON overview routes."""
+    with _auth_required_client() as client:
+        overview = client.get(
+            "/inspect/learners/learner-1/overview",
+            headers={"Accept": "application/json"},
+            follow_redirects=False,
+        )
+        calibration = client.get(
+            "/inspect/learners/learner-1/calibration",
+            headers={"Accept": "application/json"},
+            follow_redirects=False,
+        )
+
+    assert overview.status_code == 401
+    assert calibration.status_code == 401
+
+
+def test_inspect_shell_redirects_unauthenticated_html_callers() -> None:
+    with _auth_required_client() as client:
+        response = client.get("/inspect", headers={"Accept": "text/html"}, follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("/login")
 
 
 def test_overview_includes_mastery_evidence_prompt_and_source_status() -> None:
