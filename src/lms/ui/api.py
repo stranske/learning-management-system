@@ -203,6 +203,8 @@ def _learn_surface(
         _prompt_provenance(prompt) if prompt is not None else "No prompt provenance available."
     )
     attempt_summary = _latest_attempt_summary(session, learner_id=learner_id, prompt_id=prompt_id)
+    presented_version = prompt.versions[-1] if prompt is not None and prompt.versions else None
+    presented_version_id = presented_version.id if presented_version is not None else ""
 
     return render_page(
         "Learn",
@@ -221,6 +223,8 @@ def _learn_surface(
           <form class="attempt-form" method="post" action="/learn/attempts">
             <input type="hidden" name="learner_id" value="{escape(learner_id)}">
             <input type="hidden" name="prompt_id" value="{escape(prompt_id or "")}">
+            <input type="hidden" name="prompt_version_id" value="{escape(presented_version_id)}">
+            <input type="hidden" id="elapsed_seconds" name="elapsed_seconds" value="">
             <label for="response_text">Response</label>
             <textarea id="response_text" name="response_text" rows="6">{escape(response_text)}</textarea>
             <label for="confidence_rating">Confidence</label>
@@ -245,6 +249,19 @@ def _learn_surface(
             <h2 id="sources-heading">Source citations after attempt</h2>
             <ul>{"".join(citations) if citations else "<li>No source citations linked.</li>"}</ul>
           </section>
+          <script>
+            (function () {{
+              var form = document.querySelector(".attempt-form");
+              if (!form) {{ return; }}
+              var startedAt = Date.now();
+              form.addEventListener("submit", function () {{
+                var field = form.querySelector("#elapsed_seconds");
+                if (field && !field.value) {{
+                  field.value = Math.round((Date.now() - startedAt) / 1000);
+                }}
+              }});
+            }})();
+          </script>
         </main>
         """,
         active_path="/app/learner",
@@ -272,9 +289,11 @@ async def submit_learn_attempt_route(
         payload = AttemptCreate(
             learner_id=learner_id,
             prompt_id=form.get("prompt_id", ""),
+            prompt_version_id=form.get("prompt_version_id") or None,
             response_text=form.get("response_text", ""),
             confidence_rating=confidence_rating,
             reference_accessed=form.get("reference_accessed") == "true",
+            elapsed_seconds=optional_int(form.get("elapsed_seconds")),
             feedback=StructuredFeedback(
                 goal="Record learner attempt",
                 observed_evidence=form.get("response_text", ""),
@@ -297,7 +316,13 @@ async def submit_learn_attempt_route(
             error="Enter a response and a confidence rating between 1 and 5 before submitting.",
             response_text=form.get("response_text", ""),
         )
-    recorded = record_attempt(session, **payload.model_dump())
+    try:
+        recorded = record_attempt(session, **payload.model_dump())
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
     session.commit()
     attempt = recorded.attempt
     session.refresh(attempt)
