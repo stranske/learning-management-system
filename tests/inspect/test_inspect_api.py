@@ -216,6 +216,8 @@ def test_inspect_shell_links_to_live_overview_content() -> None:
     assert "Inspect Learner" in html
     assert "/inspect/learners/learner-1/overview" in html
     assert "Use the JSON overview endpoint for data." not in html
+    for panel in ("evidence", "mastery", "prompts", "sources", "scheduler"):
+        assert f"<section id='{panel}'>" in html
     assert "node-1" in html
     assert "0.75" in html
 
