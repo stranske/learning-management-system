@@ -11,13 +11,17 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import lms.audit.models  # noqa: F401
+import lms.auth.models  # noqa: F401
 import lms.evidence.models  # noqa: F401
 import lms.graphs.models  # noqa: F401
+import lms.learners.models  # noqa: F401
 import lms.sources.models  # noqa: F401
+from lms.auth.repository import get_or_create_local_dev_user
 from lms.db.base import Base
 from lms.db.session import get_session
 from lms.evidence.repository import create_evidence_record
 from lms.graphs.models import KnowledgeNode
+from lms.learners.models import Learner
 from lms.main import create_app
 from lms.sources.repository import create_source_reference
 
@@ -112,6 +116,46 @@ def test_inspect_shell_returns_html_content_type() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "<!doctype html>" in response.text
+
+
+def test_inspect_shell_links_to_live_overview_content() -> None:
+    with _client() as (client, session):
+        user = get_or_create_local_dev_user(session)
+        session.add(
+            Learner(
+                id="learner-1",
+                user_id=user.id,
+                display_name="Inspect Learner",
+            )
+        )
+        session.add(
+            KnowledgeNode(
+                id="node-1",
+                title="Known node",
+                knowledge_type="factual",
+                ownership_scope="personal",
+            )
+        )
+        session.flush()
+        create_evidence_record(
+            session,
+            learner_id="learner-1",
+            knowledge_node_id="node-1",
+            prompt_id="prompt-1",
+            demand_level="low",
+            knowledge_type="factual",
+            normalized_score=0.75,
+        )
+        session.commit()
+
+        response = client.get("/inspect")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "/inspect/learners/learner-1/overview" in html
+    assert "Use the JSON overview endpoint for data." not in html
+    assert "node-1" in html
+    assert "0.75" in html
 
 
 def test_inspect_shell_is_mobile_friendly() -> None:
