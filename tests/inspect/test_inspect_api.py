@@ -152,6 +152,8 @@ def test_inspect_shell_links_to_live_overview_content() -> None:
 
     assert response.status_code == 200
     html = response.text
+    assert "/inspect?learner_id=learner-1" in html
+    assert "Inspect Learner" in html
     assert "/inspect/learners/learner-1/overview" in html
     assert "Use the JSON overview endpoint for data." not in html
     assert "node-1" in html
