@@ -250,6 +250,29 @@ def test_inspect_shell_links_to_live_overview_content() -> None:
     assert "0.75" in html
 
 
+def test_inspect_shell_shows_empty_panel_summaries() -> None:
+    """Shell renders read-only placeholder copy when overview panels are empty."""
+    with _client() as (client, session):
+        user = get_or_create_local_dev_user(session)
+        session.add(
+            Learner(
+                id="learner-empty",
+                user_id=user.id,
+                display_name="Empty Panels",
+            )
+        )
+        session.commit()
+
+        response = client.get("/inspect", params={"learner_id": "learner-empty"})
+
+    assert response.status_code == 200
+    html = response.text
+    assert "No recent evidence." in html
+    assert "No mastery estimates." in html
+    assert "No prompt provenance." in html
+    assert "No source drift rows." in html
+
+
 def test_inspect_shell_is_mobile_friendly() -> None:
     """Documented mobile-width check: Inspect shell must fit narrow viewports.
 
