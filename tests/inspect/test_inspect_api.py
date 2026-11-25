@@ -178,6 +178,28 @@ def test_inspect_shell_returns_html_content_type() -> None:
     assert "<!doctype html>" in response.text
 
 
+def test_inspect_shell_lists_all_owned_learners() -> None:
+    """Learner picker links every owned learner, not only the selected one."""
+    with _client() as (client, session):
+        user = get_or_create_local_dev_user(session)
+        session.add_all(
+            [
+                Learner(id="learner-a", user_id=user.id, display_name="Learner A"),
+                Learner(id="learner-b", user_id=user.id, display_name="Learner B"),
+            ]
+        )
+        session.commit()
+
+        response = client.get("/inspect")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "/inspect?learner_id=learner-a" in html
+    assert "/inspect?learner_id=learner-b" in html
+    assert "Learner A" in html
+    assert "Learner B" in html
+
+
 def test_inspect_shell_links_to_live_overview_content() -> None:
     with _client() as (client, session):
         user = get_or_create_local_dev_user(session)
