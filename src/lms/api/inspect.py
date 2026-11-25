@@ -271,7 +271,7 @@ def _inspect_panel_summary(overview: dict[str, Any]) -> dict[str, str]:
         evidence_text = "No recent evidence."
 
     if mastery:
-        top = mastery[0]
+        top = max(mastery, key=lambda item: float(item.get("confidence") or 0.0))
         evidence_text_mastery = (
             f"{len(mastery)} estimate(s); top confidence {top.get('confidence')} "
             f"on {top.get('knowledge_node_id')}"

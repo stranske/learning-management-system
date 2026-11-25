@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
@@ -16,7 +16,8 @@ import lms.evidence.models  # noqa: F401
 import lms.graphs.models  # noqa: F401
 import lms.learners.models  # noqa: F401
 import lms.sources.models  # noqa: F401
-from lms.auth.repository import get_or_create_local_dev_user
+from lms.api.inspect import _inspect_panel_summary
+from lms.auth.repository import create_local_user, get_or_create_local_dev_user
 from lms.db.base import Base
 from lms.db.session import get_session
 from lms.evidence.repository import create_evidence_record
@@ -59,7 +60,9 @@ def _client() -> Generator[tuple[TestClient, Session]]:
 
 
 @contextmanager
-def _auth_required_client() -> Generator[TestClient]:
+def _auth_required_client(
+    seed: Callable[[Session], None] | None = None,
+) -> Generator[TestClient]:
     """Real app factory with auth_required=True (mirrors deployed gate wiring)."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -69,6 +72,10 @@ def _auth_required_client() -> Generator[TestClient]:
     )
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    if seed is not None:
+        with session_factory() as seed_session:
+            seed(seed_session)
+            seed_session.commit()
 
     def override_get_session() -> Generator[Session]:
         request_session = session_factory()
@@ -340,3 +347,128 @@ def test_inspect_shell_preserves_json_overview_routes_and_ownership_scope() -> N
     assert "/inspect?learner_id=learner-1&ownership_scope=institutional" in shell_html
     assert "No recent evidence." in shell_html
     assert "0.75" not in shell_html
+
+
+def test_inspect_panel_summary_empty_panels() -> None:
+    summaries = _inspect_panel_summary({})
+
+    assert summaries == {
+        "evidence": "No recent evidence.",
+        "mastery": "No mastery estimates.",
+        "prompts": "No prompt provenance.",
+        "sources": "No source drift rows.",
+        "scheduler": "Status unknown; 0 queue event(s), 0 decision(s)",
+    }
+
+
+def test_inspect_panel_summary_populated_panels() -> None:
+    """Mastery summary reports the highest confidence, not the first node by id."""
+    overview = {
+        "recent_evidence": [
+            {"knowledge_node_id": "node-late", "normalized_score": 0.9},
+            {"knowledge_node_id": "node-early", "normalized_score": 0.1},
+        ],
+        "mastery": [
+            {"knowledge_node_id": "node-a", "confidence": 0.235},
+            {"knowledge_node_id": "node-z", "confidence": 0.47},
+        ],
+        "prompt_provenance": [
+            {"id": "prompt-2", "status": "approved"},
+            {"id": "prompt-1", "status": "draft"},
+        ],
+        "source_drift": [
+            {"id": "source-2", "drift_status": "drifted"},
+            {"id": "source-1", "drift_status": "current"},
+            {"id": "source-0", "drift_status": "current"},
+        ],
+        "scheduler": {
+            "status": "active",
+            "events": [{"id": "event-1"}, {"id": "event-2"}],
+            "decisions": [{"id": "decision-1"}],
+        },
+    }
+
+    summaries = _inspect_panel_summary(overview)
+
+    assert summaries["evidence"] == "2 record(s); latest node node-late score 0.9"
+    assert summaries["mastery"] == "2 estimate(s); top confidence 0.47 on node-z"
+    assert summaries["prompts"] == "2 prompt(s); latest prompt-2 status approved"
+    assert summaries["sources"] == "3 source(s); latest drift drifted"
+    assert summaries["scheduler"] == "Status active; 2 queue event(s), 1 decision(s)"
+
+
+def _seed_owned_and_foreign_learners(session: Session) -> None:
+    owner = create_local_user(
+        session, username="owner", display_name="Owner", password="inspect-owner-pass-1234"
+    )
+    other = create_local_user(
+        session, username="other", display_name="Other", password="inspect-other-pass-1234"
+    )
+    session.add_all(
+        [
+            Learner(id="owned-first", user_id=owner.id, display_name="Owned First"),
+            Learner(id="owned-second", user_id=owner.id, display_name="Owned Second"),
+            Learner(id="foreign-learner", user_id=other.id, display_name="Foreign Learner"),
+        ]
+    )
+    for node_id in ("node-first", "node-second", "node-foreign"):
+        session.add(
+            KnowledgeNode(
+                id=node_id,
+                title=node_id,
+                knowledge_type="factual",
+                ownership_scope="personal",
+            )
+        )
+    session.flush()
+    for learner_id, node_id, score in (
+        ("owned-first", "node-first", 0.25),
+        ("owned-second", "node-second", 0.8),
+        ("foreign-learner", "node-foreign", 0.6),
+    ):
+        create_evidence_record(
+            session,
+            learner_id=learner_id,
+            knowledge_node_id=node_id,
+            prompt_id=f"prompt-{node_id}",
+            demand_level="low",
+            knowledge_type="factual",
+            normalized_score=score,
+        )
+
+
+def test_inspect_shell_selects_explicit_owned_learner_when_auth_required() -> None:
+    with _auth_required_client(seed=_seed_owned_and_foreign_learners) as client:
+        login = client.post(
+            "/login",
+            data={"username": "owner", "password": "inspect-owner-pass-1234"},
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+
+        response = client.get("/inspect", params={"learner_id": "owned-second"})
+        foreign = client.get(
+            "/inspect",
+            params={"learner_id": "foreign-learner"},
+            headers={"Accept": "application/json"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 200
+    html = response.text
+    assert "1 record(s); latest node node-second score 0.8" in html
+    assert "node-first" not in html
+    assert "/inspect/learners/owned-second/overview?ownership_scope=personal" in html
+    assert (
+        "<a href='/inspect?learner_id=owned-second&ownership_scope=personal'"
+        ' aria-current="page">Owned Second</a>'
+    ) in html
+    assert (
+        "<a href='/inspect?learner_id=owned-first&ownership_scope=personal'>Owned First</a>"
+    ) in html
+    assert html.count('aria-current="page"') == 1
+    assert "foreign-learner" not in html
+    assert "Foreign Learner" not in html
+    assert "node-foreign" not in html
+
+    assert foreign.status_code == 403
