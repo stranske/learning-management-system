@@ -34,6 +34,8 @@
           <form class="attempt-form" method="post" action="/learn/attempts">
             <input type="hidden" name="learner_id" value="snapshot-id">
             <input type="hidden" name="prompt_id" value="prompt-1">
+            <input type="hidden" name="prompt_version_id" value="snapshot-id">
+            <input type="hidden" id="elapsed_seconds" name="elapsed_seconds" value="">
             <label for="response_text">Response</label>
             <textarea id="response_text" name="response_text" rows="6"></textarea>
             <label for="confidence_rating">Confidence</label>
@@ -58,6 +60,19 @@
             <h2 id="sources-heading">Source citations after attempt</h2>
             <ul><li>source-1: https://example.test/source</li></ul>
           </section>
+          <script>
+            (function () {
+              var form = document.querySelector(".attempt-form");
+              if (!form) { return; }
+              var startedAt = Date.now();
+              form.addEventListener("submit", function () {
+                var field = form.querySelector("#elapsed_seconds");
+                if (field && !field.value) {
+                  field.value = Math.round((Date.now() - startedAt) / 1000);
+                }
+              });
+            })();
+          </script>
         </main>
         
   <script>

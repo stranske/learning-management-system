@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from lms.evidence.repository import create_attempt
 from lms.evidence.service import RecordedAttempt, record_attempt
 from lms.feedback.repository import create_feedback_action, create_feedback_record
 from lms.prompts.models import Prompt, PromptVersion
+from lms.prompts.repository import publish_prompt, version_prompt
 from lms.sources.models import SourceReference
 from lms.ui import api as learner_ui
 
@@ -141,6 +143,87 @@ def test_learn_post_surfaces_self_grade_or_scored_correctness(
         assert "Try a concrete example" in html
         assert "Compare &lt;two examples&gt; before retrying." in html
         assert 'class="self-grade"' not in html
+
+
+def test_learn_post_preserves_presented_prompt_version_and_elapsed_seconds(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, factory = api_client
+    with factory() as session:
+        _seed_prompt(session, visibility="public", locator="https://example.test/source")
+    start = client.get("/learn?learner_id=learner-1&prompt_id=prompt-1")
+    assert 'id="elapsed_seconds" name="elapsed_seconds"' in start.text
+    match = re.search(r'name="prompt_version_id" value="([^"]+)"', start.text)
+    assert match is not None
+    presented_id = match.group(1)
+    # A new version is published while the Learn form is still open.
+    with factory() as session:
+        prompt = session.get(Prompt, "prompt-1")
+        assert prompt is not None
+        version_prompt(session, prompt, body="Version two wording", actor_id="author-1")
+        publish_prompt(session, prompt, reviewing_actor="reviewer-1")
+        session.commit()
+        latest_id = prompt.versions[-1].id
+    assert latest_id != presented_id
+    submitted = client.post(
+        "/learn/attempts",
+        data={
+            "learner_id": "learner-1",
+            "prompt_id": "prompt-1",
+            "prompt_version_id": presented_id,
+            "response_text": "Retrieval practice strengthens recall.",
+            "confidence_rating": "2",
+            "elapsed_seconds": "37",
+        },
+    )
+    assert submitted.status_code == 200
+    with factory() as session:
+        attempt = session.scalars(select(Attempt)).one()
+        assert attempt.prompt_version_id == presented_id
+        assert attempt.elapsed_seconds == 37
+        attempt_id = attempt.id
+    graded = client.post(
+        "/app/learner/attempts/self-grade",
+        data={"learner_id": "learner-1", "attempt_id": attempt_id, "grade": "correct"},
+    )
+    assert graded.status_code == 200
+    with factory() as session:
+        evidence = session.scalars(select(EvidenceRecord)).one()
+        assert evidence.prompt_version_id == presented_id
+        assert evidence.confidence_rating == 2
+        assert evidence.response_time_seconds == 37
+
+
+def test_learn_post_rejects_prompt_version_from_another_prompt(
+    api_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, factory = api_client
+    with factory() as session:
+        _seed_prompt(session, visibility="public", locator="https://example.test/source")
+        session.add(
+            PromptVersion(
+                id="unrelated-version",
+                prompt_id="other-prompt",
+                version_number=1,
+                body="Other prompt",
+                created_by="author-1",
+            )
+        )
+        session.commit()
+    response = client.post(
+        "/learn/attempts",
+        data={
+            "learner_id": "learner-1",
+            "prompt_id": "prompt-1",
+            "prompt_version_id": "unrelated-version",
+            "response_text": "Answer",
+            "confidence_rating": "3",
+        },
+    )
+    assert response.status_code == 422
+    assert "version of this prompt" in response.json()["detail"]
+    with factory() as session:
+        assert session.scalar(select(Attempt)) is None
 
 
 def test_learn_surface_shows_confidence_against_scoring_evidence(
