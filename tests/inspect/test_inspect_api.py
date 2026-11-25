@@ -94,6 +94,11 @@ def _auth_required_client() -> Generator[TestClient]:
 def test_inspect_json_routes_require_authentication_when_auth_enabled() -> None:
     """Shell work must not bypass the same gate as the JSON overview routes."""
     with _auth_required_client() as client:
+        shell = client.get(
+            "/inspect",
+            headers={"Accept": "application/json"},
+            follow_redirects=False,
+        )
         overview = client.get(
             "/inspect/learners/learner-1/overview",
             headers={"Accept": "application/json"},
@@ -105,6 +110,7 @@ def test_inspect_json_routes_require_authentication_when_auth_enabled() -> None:
             follow_redirects=False,
         )
 
+    assert shell.status_code == 401
     assert overview.status_code == 401
     assert calibration.status_code == 401
 
